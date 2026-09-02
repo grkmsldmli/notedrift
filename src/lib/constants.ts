@@ -68,3 +68,38 @@ export const NOTE_MIN_W = 140;
 export const NOTE_MIN_H = 110;
 export const NOTE_PAD = 16;
 export const NOTE_RADIUS = 16;
+
+// Mind-map node geometry (the small editable node used by Quick Connect and the
+// keyboard mind-map flow).
+export const NODE_W = 132;
+export const NODE_H = 46;
+export const NODE_MIN_W = 84;
+export const NODE_PAD = 10;
+export const NODE_RADIUS = 10;
+export const NODE_FILL = "#eef2ff";
+export const NODE_INK = "#20242e";
+export const MINDMAP_GAP_X = 90;
+export const MINDMAP_GAP_Y = 22;
+
+// Connectors.
+export const CONNECTOR_STROKE = "#64748b";
+export const CONNECTOR_WIDTH = 2.5;
+/** Screen-space radii for anchor dots and their hit test. */
+export const ANCHOR_R = 4;
+export const ANCHOR_HIT = 13;
+
+/**
+ * Extra (non-default) object properties that must be serialized so NoteDrift's
+ * relationship model survives save/load. Passed to `canvas.toObject(...)`.
+ */
+export const NOTEDRIFT_PROPS = [
+  "ndId",
+  "ndRole",
+  "sourceId",
+  "targetId",
+  "sourceAnchor",
+  "targetAnchor",
+  "connKind",
+  "sourceFree",
+  "targetFree",
+];

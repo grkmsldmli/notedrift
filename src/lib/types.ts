@@ -30,7 +30,11 @@ export type ObjKind =
   | "note"
   | "path"
   | "image"
+  | "connector"
   | "mixed";
+
+/** Edge anchor of a connectable object. */
+export type Anchor = "top" | "right" | "bottom" | "left";
 
 /** Snapshot of the current selection for the contextual toolbar. */
 export interface SelectionInfo {
@@ -46,6 +50,8 @@ export interface SelectionInfo {
   bold?: boolean;
   textAlign?: string;
   noteFill?: string;
+  /** Whether a connector shows an arrowhead. */
+  hasArrow?: boolean;
 }
 
 /** Default styling applied to newly created objects (persisted locally). */
@@ -73,6 +79,8 @@ export interface StylePatch {
   bold?: boolean;
   textAlign?: string;
   noteFill?: string;
+  /** Connector arrowhead on/off. */
+  hasArrow?: boolean;
 }
 
 /** UI-facing snapshot the controller emits to React on every change. */

@@ -12,6 +12,7 @@ import {
   Layers,
   Minus,
   MoveDown,
+  MoveRight,
   MoveUp,
   Plus,
   Trash2,
@@ -164,6 +165,38 @@ export const ObjectToolbar = memo(function ObjectToolbar({
               </button>
             );
           })}
+          <Divider />
+        </>
+      );
+    }
+    if (kind === "connector") {
+      return (
+        <>
+          <SwatchRow
+            options={PALETTE}
+            value={selection.stroke}
+            onChange={(v) => onStyle({ stroke: v })}
+          />
+          <Divider />
+          <WidthPicker
+            value={selection.strokeWidth}
+            onChange={(w) => onStyle({ strokeWidth: w })}
+          />
+          <Divider />
+          <button
+            type="button"
+            title="Toggle arrowhead"
+            aria-pressed={selection.hasArrow}
+            onClick={() => onStyle({ hasArrow: !selection.hasArrow })}
+            className={[
+              iconBtn,
+              selection.hasArrow
+                ? "bg-nd-accent/15 !text-white ring-1 ring-nd-accent/40"
+                : "",
+            ].join(" ")}
+          >
+            <MoveRight size={16} />
+          </button>
           <Divider />
         </>
       );

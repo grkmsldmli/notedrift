@@ -214,6 +214,20 @@ export default function Editor() {
         return;
       }
 
+      // Mind-map flow (only when a node is selected and not editing text).
+      if (e.key === "Tab") {
+        e.preventDefault();
+        if (c.canBranch()) c.createChild();
+        return;
+      }
+      if (e.key === "Enter") {
+        if (c.canBranch()) {
+          e.preventDefault();
+          c.createSibling();
+        }
+        return;
+      }
+
       if (e.key === "Backspace" || e.key === "Delete") {
         e.preventDefault();
         c.deleteSelection();
