@@ -437,11 +437,11 @@ export default function Editor() {
     });
   }, []);
 
-  const applyDefaults = useCallback((patch: Partial<ToolDefaults>) => {
+  const applyDefaults = useCallback((patch: Partial<ToolDefaults>, commit = true) => {
     setToolDefaults((prev) => {
       const base = prev ?? loadToolDefaults();
       const next = { ...base, ...patch };
-      saveToolDefaults(next);
+      if (commit) saveToolDefaults(next);
       return next;
     });
     controllerRef.current?.setDefaults(patch);

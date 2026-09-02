@@ -54,12 +54,18 @@ export const CONNECTABLE_TYPES = new Set([
   "i-text",
   "itext",
   "text",
+  "polygon", // triangle / diamond / polygon / star / decision
 ]);
 
 export function isConnectable(o: fabric.FabricObject): boolean {
   if ((o as { ndRole?: string }).ndRole === "connector") return false;
+  // Freehand ink strokes are filled Paths but are not connection targets.
+  if ((o as { ndBrush?: string }).ndBrush) return false;
   const t = ((o as { type?: string }).type ?? "").toLowerCase();
-  return CONNECTABLE_TYPES.has(t);
+  if (CONNECTABLE_TYPES.has(t)) return true;
+  // Path-based shapes (cloud / database / document) are tagged with ndShape.
+  if (t === "path" && (o as { ndShape?: string }).ndShape) return true;
+  return false;
 }
 
 export function sceneBoundsOf(o: fabric.FabricObject) {

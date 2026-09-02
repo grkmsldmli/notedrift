@@ -19,16 +19,22 @@ import {
 
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
 
+const CHECKER =
+  "linear-gradient(45deg,#9aa0ae 25%,transparent 25%,transparent 75%,#9aa0ae 75%)," +
+  "linear-gradient(45deg,#9aa0ae 25%,#e5e7eb 25%,#e5e7eb 75%,#9aa0ae 75%)";
+
 interface ColorPopoverProps {
   value: string;
   /** `commit` false = a live drag preview; true = a committed change (records
    *  history / persists). */
   onChange: (hex: string, commit: boolean) => void;
+  /** Offer a "No fill" (transparent) option (used for shape fills). */
+  allowNone?: boolean;
 }
 
 /** A single-swatch button that opens a compact color popover: fast palette,
  *  recents, favorites, an HSV picker with HEX entry, and a native eyedropper. */
-export function ColorPopover({ value, onChange }: ColorPopoverProps) {
+export function ColorPopover({ value, onChange, allowNone }: ColorPopoverProps) {
   const [open, setOpen] = useState(false);
   const [hsv, setHsv] = useState<HSV>(() => hexToHsv(value));
   const [hexText, setHexText] = useState(value);
@@ -135,16 +141,45 @@ export function ColorPopover({ value, onChange }: ColorPopoverProps) {
     <div className="relative">
       <button
         type="button"
-        title="Color"
-        aria-label="Color"
+        title={allowNone ? "Fill" : "Color"}
+        aria-label={allowNone ? "Fill" : "Color"}
         onClick={openPopover}
         className="h-6 w-6 rounded-full border border-black/25 shadow-inner ring-1 ring-white/10 transition hover:scale-110"
-        style={{ backgroundColor: value }}
+        style={
+          value === "transparent"
+            ? { backgroundImage: CHECKER, backgroundSize: "8px 8px", backgroundPosition: "0 0,4px 4px" }
+            : { backgroundColor: value }
+        }
       />
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
           <div className="absolute left-0 top-full z-50 mt-2 w-64 rounded-xl border border-nd-border bg-nd-surface p-3 shadow-2xl">
+            {allowNone && (
+              <button
+                type="button"
+                onClick={() => {
+                  onChange("transparent", true);
+                  setOpen(false);
+                }}
+                className={[
+                  "mb-2 flex w-full items-center gap-2 rounded-md border px-2 py-1.5 text-xs text-nd-text transition",
+                  value === "transparent"
+                    ? "border-nd-accent ring-1 ring-nd-accent"
+                    : "border-nd-border hover:bg-white/5",
+                ].join(" ")}
+              >
+                <span
+                  className="h-4 w-4 rounded border border-black/20"
+                  style={{
+                    backgroundImage: CHECKER,
+                    backgroundSize: "6px 6px",
+                    backgroundPosition: "0 0,3px 3px",
+                  }}
+                />
+                No fill
+              </button>
+            )}
             {/* Fast palette */}
             <div className="grid grid-cols-6 gap-1.5">
               {INK_PALETTE.map((c) => {

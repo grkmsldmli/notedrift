@@ -12,6 +12,7 @@ import {
   CANVAS_FONT,
   CONNECTOR_STROKE,
   CONNECTOR_WIDTH,
+  DASH_ARRAYS,
   DEFAULT_NODE_ACCENT,
   GRID_COLOR,
   GRID_LINE_COLOR,
@@ -27,7 +28,17 @@ import { History } from "./history";
 import { FreehandBrush } from "./brush/freehand";
 import { DRAW_TOOLS, materialFor } from "./brush/materials";
 import { brushSpecFor } from "./tools/registry";
-import { makeArrow, makeStickyNote, styleArrow } from "./shapes";
+import { makeStickyNote, styleArrow } from "./shapes";
+import { NdLine, makeNdLine } from "./shapes/ndline";
+import {
+  SHAPE_IDS,
+  rebuildPolygon,
+  shapeDef,
+  type ShapeDef,
+  type ShapeParams,
+  type ShapeStyle,
+} from "./shapes/registry";
+import { polygonPoints, starPoints } from "./shapes/geometry";
 import {
   ANCHORS,
   Connector,
@@ -43,8 +54,10 @@ import {
 } from "./connectors";
 import type {
   Anchor,
+  ArrowHead,
   CanvasDoc,
   CanvasStyle,
+  DashStyle,
   DrawTool,
   DrawToolPrefs,
   EditorState,
@@ -58,6 +71,21 @@ import type {
 const DRAW_TOOL_SET = new Set<Tool>(DRAW_TOOLS);
 function isDrawTool(t: Tool): t is DrawTool {
   return DRAW_TOOL_SET.has(t);
+}
+
+const SHAPE_TOOL_SET = new Set<Tool>(SHAPE_IDS as Tool[]);
+const LINE_TOOL_SET = new Set<Tool>(["line", "arrow", "doublearrow"]);
+function isShapeTool(t: Tool): boolean {
+  return SHAPE_TOOL_SET.has(t);
+}
+function isLineTool(t: Tool): boolean {
+  return LINE_TOOL_SET.has(t);
+}
+
+/** Map a strokeDashArray back to a dash-style key for the UI. */
+function dashKeyOf(arr: number[] | null | undefined): DashStyle {
+  if (!arr || arr.length === 0) return "solid";
+  return arr[0] <= 3 ? "dotted" : "dashed";
 }
 
 export interface ControllerCallbacks {
@@ -130,7 +158,11 @@ function kindOf(obj: fabric.FabricObject): ObjKind {
   if (t === "nodebox") return "text";
   if (t === "i-text" || t === "itext" || t === "textbox" || t === "text")
     return "text";
-  if (t === "path") return "path";
+  if (t === "ndline" || t === "line") return "line";
+  if (t === "path") {
+    // A tagged shape path (cloud / database / document) vs a freehand ink stroke.
+    return (obj as { ndShape?: string }).ndShape ? "shape" : "path";
+  }
   if (t === "image") return "image";
   return "shape";
 }
@@ -151,6 +183,8 @@ export class CanvasController {
   private disposed = false;
   private drawing = false;
   private draft: fabric.FabricObject | null = null;
+  private draftDef: ShapeDef | null = null;
+  private drawMods = { shift: false, alt: false };
   private start = { x: 0, y: 0 };
   private cur = { x: 0, y: 0 };
   private isPanning = false;
@@ -230,6 +264,10 @@ export class CanvasController {
     this.setCanvasStyle(style);
     this.wireEvents();
     this.attachTouchHandlers();
+    if (typeof window !== "undefined") {
+      window.addEventListener("keydown", this.onModKeyChange);
+      window.addEventListener("keyup", this.onModKeyChange);
+    }
     this.applyToolMode();
     this.history.reset(this.snapshot());
     this.emit();
@@ -250,6 +288,10 @@ export class CanvasController {
   dispose(): void {
     this.disposed = true;
     this.detachTouchHandlers();
+    if (typeof window !== "undefined") {
+      window.removeEventListener("keydown", this.onModKeyChange);
+      window.removeEventListener("keyup", this.onModKeyChange);
+    }
     if (this.persistTimer) {
       clearTimeout(this.persistTimer);
       this.persistTimer = null;
@@ -306,8 +348,22 @@ export class CanvasController {
         textAlign: t.textAlign,
       };
     }
+    if (kind === "line") {
+      const l = obj as NdLine;
+      const isNd = ((obj as { type?: string }).type ?? "").toLowerCase() === "ndline";
+      return {
+        stroke: obj.stroke as string,
+        strokeWidth: obj.strokeWidth,
+        opacity: obj.opacity ?? 1,
+        dash: dashKeyOf(obj.strokeDashArray),
+        isLine: isNd,
+        startHead: isNd ? l.startHead ?? "none" : undefined,
+        endHead: isNd ? l.endHead ?? "none" : undefined,
+      };
+    }
     if (kind === "shape") {
       if (obj instanceof fabric.Group) {
+        // Legacy arrow group.
         const line = obj.getObjects()[0];
         return {
           stroke: (line?.stroke as string) ?? undefined,
@@ -315,10 +371,26 @@ export class CanvasController {
           fill: "transparent",
         };
       }
+      const t = obj as fabric.FabricObject & {
+        ndShape?: string;
+        ndSides?: number;
+        ndPoints?: number;
+        ndInner?: number;
+      };
       return {
         stroke: obj.stroke as string,
         strokeWidth: obj.strokeWidth,
         fill: (obj.fill as string) ?? "transparent",
+        opacity: obj.opacity ?? 1,
+        dash: dashKeyOf(obj.strokeDashArray),
+        // Any non-group vector shape is fillable — including legacy rect/ellipse
+        // drawn before shapes were tagged with ndShape.
+        fillable: true,
+        shapeId: t.ndShape,
+        radius: t.ndShape === "roundrect" ? (obj as fabric.Rect).rx : undefined,
+        sides: t.ndSides,
+        starPoints: t.ndPoints,
+        starInner: t.ndInner,
       };
     }
     if (kind === "path") {
@@ -558,6 +630,21 @@ export class CanvasController {
   private placeNodeLeftAt(o: fabric.FabricObject, x0: number, cy: number): void {
     const b = sceneBoundsOf(o);
     this.centerAt(o, { x: x0 + (b.right - b.left) / 2, y: cy });
+  }
+
+  /** Rebuild a polygon/star's points (e.g. side/point count changed) while
+   *  preserving its visual bounding box and centre — different polygons inscribe
+   *  their reference box differently, so we re-fit scale afterwards. */
+  private reshapePoly(o: fabric.Polygon, points: { x: number; y: number }[]): void {
+    // Preserve the geometry size (unstroked) so the stroke width can't accumulate
+    // across successive reshapes, and keep the centre fixed.
+    const geomW = (o.width || 1) * (o.scaleX || 1);
+    const geomH = (o.height || 1) * (o.scaleY || 1);
+    const b = sceneBoundsOf(o);
+    rebuildPolygon(o, points);
+    o.set({ scaleX: geomW / (o.width || 1), scaleY: geomH / (o.height || 1) });
+    this.centerAt(o, { x: b.cx, y: b.cy });
+    o.setCoords();
   }
 
   private cancelFabricTransform(): void {
@@ -1264,17 +1351,48 @@ export class CanvasController {
       if (patch.stroke !== undefined) {
         if (obj instanceof fabric.Group) styleArrow(obj, { stroke: patch.stroke });
         else if (k === "path" && isInkPath(obj)) obj.set("fill", patch.stroke);
-        else if (k === "shape" || k === "path") obj.set("stroke", patch.stroke);
+        else if (k === "shape" || k === "path" || k === "line")
+          obj.set("stroke", patch.stroke);
       }
       if (patch.strokeWidth !== undefined) {
         if (obj instanceof fabric.Group)
           styleArrow(obj, { strokeWidth: patch.strokeWidth });
         // Ink width is baked into the filled outline geometry — not retro-editable.
-        else if ((k === "shape" || k === "path") && !isInkPath(obj))
+        else if ((k === "shape" || k === "path" || k === "line") && !isInkPath(obj))
           obj.set("strokeWidth", patch.strokeWidth);
       }
       if (patch.fill !== undefined) {
         if (k === "shape" && !(obj instanceof fabric.Group)) obj.set("fill", patch.fill);
+      }
+      if (patch.dash !== undefined && (k === "shape" || k === "line")) {
+        obj.set("strokeDashArray", DASH_ARRAYS[patch.dash]);
+        obj.set("dirty", true);
+      }
+      if (patch.radius !== undefined && (obj as { ndShape?: string }).ndShape === "roundrect") {
+        (obj as fabric.Rect).set({ rx: patch.radius, ry: patch.radius });
+      }
+      if (patch.sides !== undefined && (obj as { ndShape?: string }).ndShape === "polygon") {
+        this.reshapePoly(obj as fabric.Polygon, polygonPoints(patch.sides));
+        (obj as { ndSides?: number }).ndSides = patch.sides;
+      }
+      if (
+        (patch.starPoints !== undefined || patch.starInner !== undefined) &&
+        (obj as { ndShape?: string }).ndShape === "star"
+      ) {
+        const so = obj as fabric.Polygon & { ndPoints?: number; ndInner?: number };
+        const pts = patch.starPoints ?? so.ndPoints ?? 5;
+        const inner = patch.starInner ?? so.ndInner ?? 0.45;
+        this.reshapePoly(so, starPoints(pts, inner));
+        so.ndPoints = pts;
+        so.ndInner = inner;
+      }
+      if (patch.startHead !== undefined && obj instanceof NdLine) {
+        obj.startHead = patch.startHead;
+        obj.set("dirty", true);
+      }
+      if (patch.endHead !== undefined && obj instanceof NdLine) {
+        obj.endHead = patch.endHead;
+        obj.set("dirty", true);
       }
       if (patch.nodeAccent !== undefined && isNodeBox(obj)) {
         obj.setAccent(patch.nodeAccent as NodeAccent);
@@ -1624,6 +1742,153 @@ export class CanvasController {
     text.hiddenTextarea?.focus();
     this.canvas.requestRenderAll();
   }
+
+  /* ------------------------- shape / line drawing ------------------------- */
+
+  private currentShapeStyle(): ShapeStyle {
+    return {
+      stroke: this.defaults.shapeStroke,
+      strokeWidth: this.defaults.shapeStrokeWidth,
+      fill: this.defaults.shapeFill,
+      dash: DASH_ARRAYS[this.defaults.shapeDash],
+      opacity: this.defaults.shapeOpacity,
+    };
+  }
+
+  private currentShapeParams(): ShapeParams {
+    return {
+      radius: this.defaults.shapeRadius,
+      sides: this.defaults.shapeSides,
+      points: this.defaults.shapeStarPoints,
+      inner: this.defaults.shapeStarInner,
+    };
+  }
+
+  private lineHeads(tool: Tool): { start: ArrowHead; end: ArrowHead } {
+    if (tool === "arrow") return { start: "none", end: "filled" };
+    if (tool === "doublearrow") return { start: "filled", end: "filled" };
+    return { start: "none", end: "none" };
+  }
+
+  private startShapeDraft(): void {
+    const def = shapeDef(this.tool);
+    if (!def) return;
+    const o = def.make(this.currentShapeStyle(), this.currentShapeParams());
+    o.selectable = false;
+    o.evented = false;
+    this.draft = o;
+    this.draftDef = def;
+    this.canvas.add(o);
+    this.reapplyDraft();
+  }
+
+  private startLineDraft(): void {
+    const heads = this.lineHeads(this.tool);
+    const o = makeNdLine(this.start.x, this.start.y, this.start.x, this.start.y, {
+      stroke: this.defaults.lineStroke,
+      strokeWidth: this.defaults.lineStrokeWidth,
+      startHead: heads.start,
+      endHead: heads.end,
+      dash: DASH_ARRAYS[this.defaults.lineDash],
+      opacity: this.defaults.lineOpacity,
+    });
+    o.selectable = false;
+    o.evented = false;
+    this.draft = o;
+    this.draftDef = null;
+    this.canvas.add(o);
+  }
+
+  private reapplyDraft(): void {
+    if (!this.draft) return;
+    if (this.draftDef) this.updateShapeDraft();
+    else this.updateLineDraft();
+  }
+
+  private updateShapeDraft(): void {
+    if (!this.draft || !this.draftDef) return;
+    const { x: sx, y: sy } = this.start;
+    const { x, y } = this.cur;
+    const dx = x - sx;
+    const dy = y - sy;
+    const sgx = dx < 0 ? -1 : 1;
+    const sgy = dy < 0 ? -1 : 1;
+    let hw = Math.abs(dx);
+    let hh = Math.abs(dy);
+    if (!this.drawMods.alt) {
+      hw /= 2;
+      hh /= 2;
+    }
+    if (this.drawMods.shift) {
+      const m = Math.max(hw, hh);
+      hw = m;
+      hh = m;
+    }
+    const w = Math.max(hw * 2, 1);
+    const h = Math.max(hh * 2, 1);
+    const cx = this.drawMods.alt ? sx : sx + sgx * hw;
+    const cy = this.drawMods.alt ? sy : sy + sgy * hh;
+    this.draftDef.resize(this.draft, w, h);
+    this.centerAt(this.draft, { x: cx, y: cy });
+    this.draft.setCoords();
+    this.canvas.requestRenderAll();
+  }
+
+  private updateLineDraft(): void {
+    if (!this.draft) return;
+    const { x: sx, y: sy } = this.start;
+    let x = this.cur.x;
+    let y = this.cur.y;
+    if (this.drawMods.shift) {
+      // Snap to 45° increments.
+      const ang = Math.atan2(y - sy, x - sx);
+      const snap = Math.round(ang / (Math.PI / 4)) * (Math.PI / 4);
+      const len = Math.hypot(x - sx, y - sy);
+      x = sx + Math.cos(snap) * len;
+      y = sy + Math.sin(snap) * len;
+    }
+    (this.draft as NdLine).set({ x1: sx, y1: sy, x2: x, y2: y });
+    this.draft.setCoords();
+    this.canvas.requestRenderAll();
+  }
+
+  private commitDraft(): void {
+    const draft = this.draft;
+    this.draft = null;
+    const def = this.draftDef;
+    this.draftDef = null;
+    if (!draft) return;
+
+    const { x: sx, y: sy } = this.start;
+    const { x: ex, y: ey } = this.cur;
+    const tiny = Math.abs(ex - sx) < 6 && Math.abs(ey - sy) < 6;
+    if (tiny) {
+      // Click-to-create at a sensible default size, centred on the click.
+      if (draft instanceof NdLine) {
+        draft.set({ x1: sx - 70, y1: sy, x2: sx + 70, y2: sy });
+      } else if (def) {
+        def.resize(draft, def.defaultSize.w, def.defaultSize.h);
+        this.centerAt(draft, { x: sx, y: sy });
+      }
+      draft.setCoords();
+    }
+
+    draft.selectable = true;
+    draft.evented = true;
+    this.canvas.setActiveObject(draft);
+    this.canvas.requestRenderAll();
+    this.recordHistory();
+    this.schedulePersist();
+    this.setTool("select");
+  }
+
+  /** Live modifier update while drawing (Shift/Alt pressed without moving). */
+  private onModKeyChange = (e: KeyboardEvent): void => {
+    if (!this.drawing || !this.draft) return;
+    if (e.key !== "Shift" && e.key !== "Alt") return;
+    this.drawMods = { shift: e.shiftKey, alt: e.altKey };
+    this.reapplyDraft();
+  };
 
   /* ------------------------------- documents ------------------------------ */
 
@@ -2304,44 +2569,17 @@ export class CanvasController {
       return;
     }
 
-    this.drawing = true;
-    let draft: fabric.FabricObject;
-    if (this.tool === "rect") {
-      draft = new fabric.Rect({
-        left: p.x,
-        top: p.y,
-        width: 0,
-        height: 0,
-        rx: 3,
-        ry: 3,
-        fill: this.defaults.shapeFill,
-        stroke: this.defaults.shapeStroke,
-        strokeWidth: this.defaults.shapeStrokeWidth,
-        strokeUniform: true,
-      });
-    } else if (this.tool === "ellipse") {
-      draft = new fabric.Ellipse({
-        left: p.x,
-        top: p.y,
-        rx: 0,
-        ry: 0,
-        fill: this.defaults.shapeFill,
-        stroke: this.defaults.shapeStroke,
-        strokeWidth: this.defaults.shapeStrokeWidth,
-        strokeUniform: true,
-      });
-    } else {
-      draft = new fabric.Line([p.x, p.y, p.x, p.y], {
-        stroke: this.defaults.lineStroke,
-        strokeWidth: this.defaults.lineStrokeWidth,
-        strokeLineCap: "round",
-        strokeUniform: true,
-      });
+    this.drawMods = { shift: e.shiftKey, alt: e.altKey };
+    if (isShapeTool(this.tool)) {
+      this.drawing = true;
+      this.startShapeDraft();
+      return;
     }
-    draft.selectable = false;
-    draft.evented = false;
-    this.draft = draft;
-    this.canvas.add(draft);
+    if (isLineTool(this.tool)) {
+      this.drawing = true;
+      this.startLineDraft();
+      return;
+    }
   };
 
   private onMouseMove = (opt: PointerInfo): void => {
@@ -2373,26 +2611,8 @@ export class CanvasController {
     if (this.drawing && this.draft) {
       const p = this.canvas.getScenePoint(opt.e);
       this.cur = { x: p.x, y: p.y };
-      const { x: sx, y: sy } = this.start;
-      if (this.tool === "rect") {
-        this.draft.set({
-          left: Math.min(sx, p.x),
-          top: Math.min(sy, p.y),
-          width: Math.abs(p.x - sx),
-          height: Math.abs(p.y - sy),
-        });
-      } else if (this.tool === "ellipse") {
-        (this.draft as fabric.Ellipse).set({
-          left: Math.min(sx, p.x),
-          top: Math.min(sy, p.y),
-          rx: Math.abs(p.x - sx) / 2,
-          ry: Math.abs(p.y - sy) / 2,
-        });
-      } else {
-        (this.draft as fabric.Line).set({ x2: p.x, y2: p.y });
-      }
-      this.draft.setCoords();
-      this.canvas.requestRenderAll();
+      this.drawMods = { shift: e.shiftKey, alt: e.altKey };
+      this.reapplyDraft();
       return;
     }
 
@@ -2430,50 +2650,7 @@ export class CanvasController {
 
     if (!this.drawing) return;
     this.drawing = false;
-
-    const draft = this.draft;
-    this.draft = null;
-    if (!draft) return;
-
-    const { x: sx, y: sy } = this.start;
-    const { x: ex, y: ey } = this.cur;
-    const dst = Math.hypot(ex - sx, ey - sy);
-    const tool = this.tool;
-
-    const tooSmall =
-      tool === "rect" || tool === "ellipse"
-        ? Math.abs(ex - sx) < 4 && Math.abs(ey - sy) < 4
-        : dst < 4;
-
-    if (tooSmall) {
-      this.canvas.remove(draft);
-      this.canvas.requestRenderAll();
-      this.setTool("select");
-      return;
-    }
-
-    if (tool === "arrow") {
-      this.canvas.remove(draft);
-      const arrow = makeArrow(
-        sx,
-        sy,
-        ex,
-        ey,
-        this.defaults.lineStroke,
-        this.defaults.lineStrokeWidth,
-      );
-      this.canvas.add(arrow);
-      this.canvas.setActiveObject(arrow);
-    } else {
-      if (tool === "rect" || tool === "ellipse") (draft as NdObj).ndId = nid();
-      draft.setCoords();
-      this.canvas.setActiveObject(draft);
-    }
-
-    this.canvas.requestRenderAll();
-    this.recordHistory();
-    this.schedulePersist();
-    this.setTool("select");
+    this.commitDraft();
   };
 
   private onWheel = (opt: WheelInfo): void => {

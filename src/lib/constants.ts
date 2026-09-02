@@ -148,4 +148,28 @@ export const NOTEDRIFT_PROPS = [
   "ndCollapsed", // node: branch collapsed (descendants hidden)
   // Phase 1.6B — which brush produced a freehand ink path.
   "ndBrush",
+  // Phase 1.6C — shape identity/params and line arrowheads.
+  "ndShape",
+  "ndSides",
+  "ndPoints",
+  "ndInner",
+  "startHead",
+  "endHead",
 ];
+
+/** Stroke dash arrays (absolute px; strokeUniform keeps them constant on zoom). */
+export const DASH_ARRAYS: Record<"solid" | "dashed" | "dotted", number[] | null> = {
+  solid: null,
+  dashed: [12, 9],
+  dotted: [2, 7],
+};
+
+// Default style for newly drawn shapes and lines.
+export const SHAPE_DEFAULT_STROKE = "#20242e";
+export const SHAPE_DEFAULT_FILL = "transparent";
+export const SHAPE_DEFAULT_WIDTH = 3;
+export const LINE_DEFAULT_STROKE = "#20242e";
+export const LINE_DEFAULT_WIDTH = 4;
+
+/** Discrete stroke widths for shape/line outlines. */
+export const OUTLINE_WIDTHS = [1, 2, 3, 5, 8, 12];

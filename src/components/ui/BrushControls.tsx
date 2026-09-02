@@ -8,11 +8,20 @@ interface WidthControlProps {
   /** `commit` false = live slider preview; true = committed (preset click or
    *  slider release). */
   onChange: (width: number, commit: boolean) => void;
+  presets?: number[];
+  min?: number;
+  max?: number;
 }
 
 /** Compact stroke-width control: a trigger showing the current size, opening a
  *  popover of quick presets plus a fine slider. */
-export function WidthControl({ value, onChange }: WidthControlProps) {
+export function WidthControl({
+  value,
+  onChange,
+  presets = WIDTH_PRESETS,
+  min = MIN_WIDTH,
+  max = MAX_WIDTH,
+}: WidthControlProps) {
   const [open, setOpen] = useState(false);
   return (
     <div className="relative">
@@ -38,7 +47,7 @@ export function WidthControl({ value, onChange }: WidthControlProps) {
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
           <div className="absolute left-0 top-full z-50 mt-2 w-56 rounded-xl border border-nd-border bg-nd-surface p-3 shadow-2xl">
             <div className="flex items-end justify-between gap-1">
-              {WIDTH_PRESETS.map((w) => {
+              {presets.map((w) => {
                 const active = value === w;
                 return (
                   <button
@@ -66,8 +75,8 @@ export function WidthControl({ value, onChange }: WidthControlProps) {
             <div className="mt-3 flex items-center gap-2">
               <input
                 type="range"
-                min={MIN_WIDTH}
-                max={MAX_WIDTH}
+                min={min}
+                max={max}
                 value={value}
                 onChange={(e) => onChange(Number(e.target.value), false)}
                 onPointerUp={(e) =>

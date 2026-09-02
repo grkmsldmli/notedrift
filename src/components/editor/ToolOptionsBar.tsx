@@ -2,27 +2,32 @@
 
 import { memo } from "react";
 import { PenTool } from "lucide-react";
-import { PALETTE, SHAPE_FILLS } from "@/lib/constants";
+import { OUTLINE_WIDTHS } from "@/lib/constants";
 import { DRAW_TOOLS, materialFor } from "@/lib/brush/materials";
+import { SHAPE_IDS, shapeDef } from "@/lib/shapes/registry";
 import type {
+  DashStyle,
   DrawTool,
   DrawToolPrefs,
   PenStabilization,
   Tool,
   ToolDefaults,
 } from "@/lib/types";
-import { Divider, Label, Segmented, SwatchRow, WidthPicker } from "../ui/controls";
+import { Divider, Label, Segmented } from "../ui/controls";
 import { ColorPopover } from "../ui/ColorPopover";
 import { OpacityControl, WidthControl } from "../ui/BrushControls";
+import { DashPicker, Stepper } from "../ui/ShapeControls";
 
 interface ToolOptionsBarProps {
   tool: Tool;
   defaults: ToolDefaults;
-  onSetDefault: (patch: Partial<ToolDefaults>) => void;
+  onSetDefault: (patch: Partial<ToolDefaults>, commit?: boolean) => void;
   onSetDrawPref: (patch: Partial<DrawToolPrefs>, commit?: boolean) => void;
 }
 
 const DRAW_SET = new Set<Tool>(DRAW_TOOLS);
+const SHAPE_SET = new Set<Tool>(SHAPE_IDS as Tool[]);
+const LINE_SET = new Set<Tool>(["line", "arrow", "doublearrow"]);
 
 const STABILIZE: { value: string; label: string }[] = [
   { value: "off", label: "Off" },
@@ -30,6 +35,12 @@ const STABILIZE: { value: string; label: string }[] = [
   { value: "medium", label: "Med" },
   { value: "high", label: "High" },
 ];
+
+const LINE_LABEL: Record<string, string> = {
+  line: "Line",
+  arrow: "Arrow",
+  doublearrow: "Double arrow",
+};
 
 export const ToolOptionsBar = memo(function ToolOptionsBar({
   tool,
@@ -46,15 +57,9 @@ export const ToolOptionsBar = memo(function ToolOptionsBar({
     content = (
       <>
         <Label>{mat.label}</Label>
-        <ColorPopover
-          value={p.color}
-          onChange={(c, commit) => onSetDrawPref({ color: c }, commit)}
-        />
+        <ColorPopover value={p.color} onChange={(c, commit) => onSetDrawPref({ color: c }, commit)} />
         <Divider />
-        <WidthControl
-          value={p.width}
-          onChange={(w, commit) => onSetDrawPref({ width: w }, commit)}
-        />
+        <WidthControl value={p.width} onChange={(w, commit) => onSetDrawPref({ width: w }, commit)} />
         {mat.showOpacity && (
           <>
             <Divider />
@@ -76,11 +81,7 @@ export const ToolOptionsBar = memo(function ToolOptionsBar({
             <Divider />
             <button
               type="button"
-              title={
-                draw === "brush"
-                  ? "Velocity/pressure dynamics"
-                  : "Pressure-aware width (stylus)"
-              }
+              title={draw === "brush" ? "Velocity/pressure dynamics" : "Pressure-aware width (stylus)"}
               aria-pressed={p.pressure}
               onClick={() => onSetDrawPref({ pressure: !p.pressure })}
               className={[
@@ -97,42 +98,104 @@ export const ToolOptionsBar = memo(function ToolOptionsBar({
         )}
       </>
     );
-  } else if (tool === "rect" || tool === "ellipse") {
+  } else if (SHAPE_SET.has(tool)) {
+    const def = shapeDef(tool);
     content = (
       <>
-        <Label>Stroke</Label>
-        <SwatchRow
-          options={PALETTE}
+        <Label>{def?.label ?? "Shape"}</Label>
+        <ColorPopover
           value={defaults.shapeStroke}
-          onChange={(v) => onSetDefault({ shapeStroke: v })}
-        />
-        <Divider />
-        <WidthPicker
-          value={defaults.shapeStrokeWidth}
-          onChange={(w) => onSetDefault({ shapeStrokeWidth: w })}
+          onChange={(c, commit) => onSetDefault({ shapeStroke: c }, commit)}
         />
         <Divider />
         <Label>Fill</Label>
-        <SwatchRow
-          options={SHAPE_FILLS}
+        <ColorPopover
           value={defaults.shapeFill}
-          onChange={(v) => onSetDefault({ shapeFill: v })}
-        />
-      </>
-    );
-  } else if (tool === "line" || tool === "arrow") {
-    content = (
-      <>
-        <Label>Stroke</Label>
-        <SwatchRow
-          options={PALETTE}
-          value={defaults.lineStroke}
-          onChange={(v) => onSetDefault({ lineStroke: v })}
+          allowNone
+          onChange={(c, commit) => onSetDefault({ shapeFill: c }, commit)}
         />
         <Divider />
-        <WidthPicker
+        <WidthControl
+          value={defaults.shapeStrokeWidth}
+          presets={OUTLINE_WIDTHS}
+          min={1}
+          max={20}
+          onChange={(w, commit) => onSetDefault({ shapeStrokeWidth: w }, commit)}
+        />
+        <Divider />
+        <DashPicker
+          value={defaults.shapeDash}
+          onChange={(d) => onSetDefault({ shapeDash: d as DashStyle })}
+        />
+        <Divider />
+        <OpacityControl
+          value={defaults.shapeOpacity}
+          onChange={(o, commit) => onSetDefault({ shapeOpacity: o }, commit)}
+        />
+        {def?.radius && (
+          <>
+            <Divider />
+            <Label>Radius</Label>
+            <Stepper
+              value={defaults.shapeRadius}
+              min={0}
+              max={64}
+              step={4}
+              onChange={(v) => onSetDefault({ shapeRadius: v })}
+            />
+          </>
+        )}
+        {def?.sides && (
+          <>
+            <Divider />
+            <Label>Sides</Label>
+            <Stepper
+              value={defaults.shapeSides}
+              min={3}
+              max={12}
+              onChange={(v) => onSetDefault({ shapeSides: v })}
+            />
+          </>
+        )}
+        {def?.star && (
+          <>
+            <Divider />
+            <Label>Points</Label>
+            <Stepper
+              value={defaults.shapeStarPoints}
+              min={3}
+              max={12}
+              onChange={(v) => onSetDefault({ shapeStarPoints: v })}
+            />
+          </>
+        )}
+      </>
+    );
+  } else if (LINE_SET.has(tool)) {
+    content = (
+      <>
+        <Label>{LINE_LABEL[tool] ?? "Line"}</Label>
+        <ColorPopover
+          value={defaults.lineStroke}
+          onChange={(c, commit) => onSetDefault({ lineStroke: c }, commit)}
+        />
+        <Divider />
+        <WidthControl
           value={defaults.lineStrokeWidth}
-          onChange={(w) => onSetDefault({ lineStrokeWidth: w })}
+          presets={OUTLINE_WIDTHS}
+          min={1}
+          max={20}
+          onChange={(w, commit) => onSetDefault({ lineStrokeWidth: w }, commit)}
+        />
+        <Divider />
+        <DashPicker
+          value={defaults.lineDash}
+          onChange={(d) => onSetDefault({ lineDash: d as DashStyle })}
+        />
+        <Divider />
+        <OpacityControl
+          value={defaults.lineOpacity}
+          onChange={(o, commit) => onSetDefault({ lineOpacity: o }, commit)}
         />
       </>
     );

@@ -24,11 +24,12 @@ import {
   Plus,
   Trash2,
 } from "lucide-react";
-import { FONT_SIZES, NOTE_COLORS, PALETTE, SHAPE_FILLS } from "@/lib/constants";
+import { FONT_SIZES, NOTE_COLORS, OUTLINE_WIDTHS, PALETTE } from "@/lib/constants";
 import type { SelectionInfo, StylePatch } from "@/lib/types";
-import { AccentRow, Divider, SwatchRow, WidthPicker } from "../ui/controls";
+import { AccentRow, Divider, Label, SwatchRow, WidthPicker } from "../ui/controls";
 import { ColorPopover } from "../ui/ColorPopover";
-import { OpacityControl } from "../ui/BrushControls";
+import { OpacityControl, WidthControl } from "../ui/BrushControls";
+import { ArrowheadControl, DashPicker, Stepper } from "../ui/ShapeControls";
 
 export type LayerOp = "front" | "forward" | "backward" | "back";
 
@@ -126,23 +127,120 @@ export const ObjectToolbar = memo(function ObjectToolbar({
 
   const styleSection = () => {
     if (kind === "shape") {
+      // Fillable = any vector shape (incl. legacy rect/ellipse); false only for a
+      // legacy arrow group. Shape-specific controls still key off shapeId.
+      const realShape = !!selection.fillable;
       return (
         <>
-          <SwatchRow
-            options={PALETTE}
-            value={selection.stroke}
-            onChange={(v) => onStyle({ stroke: v })}
+          <ColorPopover
+            value={selection.stroke ?? "#20242e"}
+            onChange={(v, commit) => onStyle({ stroke: v }, commit)}
+          />
+          {realShape && (
+            <>
+              <Divider />
+              <Label>Fill</Label>
+              <ColorPopover
+                value={selection.fill ?? "transparent"}
+                allowNone
+                onChange={(v, commit) => onStyle({ fill: v }, commit)}
+              />
+            </>
+          )}
+          <Divider />
+          <WidthControl
+            value={selection.strokeWidth ?? 3}
+            presets={OUTLINE_WIDTHS}
+            min={1}
+            max={20}
+            onChange={(w, commit) => onStyle({ strokeWidth: w }, commit)}
+          />
+          {realShape && (
+            <>
+              <Divider />
+              <DashPicker
+                value={selection.dash ?? "solid"}
+                onChange={(d) => onStyle({ dash: d })}
+              />
+              <Divider />
+              <OpacityControl
+                value={selection.opacity ?? 1}
+                onChange={(o, commit) => onStyle({ opacity: o }, commit)}
+              />
+            </>
+          )}
+          {selection.shapeId === "roundrect" && (
+            <>
+              <Divider />
+              <Stepper
+                value={selection.radius ?? 16}
+                min={0}
+                max={64}
+                step={4}
+                onChange={(v) => onStyle({ radius: v })}
+              />
+            </>
+          )}
+          {selection.shapeId === "polygon" && (
+            <>
+              <Divider />
+              <Stepper
+                value={selection.sides ?? 6}
+                min={3}
+                max={12}
+                onChange={(v) => onStyle({ sides: v })}
+              />
+            </>
+          )}
+          {selection.shapeId === "star" && (
+            <>
+              <Divider />
+              <Stepper
+                value={selection.starPoints ?? 5}
+                min={3}
+                max={12}
+                onChange={(v) => onStyle({ starPoints: v })}
+              />
+            </>
+          )}
+          <Divider />
+        </>
+      );
+    }
+    if (kind === "line") {
+      return (
+        <>
+          <ColorPopover
+            value={selection.stroke ?? "#20242e"}
+            onChange={(v, commit) => onStyle({ stroke: v }, commit)}
           />
           <Divider />
-          <WidthPicker
-            value={selection.strokeWidth}
-            onChange={(w) => onStyle({ strokeWidth: w })}
+          <WidthControl
+            value={selection.strokeWidth ?? 4}
+            presets={OUTLINE_WIDTHS}
+            min={1}
+            max={20}
+            onChange={(w, commit) => onStyle({ strokeWidth: w }, commit)}
           />
           <Divider />
-          <SwatchRow
-            options={SHAPE_FILLS}
-            value={selection.fill}
-            onChange={(v) => onStyle({ fill: v })}
+          <DashPicker
+            value={selection.dash ?? "solid"}
+            onChange={(d) => onStyle({ dash: d })}
+          />
+          {selection.isLine && (
+            <>
+              <Divider />
+              <ArrowheadControl
+                start={selection.startHead ?? "none"}
+                end={selection.endHead ?? "none"}
+                onChange={(patch) => onStyle(patch)}
+              />
+            </>
+          )}
+          <Divider />
+          <OpacityControl
+            value={selection.opacity ?? 1}
+            onChange={(o, commit) => onStyle({ opacity: o }, commit)}
           />
           <Divider />
         </>

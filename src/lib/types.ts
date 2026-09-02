@@ -14,12 +14,33 @@ export type Tool =
   | "brush"
   | "technical"
   | "text"
+  // Shape family
   | "rect"
+  | "roundrect"
   | "ellipse"
+  | "circle"
+  | "triangle"
+  | "diamond"
+  | "polygon"
+  | "star"
+  | "cloud"
+  | "process"
+  | "decision"
+  | "terminator"
+  | "database"
+  | "document"
+  // Line family
   | "line"
   | "arrow"
+  | "doublearrow"
   | "note"
   | "eraser";
+
+/** Arrowhead style for a line end. */
+export type ArrowHead = "none" | "open" | "triangle" | "filled";
+
+/** Stroke dash style for lines and shape outlines. */
+export type DashStyle = "solid" | "dashed" | "dotted";
 
 /** The freehand drawing instruments (share the Phase 1.6A brush engine). */
 export type DrawTool =
@@ -43,6 +64,7 @@ export type PenStabilization = "off" | "low" | "medium" | "high";
 export type ObjKind =
   | "none"
   | "shape"
+  | "line"
   | "text"
   | "note"
   | "path"
@@ -83,6 +105,23 @@ export interface SelectionInfo {
   isInk?: boolean;
   /** Object opacity (0–1), surfaced for ink strokes. */
   opacity?: number;
+  /** Stroke dash style (shapes + lines). */
+  dash?: DashStyle;
+  /** The shape's id (rect/roundrect/…) when a shape is selected. */
+  shapeId?: string;
+  /** A fillable vector shape (rect/ellipse/polygon/path) — not a legacy arrow group. */
+  fillable?: boolean;
+  /** Rounded-rect corner radius. */
+  radius?: number;
+  /** Regular-polygon side count. */
+  sides?: number;
+  /** Star point count and inner-radius ratio. */
+  starPoints?: number;
+  starInner?: number;
+  /** A line-family object (NdLine): show line controls (arrowheads). */
+  isLine?: boolean;
+  startHead?: ArrowHead;
+  endHead?: ArrowHead;
 }
 
 /** Persisted preferences for a single drawing instrument. */
@@ -103,8 +142,16 @@ export interface ToolDefaults {
   shapeStroke: string;
   shapeStrokeWidth: number;
   shapeFill: string;
+  shapeDash: DashStyle;
+  shapeOpacity: number;
+  shapeRadius: number;
+  shapeSides: number;
+  shapeStarPoints: number;
+  shapeStarInner: number;
   lineStroke: string;
   lineStrokeWidth: number;
+  lineDash: DashStyle;
+  lineOpacity: number;
   textColor: string;
   textFontSize: number;
   noteFill: string;
@@ -125,8 +172,20 @@ export interface StylePatch {
   hasArrow?: boolean;
   /** Mind-map node soft accent key. */
   nodeAccent?: string;
-  /** Object opacity (0–1) — used to restyle a completed ink stroke. */
+  /** Object opacity (0–1). */
   opacity?: number;
+  /** Stroke dash style. */
+  dash?: DashStyle;
+  /** Rounded-rect corner radius. */
+  radius?: number;
+  /** Regular-polygon side count. */
+  sides?: number;
+  /** Star point count / inner ratio. */
+  starPoints?: number;
+  starInner?: number;
+  /** Line arrowheads. */
+  startHead?: ArrowHead;
+  endHead?: ArrowHead;
 }
 
 /** UI-facing snapshot the controller emits to React on every change. */
