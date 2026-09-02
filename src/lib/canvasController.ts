@@ -19,7 +19,6 @@ import {
   MIN_ZOOM,
   MINDMAP_GAP_X,
   MINDMAP_GAP_Y,
-  NODE_H,
   NOTEDRIFT_PROPS,
 } from "./constants";
 import { History } from "./history";
@@ -433,7 +432,7 @@ export class CanvasController {
     return c;
   }
 
-  private spawnNode(left: number, top: number): fabric.FabricObject {
+  private spawnNode(left = 0, top = 0): fabric.FabricObject {
     const node = makeNode(left, top);
     node.selectable = true;
     node.evented = true;
@@ -446,6 +445,16 @@ export class CanvasController {
     const b = sceneBoundsOf(o);
     o.set({ left: (o.left ?? 0) + (p.x - b.cx), top: (o.top ?? 0) + (p.y - b.cy) });
     o.setCoords();
+  }
+
+  /**
+   * Place a node by its RENDERED bounds: left edge at x0, vertical center at cy.
+   * Padding-expanded nodes (NodeBox) can't be positioned by raw left/top, so we
+   * measure and center — the same technique Quick Connect uses.
+   */
+  private placeNodeLeftAt(o: fabric.FabricObject, x0: number, cy: number): void {
+    const b = sceneBoundsOf(o);
+    this.centerAt(o, { x: x0 + (b.right - b.left) / 2, y: cy });
   }
 
   private cancelFabricTransform(): void {
@@ -647,13 +656,15 @@ export class CanvasController {
     const pb = sceneBoundsOf(sel);
     const map = this.objByIdMap();
     const children = this.childrenOf(ndId(sel)!, map);
-    let y = pb.cy;
+    const node = this.spawnNode();
+    const nb = sceneBoundsOf(node);
+    let cy = pb.cy;
     if (children.length) {
       let maxBottom = -Infinity;
       for (const ch of children) maxBottom = Math.max(maxBottom, sceneBoundsOf(ch).bottom);
-      y = maxBottom + MINDMAP_GAP_Y + NODE_H / 2;
+      cy = maxBottom + MINDMAP_GAP_Y + (nb.bottom - nb.top) / 2;
     }
-    const node = this.spawnNode(pb.right + MINDMAP_GAP_X, y - NODE_H / 2);
+    this.placeNodeLeftAt(node, pb.right + MINDMAP_GAP_X, cy);
     this.addConnector(ndId(sel)!, "right", ndId(node)!, "left");
     this.updateConnectors();
     this.focusNewNode(node);
@@ -673,18 +684,18 @@ export class CanvasController {
     const map = this.objByIdMap();
     const selB = sceneBoundsOf(sel);
     const parent = this.parentOf(ndId(sel)!, map);
+    const node = this.spawnNode();
+    const nb = sceneBoundsOf(node);
+    const cy = selB.bottom + MINDMAP_GAP_Y + (nb.bottom - nb.top) / 2;
     if (parent) {
       const pb = sceneBoundsOf(parent);
-      const node = this.spawnNode(
-        pb.right + MINDMAP_GAP_X,
-        selB.bottom + MINDMAP_GAP_Y,
-      );
+      this.placeNodeLeftAt(node, pb.right + MINDMAP_GAP_X, cy);
       this.addConnector(ndId(parent)!, "right", ndId(node)!, "left");
       this.updateConnectors();
       this.focusNewNode(node);
     } else {
-      // No parent — a nearby free sibling, no connector invented.
-      const node = this.spawnNode(selB.left, selB.bottom + MINDMAP_GAP_Y);
+      // No parent — a nearby free sibling below the selection, no connector invented.
+      this.centerAt(node, { x: selB.cx, y: cy });
       this.focusNewNode(node);
     }
   }
@@ -1574,6 +1585,9 @@ export class CanvasController {
       (note as NdObj).ndId = nid();
       this.setTool("select");
       this.canvas.add(note);
+      // Center the card on the click — padding-expanded bounds mean raw left/top
+      // don't map to the visible card position.
+      this.centerAt(note, p);
       this.canvas.setActiveObject(note);
       note.enterEditing();
       note.hiddenTextarea?.focus();
