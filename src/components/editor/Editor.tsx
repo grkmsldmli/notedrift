@@ -465,7 +465,7 @@ export default function Editor() {
     pages.find((p) => p.id === currentId)?.title ?? "Untitled";
 
   return (
-    <div className="flex h-dvh flex-col overflow-hidden bg-nd-bg text-nd-text">
+    <div className="nd-safe flex h-dvh flex-col overflow-hidden bg-nd-bg text-nd-text">
       <TopBar
         pages={pages}
         currentPageId={currentId}
@@ -488,7 +488,7 @@ export default function Editor() {
       >
         <div
           ref={paperRef}
-          className="relative h-full w-full overflow-hidden rounded-2xl bg-white shadow-[0_24px_60px_-24px_rgba(0,0,0,0.75)] ring-1 ring-black/40"
+          className="nd-paper relative h-full w-full overflow-hidden rounded-2xl bg-white shadow-[0_24px_60px_-24px_rgba(0,0,0,0.75)] ring-1 ring-black/40"
         >
           <canvas ref={canvasRef} />
         </div>

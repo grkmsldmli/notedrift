@@ -28,7 +28,7 @@ export function IconButton({
       aria-label={label}
       aria-pressed={active}
       className={[
-        "flex h-9 w-9 items-center justify-center rounded-lg transition-colors",
+        "nd-hit flex h-9 w-9 items-center justify-center rounded-lg transition-colors",
         "disabled:pointer-events-none disabled:opacity-40",
         active
           ? "bg-nd-accent/15 text-white ring-1 ring-nd-accent/40"

@@ -66,6 +66,8 @@ const dist = (a: Pt, b: Pt) => Math.hypot(a.x - b.x, a.y - b.y);
 const PERSIST_IDLE = 500;
 const PERSIST_MAXWAIT = 4000;
 const SNAP_SCREEN_PX = 6;
+/** Forgiving anchor/endpoint hit radius for touch & pen (mouse uses ANCHOR_HIT). */
+const ANCHOR_HIT_TOUCH = 26;
 
 const ndId = (o: fabric.FabricObject): string | undefined => (o as NdObj).ndId;
 const ndRole = (o: fabric.FabricObject): string | undefined => (o as NdObj).ndRole;
@@ -106,6 +108,17 @@ export class CanvasController {
   private spaceDown = false;
   private lastPan = { x: 0, y: 0 };
   private activeGuides: Guide[] = [];
+
+  // Touch / pen gestures (multi-touch is handled at the DOM level; Fabric v6 has
+  // no built-in pinch/two-finger pan).
+  private touchPoints = new Map<number, Pt>();
+  private gestureActive = false;
+  private gestureLatch = false; // suppress a leftover finger after a gesture
+  private lastMid: Pt = { x: 0, y: 0 };
+  private lastDist = 1;
+  private canvasRect: DOMRect | null = null;
+  private penSeen = false; // a stylus has been used → treat fingers as navigation
+  private fingerPan: { id: number; last: Pt } | null = null;
 
   // Connectors
   private anchorHost: fabric.FabricObject | null = null;
@@ -164,6 +177,7 @@ export class CanvasController {
     this.resize();
     this.setCanvasStyle(style);
     this.wireEvents();
+    this.attachTouchHandlers();
     this.applyToolMode();
     this.history.reset(this.snapshot());
     this.emit();
@@ -183,6 +197,7 @@ export class CanvasController {
 
   dispose(): void {
     this.disposed = true;
+    this.detachTouchHandlers();
     if (this.persistTimer) {
       clearTimeout(this.persistTimer);
       this.persistTimer = null;
@@ -1443,6 +1458,169 @@ export class CanvasController {
 
   /* ------------------------------ event wiring ---------------------------- */
 
+  /* --------------------------- touch / pen gestures ----------------------- */
+
+  private attachTouchHandlers(): void {
+    const el = this.paperEl;
+    el.addEventListener("pointerdown", this.onDomPointerDown, { capture: true });
+    el.addEventListener("pointermove", this.onDomPointerMove, {
+      capture: true,
+      passive: false,
+    });
+    el.addEventListener("pointerup", this.onDomPointerUp, { capture: true });
+    el.addEventListener("pointercancel", this.onDomPointerUp, { capture: true });
+  }
+
+  private detachTouchHandlers(): void {
+    const el = this.paperEl;
+    const opts = { capture: true } as EventListenerOptions;
+    el.removeEventListener("pointerdown", this.onDomPointerDown, opts);
+    el.removeEventListener("pointermove", this.onDomPointerMove, opts);
+    el.removeEventListener("pointerup", this.onDomPointerUp, opts);
+    el.removeEventListener("pointercancel", this.onDomPointerUp, opts);
+  }
+
+  /** Discard an in-progress single-finger stroke/transform (a finger became a gesture). */
+  private abortActiveInteraction(): void {
+    if (this.canvas.freeDrawingBrush) {
+      const b = new fabric.PencilBrush(this.canvas);
+      b.color = this.defaults.penColor;
+      b.width = this.defaults.penWidth;
+      this.canvas.freeDrawingBrush = b;
+    }
+    this.canvas.isDrawingMode = false;
+    this.cancelFabricTransform();
+    this.fingerPan = null;
+    if (this.draft) {
+      this.canvas.remove(this.draft);
+      this.draft = null;
+    }
+    this.drawing = false;
+    this.canvas.requestRenderAll();
+  }
+
+  private beginGesture(): void {
+    const pts = [...this.touchPoints.values()];
+    this.lastMid = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+    this.lastDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1;
+    this.canvasRect = this.canvas.upperCanvasEl.getBoundingClientRect();
+    this.gestureActive = true;
+    this.gestureLatch = true;
+    this.abortActiveInteraction();
+  }
+
+  private onDomPointerDown = (e: PointerEvent): void => {
+    if (e.pointerType === "pen") {
+      this.penSeen = true;
+      return; // let Fabric draw/select with the stylus
+    }
+    if (e.pointerType !== "touch") return; // mouse → unchanged desktop path
+
+    this.touchPoints.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (this.touchPoints.size >= 2) {
+      // Second finger → intercept before Fabric engages it, start pan/pinch.
+      e.stopPropagation();
+      e.preventDefault();
+      this.beginGesture();
+      return;
+    }
+
+    // Single finger. In Pen mode, once a stylus has been seen, a finger navigates
+    // (pans) instead of drawing — the best web-safe palm rejection.
+    if (this.tool === "pen" && this.penSeen) {
+      e.stopPropagation();
+      e.preventDefault();
+      this.fingerPan = { id: e.pointerId, last: { x: e.clientX, y: e.clientY } };
+    }
+    // Otherwise Fabric handles the single touch per the active tool.
+  };
+
+  private onDomPointerMove = (e: PointerEvent): void => {
+    if (e.pointerType !== "touch") return;
+    if (this.touchPoints.has(e.pointerId)) {
+      this.touchPoints.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    }
+
+    if (this.gestureActive && this.touchPoints.size >= 2 && this.canvasRect) {
+      e.stopPropagation();
+      e.preventDefault();
+      const pts = [...this.touchPoints.values()];
+      const mid = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+      const d = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1;
+      // Pan by the midpoint delta…
+      const vpt = this.canvas.viewportTransform;
+      vpt[4] += mid.x - this.lastMid.x;
+      vpt[5] += mid.y - this.lastMid.y;
+      this.canvas.setViewportTransform(vpt);
+      // …and pinch-zoom toward the midpoint (in canvas-element coords).
+      const at = { x: mid.x - this.canvasRect.left, y: mid.y - this.canvasRect.top };
+      const zoom = clamp(
+        this.canvas.getZoom() * (d / this.lastDist),
+        MIN_ZOOM,
+        MAX_ZOOM,
+      );
+      this.canvas.zoomToPoint(new fabric.Point(at.x, at.y), zoom);
+      this.updateGrid();
+      this.emit();
+      this.lastMid = mid;
+      this.lastDist = d;
+      return;
+    }
+
+    if (this.fingerPan && e.pointerId === this.fingerPan.id) {
+      e.stopPropagation();
+      e.preventDefault();
+      const vpt = this.canvas.viewportTransform;
+      vpt[4] += e.clientX - this.fingerPan.last.x;
+      vpt[5] += e.clientY - this.fingerPan.last.y;
+      this.canvas.setViewportTransform(vpt);
+      this.fingerPan.last = { x: e.clientX, y: e.clientY };
+      this.updateGrid();
+      this.emit();
+      return;
+    }
+
+    if (this.gestureLatch) {
+      e.stopPropagation();
+      e.preventDefault();
+    }
+  };
+
+  private onDomPointerUp = (e: PointerEvent): void => {
+    if (e.pointerType !== "touch") return;
+    this.touchPoints.delete(e.pointerId);
+
+    if (this.fingerPan && e.pointerId === this.fingerPan.id) {
+      this.fingerPan = null;
+      e.stopPropagation();
+      e.preventDefault();
+    }
+
+    if (this.gestureActive && this.touchPoints.size < 2) {
+      this.gestureActive = false;
+      e.stopPropagation();
+      e.preventDefault();
+    }
+
+    if (this.touchPoints.size === 0) {
+      if (this.gestureLatch) {
+        this.gestureLatch = false;
+        // Restore the drawing mode the active tool expects.
+        this.canvas.isDrawingMode = this.tool === "pen";
+      }
+    } else if (this.gestureLatch) {
+      e.stopPropagation();
+      e.preventDefault();
+    }
+  };
+
+  /** Forgiving hit radius for touch/pen input, tight for mouse. */
+  private anchorHitRadius(e: Event): number {
+    const pt = (e as PointerEvent).pointerType;
+    return pt === "touch" || pt === "pen" ? ANCHOR_HIT_TOUCH : ANCHOR_HIT;
+  }
+
   private wireEvents(): void {
     this.canvas.on("mouse:down:before", this.onMouseDownBefore);
     this.canvas.on("mouse:down", this.onMouseDown);
@@ -1505,6 +1683,7 @@ export class CanvasController {
     const e = opt.e as MouseEvent;
     if (e.button === 1) return;
     const vp = this.canvas.getViewportPoint(opt.e);
+    const hit = this.anchorHitRadius(opt.e);
 
     // Reassign a selected connector's endpoint?
     const active = this.canvas.getActiveObject();
@@ -1512,12 +1691,12 @@ export class CanvasController {
       const c = active as Connector;
       const e1 = this.toScreen({ x: c.x1 ?? 0, y: c.y1 ?? 0 });
       const e2 = this.toScreen({ x: c.x2 ?? 0, y: c.y2 ?? 0 });
-      if (dist(vp, e1) <= ANCHOR_HIT) {
+      if (dist(vp, e1) <= hit) {
         this.pendingReassign = { end: "source", connector: c };
         this.canvas.selection = false;
         return;
       }
-      if (dist(vp, e2) <= ANCHOR_HIT) {
+      if (dist(vp, e2) <= hit) {
         this.pendingReassign = { end: "target", connector: c };
         this.canvas.selection = false;
         return;
@@ -1529,7 +1708,7 @@ export class CanvasController {
     if (host && ndId(host)) {
       for (const a of ANCHORS) {
         const sp = this.toScreen(anchorScenePoint(host, a));
-        if (dist(vp, sp) <= ANCHOR_HIT) {
+        if (dist(vp, sp) <= hit) {
           this.pendingConnect = { sourceId: ndId(host)!, anchor: a };
           this.canvas.selection = false;
           return;

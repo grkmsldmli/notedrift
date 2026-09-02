@@ -216,7 +216,7 @@ export const TopBar = memo(function TopBar(props: TopBarProps) {
         <button
           type="button"
           onClick={onNewPage}
-          className="nd-gradient flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-white shadow-sm transition hover:opacity-90"
+          className="nd-hit nd-gradient flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-white shadow-sm transition hover:opacity-90"
         >
           <Plus size={16} />
           <span className="hidden sm:inline">New Page</span>

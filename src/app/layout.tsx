@@ -23,6 +23,12 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   themeColor: "#0a0b10",
   colorScheme: "dark",
+  width: "device-width",
+  initialScale: 1,
+  // Extend under notches/rounded corners so env(safe-area-inset-*) is meaningful.
+  // User scaling is intentionally NOT disabled — the page stays accessible; the
+  // canvas owns its own gestures via touch-action instead.
+  viewportFit: "cover",
 };
 
 export default function RootLayout({

@@ -38,7 +38,7 @@ export const ZoomControls = memo(function ZoomControls({
         onClick={onZoomOut}
         title="Zoom out  (Ctrl -)"
         aria-label="Zoom out"
-        className="flex h-8 w-8 items-center justify-center rounded-lg text-nd-muted transition-colors hover:bg-white/5 hover:text-nd-text"
+        className="nd-hit flex h-8 w-8 items-center justify-center rounded-lg text-nd-muted transition-colors hover:bg-white/5 hover:text-nd-text"
       >
         <Minus size={16} />
       </button>
@@ -47,7 +47,7 @@ export const ZoomControls = memo(function ZoomControls({
         type="button"
         onClick={onReset}
         title="Reset to 100%"
-        className="min-w-14 rounded-lg px-2 py-1 text-center text-sm font-medium tabular-nums text-nd-text transition-colors hover:bg-white/5"
+        className="nd-hit min-w-14 rounded-lg px-2 py-1 text-center text-sm font-medium tabular-nums text-nd-text transition-colors hover:bg-white/5"
       >
         {pct}%
       </button>
@@ -57,7 +57,7 @@ export const ZoomControls = memo(function ZoomControls({
         onClick={onZoomIn}
         title="Zoom in  (Ctrl +)"
         aria-label="Zoom in"
-        className="flex h-8 w-8 items-center justify-center rounded-lg text-nd-muted transition-colors hover:bg-white/5 hover:text-nd-text"
+        className="nd-hit flex h-8 w-8 items-center justify-center rounded-lg text-nd-muted transition-colors hover:bg-white/5 hover:text-nd-text"
       >
         <Plus size={16} />
       </button>
@@ -72,7 +72,7 @@ export const ZoomControls = memo(function ZoomControls({
           aria-label="Canvas appearance"
           aria-expanded={open}
           className={[
-            "flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs font-medium transition-colors",
+            "nd-hit flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs font-medium transition-colors",
             open
               ? "bg-white/10 text-nd-text"
               : "text-nd-muted hover:bg-white/5 hover:text-nd-text",

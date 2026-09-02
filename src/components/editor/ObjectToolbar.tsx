@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useState } from "react";
+import { memo, useLayoutEffect, useRef, useState } from "react";
 import {
   AlignCenter,
   AlignLeft,
@@ -57,15 +57,44 @@ export const ObjectToolbar = memo(function ObjectToolbar({
   onLayer,
 }: ObjectToolbarProps) {
   const [layerOpen, setLayerOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const [box, setBox] = useState<{ left: number; top: number } | null>(null);
+
+  // Collision-aware placement: measure the toolbar and keep it fully on-screen —
+  // prefer above the object, else below, clamped inside the canvas area and clear
+  // of the floating left toolbar. (Improves desktop and tablet alike.)
+  useLayoutEffect(() => {
+    const el = ref.current;
+    const rect = selection.rect;
+    if (!el || selection.kind === "none" || !rect) return;
+    const container = el.offsetParent as HTMLElement | null;
+    const cw = container?.clientWidth ?? window.innerWidth;
+    const ch = container?.clientHeight ?? window.innerHeight;
+    const tw = el.offsetWidth;
+    const th = el.offsetHeight;
+
+    const GAP = 10;
+    const MARGIN = 8;
+    const LEFT_RAIL = 68; // keep clear of the floating left toolbar
+
+    const ox = paperOffset.left + rect.left;
+    const oy = paperOffset.top + rect.top;
+    const ocx = ox + rect.width / 2;
+
+    let left = ocx - tw / 2;
+    left = Math.max(LEFT_RAIL + MARGIN, Math.min(cw - MARGIN - tw, left));
+    if (left < MARGIN) left = MARGIN; // extremely narrow viewport fallback
+
+    let top = oy - GAP - th; // prefer above
+    if (top < MARGIN) top = oy + rect.height + GAP; // else below
+    top = Math.max(MARGIN, Math.min(ch - MARGIN - th, top)); // clamp within canvas
+
+    setBox({ left: Math.round(left), top: Math.round(top) });
+  }, [selection, paperOffset]);
 
   if (selection.kind === "none" || !selection.rect) return null;
 
-  const { rect, kind } = selection;
-  const placeBelow = rect.top < 64;
-  const left = paperOffset.left + rect.left + rect.width / 2;
-  const top = placeBelow
-    ? paperOffset.top + rect.top + rect.height + 10
-    : paperOffset.top + rect.top - 10;
+  const { kind } = selection;
 
   const fontIdx = nearestIndex(selection.fontSize ?? 24);
   const decFont = () =>
@@ -229,12 +258,9 @@ export const ObjectToolbar = memo(function ObjectToolbar({
 
   return (
     <div
+      ref={ref}
       className="pointer-events-auto absolute z-30"
-      style={{
-        left,
-        top,
-        transform: placeBelow ? "translate(-50%, 0)" : "translate(-50%, -100%)",
-      }}
+      style={box ? { left: box.left, top: box.top } : { left: -9999, top: -9999 }}
     >
       <div className="flex items-center gap-1 rounded-xl border border-nd-border bg-nd-surface/95 px-1.5 py-1 shadow-2xl backdrop-blur">
         {styleSection()}
