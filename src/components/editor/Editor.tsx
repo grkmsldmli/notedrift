@@ -8,9 +8,11 @@ import {
   loadCanvasDoc,
   loadPages,
   loadPrefs,
+  loadToolDefaults,
   savePages,
   savePrefs,
   saveCanvasDoc,
+  saveToolDefaults,
   setCurrentPageId,
   uid,
 } from "@/lib/storage";
@@ -19,11 +21,15 @@ import type {
   CanvasStyle,
   EditorState,
   PageMeta,
+  StylePatch,
   Tool,
+  ToolDefaults,
 } from "@/lib/types";
 import { Toolbar } from "./Toolbar";
 import { TopBar } from "./TopBar";
 import { ZoomControls } from "./ZoomControls";
+import { ToolOptionsBar } from "./ToolOptionsBar";
+import { ObjectToolbar, type LayerOp } from "./ObjectToolbar";
 import { Logo } from "./Logo";
 
 const INITIAL_STATE: EditorState = {
@@ -33,6 +39,7 @@ const INITIAL_STATE: EditorState = {
   canRedo: false,
   canvasStyle: "dots",
   hasSelection: false,
+  selection: { kind: "none", count: 0, rect: null },
 };
 
 const TOOL_KEYS: Record<string, Tool> = {
@@ -73,6 +80,8 @@ export default function Editor() {
   const [state, setState] = useState<EditorState>(INITIAL_STATE);
   const [pages, setPages] = useState<PageMeta[]>([]);
   const [currentId, setCurrentId] = useState<string | null>(null);
+  const [toolDefaults, setToolDefaults] = useState<ToolDefaults | null>(null);
+  const [paperOffset, setPaperOffset] = useState({ left: 0, top: 0 });
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -82,7 +91,6 @@ export default function Editor() {
     pagesRef.current = pages;
   }, [pages]);
 
-  // Debounced autosave target: always the *current* page.
   const persistDoc = useCallback((doc: CanvasDoc) => {
     const id = currentIdRef.current;
     if (!id) return;
@@ -105,6 +113,8 @@ export default function Editor() {
     let list = loadPages();
     let curId = getCurrentPageId();
     const prefs = loadPrefs();
+    const defaults = loadToolDefaults();
+    setToolDefaults(defaults);
 
     if (list.length === 0) {
       const first = newPageMeta(prefs.defaultStyle);
@@ -119,7 +129,6 @@ export default function Editor() {
     }
 
     const curPage = list.find((p) => p.id === curId);
-
     setPages(list);
     setCurrentId(curId);
     currentIdRef.current = curId;
@@ -130,6 +139,7 @@ export default function Editor() {
       paperEl,
       { onState: setState, onPersist: persistDoc },
       styleOf(curPage),
+      defaults,
     );
     controllerRef.current = controller;
 
@@ -139,7 +149,11 @@ export default function Editor() {
       setReady(true);
     });
 
-    const ro = new ResizeObserver(() => controller.resize());
+    setPaperOffset({ left: paperEl.offsetLeft, top: paperEl.offsetTop });
+    const ro = new ResizeObserver(() => {
+      controller.resize();
+      setPaperOffset({ left: paperEl.offsetLeft, top: paperEl.offsetTop });
+    });
     ro.observe(paperEl);
 
     return () => {
@@ -159,14 +173,12 @@ export default function Editor() {
       const typingInField =
         !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA");
 
-      // Escape: exit text editing, otherwise return to the Select tool.
       if (e.key === "Escape") {
         if (c.isEditing()) c.exitEditing();
         else if (!typingInField) c.setTool("select");
         return;
       }
 
-      // Never let shortcuts fire while the user is typing.
       if (c.isEditing() || typingInField) return;
 
       const meta = e.metaKey || e.ctrlKey;
@@ -179,6 +191,9 @@ export default function Editor() {
         } else if (k === "y") {
           e.preventDefault();
           c.redo();
+        } else if (k === "d") {
+          e.preventDefault();
+          void c.duplicateSelection();
         } else if (k === "c") {
           void c.copySelection();
         } else if (k === "v") {
@@ -225,7 +240,7 @@ export default function Editor() {
     };
   }, []);
 
-  // Paste images from clipboard anywhere (but not while editing text).
+  // Paste images from clipboard (not while editing text).
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
       const c = controllerRef.current;
@@ -246,8 +261,7 @@ export default function Editor() {
     return () => window.removeEventListener("paste", onPaste);
   }, []);
 
-  // Flush the autosave before the tab is hidden or closed so a refresh never
-  // loses the most recent edit.
+  // Flush autosave before tab hide/close.
   useEffect(() => {
     const flush = () => controllerRef.current?.flush();
     const onVisibility = () => {
@@ -362,7 +376,7 @@ export default function Editor() {
     controllerRef.current?.exportPNG(slugify(title));
   }, []);
 
-  const onSetStyle = useCallback((style: CanvasStyle) => {
+  const onSetPageStyle = useCallback((style: CanvasStyle) => {
     const id = currentIdRef.current;
     if (!id) return;
     controllerRef.current?.setCanvasStyle(style);
@@ -374,6 +388,55 @@ export default function Editor() {
     });
   }, []);
 
+  const applyDefaults = useCallback((patch: Partial<ToolDefaults>) => {
+    setToolDefaults((prev) => {
+      const base = prev ?? loadToolDefaults();
+      const next = { ...base, ...patch };
+      saveToolDefaults(next);
+      return next;
+    });
+    controllerRef.current?.setDefaults(patch);
+  }, []);
+
+  const onStyle = useCallback(
+    (patch: StylePatch) => {
+      controllerRef.current?.applyStyle(patch);
+      // Remember the styling so newly created objects match.
+      const d: Partial<ToolDefaults> = {};
+      if (patch.stroke !== undefined) {
+        d.shapeStroke = patch.stroke;
+        d.lineStroke = patch.stroke;
+      }
+      if (patch.strokeWidth !== undefined) {
+        d.shapeStrokeWidth = patch.strokeWidth;
+        d.lineStrokeWidth = patch.strokeWidth;
+      }
+      if (patch.fill !== undefined) d.shapeFill = patch.fill;
+      if (patch.textColor !== undefined) d.textColor = patch.textColor;
+      if (patch.fontSize !== undefined) d.textFontSize = patch.fontSize;
+      if (patch.noteFill !== undefined) d.noteFill = patch.noteFill;
+      if (Object.keys(d).length > 0) applyDefaults(d);
+    },
+    [applyDefaults],
+  );
+
+  const onDuplicate = useCallback(
+    () => void controllerRef.current?.duplicateSelection(),
+    [],
+  );
+  const onDeleteSel = useCallback(
+    () => controllerRef.current?.deleteSelection(),
+    [],
+  );
+  const onLayer = useCallback((op: LayerOp) => {
+    const c = controllerRef.current;
+    if (!c) return;
+    if (op === "front") c.bringToFront();
+    else if (op === "forward") c.bringForward();
+    else if (op === "backward") c.sendBackward();
+    else c.sendToBack();
+  }, []);
+
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     const c = controllerRef.current;
@@ -382,7 +445,6 @@ export default function Editor() {
       if (file.type.startsWith("image/")) void c.addImageFile(file);
     }
   }, []);
-
   const onDragOver = useCallback((e: React.DragEvent) => e.preventDefault(), []);
 
   const currentTitle =
@@ -423,13 +485,30 @@ export default function Editor() {
           onPickImage={onPickImage}
         />
 
+        {toolDefaults && (
+          <ToolOptionsBar
+            tool={state.tool}
+            defaults={toolDefaults}
+            onSetDefault={applyDefaults}
+          />
+        )}
+
+        <ObjectToolbar
+          selection={state.selection}
+          paperOffset={paperOffset}
+          onStyle={onStyle}
+          onDuplicate={onDuplicate}
+          onDelete={onDeleteSel}
+          onLayer={onLayer}
+        />
+
         <ZoomControls
           zoom={state.zoom}
           canvasStyle={state.canvasStyle}
           onZoomIn={onZoomIn}
           onZoomOut={onZoomOut}
           onReset={onReset}
-          onSetStyle={onSetStyle}
+          onSetStyle={onSetPageStyle}
         />
 
         {!ready && (

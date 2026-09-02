@@ -1,24 +1,31 @@
 // CanvasController: the imperative core of the NoteDrift editor.
 //
-// It owns the Fabric canvas and all interaction logic (tools, drawing, zoom/pan,
-// history, autosave, export). React never touches Fabric directly — it creates
-// one controller, subscribes to state via `onState`, and calls public methods.
+// It owns the Fabric canvas and all interaction logic (tools, drawing, styling,
+// zoom/pan, history, autosave, export, alignment guides). React never touches
+// Fabric directly — it creates one controller, subscribes to state via
+// `onState`, and calls public methods.
 
 import * as fabric from "fabric";
 import {
   CANVAS_FONT,
-  COLORS,
   GRID_COLOR,
   GRID_LINE_COLOR,
   GRID_SIZE,
   MAX_ZOOM,
   MIN_ZOOM,
-  PEN_WIDTH,
-  STROKE_WIDTH,
 } from "./constants";
 import { History } from "./history";
-import { makeArrow, makeStickyNote } from "./shapes";
-import type { CanvasDoc, CanvasStyle, EditorState, Tool } from "./types";
+import { makeArrow, makeStickyNote, styleArrow } from "./shapes";
+import type {
+  CanvasDoc,
+  CanvasStyle,
+  EditorState,
+  ObjKind,
+  SelectionInfo,
+  StylePatch,
+  ToolDefaults,
+  Tool,
+} from "./types";
 
 export interface ControllerCallbacks {
   onState: (state: EditorState) => void;
@@ -29,12 +36,28 @@ export interface ControllerCallbacks {
 type PointerInfo = fabric.TPointerEventInfo<fabric.TPointerEvent>;
 type WheelInfo = fabric.TPointerEventInfo<WheelEvent>;
 
+interface Guide {
+  axis: "v" | "h";
+  pos: number; // scene coordinate
+}
+
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
-// Autosave debounce: save ~0.5s after the last change, but never let more than
-// PERSIST_MAXWAIT elapse during continuous activity.
 const PERSIST_IDLE = 500;
 const PERSIST_MAXWAIT = 4000;
+const SNAP_SCREEN_PX = 6;
+
+/** Categorize a Fabric object for the contextual toolbar. */
+function kindOf(obj: fabric.FabricObject): ObjKind {
+  // Fabric v7 exposes lowercased instance types (e.g. "stickynote", "i-text").
+  const t = ((obj as { type?: string }).type ?? "").toLowerCase();
+  if (t === "stickynote") return "note";
+  if (t === "i-text" || t === "itext" || t === "textbox" || t === "text")
+    return "text";
+  if (t === "path") return "path";
+  if (t === "image") return "image";
+  return "shape";
+}
 
 export class CanvasController {
   readonly canvas: fabric.Canvas;
@@ -44,9 +67,10 @@ export class CanvasController {
 
   private tool: Tool = "select";
   private canvasStyle: CanvasStyle;
+  private defaults: ToolDefaults;
 
   // Interaction state
-  private suppress = false; // suppress history/persist during programmatic loads
+  private suppress = false;
   private disposed = false;
   private drawing = false;
   private draft: fabric.FabricObject | null = null;
@@ -54,20 +78,18 @@ export class CanvasController {
   private cur = { x: 0, y: 0 };
   private isPanning = false;
   private isErasing = false;
+  private interacting = false; // moving/scaling/rotating an object
   private spaceDown = false;
   private lastPan = { x: 0, y: 0 };
   private clipboard: fabric.FabricObject | null = null;
+  private activeGuides: Guide[] = [];
 
   // Autosave bookkeeping
   private persistTimer: ReturnType<typeof setTimeout> | null = null;
   private persistPending = false;
   private lastPersistAt = 0;
 
-  // rAF-coalesced state emission (avoids a React render per raw event)
   private emitScheduled = false;
-
-  // Serializes async canvas loads so rapid undo/redo/page-switches can't
-  // interleave `loadFromJSON` calls and corrupt the result.
   private loadQueue: Promise<void> = Promise.resolve();
 
   constructor(
@@ -75,10 +97,12 @@ export class CanvasController {
     paperEl: HTMLElement,
     cb: ControllerCallbacks,
     style: CanvasStyle,
+    defaults: ToolDefaults,
   ) {
     this.paperEl = paperEl;
     this.cb = cb;
     this.canvasStyle = style;
+    this.defaults = defaults;
 
     this.canvas = new fabric.Canvas(el, {
       preserveObjectStacking: true,
@@ -86,12 +110,12 @@ export class CanvasController {
       fireRightClick: false,
       stopContextMenu: true,
       enableRetinaScaling: true,
-      backgroundColor: undefined, // transparent: the white paper shows through
+      backgroundColor: undefined,
     });
 
     this.canvas.freeDrawingBrush = new fabric.PencilBrush(this.canvas);
-    this.canvas.freeDrawingBrush.color = COLORS.ink;
-    this.canvas.freeDrawingBrush.width = PEN_WIDTH;
+    this.canvas.freeDrawingBrush.color = defaults.penColor;
+    this.canvas.freeDrawingBrush.width = defaults.penWidth;
 
     this.resize();
     this.setCanvasStyle(style);
@@ -109,6 +133,7 @@ export class CanvasController {
     if (w > 0 && h > 0) {
       this.canvas.setDimensions({ width: w, height: h });
       this.updateGrid();
+      this.emit();
     }
   }
 
@@ -127,6 +152,83 @@ export class CanvasController {
     return JSON.stringify(this.canvas.toJSON());
   }
 
+  private screenRectOf(obj: fabric.FabricObject): {
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  } {
+    obj.setCoords();
+    const c = obj.aCoords;
+    const vpt = this.canvas.viewportTransform;
+    const xs = [c.tl.x, c.tr.x, c.br.x, c.bl.x].map((x) => x * vpt[0] + vpt[4]);
+    const ys = [c.tl.y, c.tr.y, c.br.y, c.bl.y].map((y) => y * vpt[3] + vpt[5]);
+    const left = Math.min(...xs);
+    const top = Math.min(...ys);
+    return { left, top, width: Math.max(...xs) - left, height: Math.max(...ys) - top };
+  }
+
+  private styleOf(obj: fabric.FabricObject, kind: ObjKind): Partial<SelectionInfo> {
+    if (kind === "note") {
+      const n = obj as fabric.Textbox;
+      return {
+        noteFill: n.backgroundColor as string,
+        fontSize: n.fontSize,
+        textColor: n.fill as string,
+        textAlign: n.textAlign,
+      };
+    }
+    if (kind === "text") {
+      const t = obj as fabric.Textbox;
+      return {
+        textColor: t.fill as string,
+        fontSize: t.fontSize,
+        bold: t.fontWeight === "bold",
+        textAlign: t.textAlign,
+      };
+    }
+    if (kind === "shape") {
+      if (obj instanceof fabric.Group) {
+        const line = obj.getObjects()[0];
+        return {
+          stroke: (line?.stroke as string) ?? undefined,
+          strokeWidth: line?.strokeWidth,
+          fill: "transparent",
+        };
+      }
+      return {
+        stroke: obj.stroke as string,
+        strokeWidth: obj.strokeWidth,
+        fill: (obj.fill as string) ?? "transparent",
+      };
+    }
+    if (kind === "path") {
+      return { stroke: obj.stroke as string, strokeWidth: obj.strokeWidth };
+    }
+    return {};
+  }
+
+  private buildSelection(): SelectionInfo {
+    const active = this.canvas.getActiveObject();
+    if (!active) return { kind: "none", count: 0, rect: null };
+
+    const objs = this.canvas.getActiveObjects();
+    // Hide the contextual toolbar while actively transforming.
+    const rect = this.interacting ? null : this.screenRectOf(active);
+
+    if (objs.length > 1) {
+      const kinds = new Set(objs.map(kindOf));
+      if (kinds.size === 1) {
+        const k = [...kinds][0];
+        return { kind: k, count: objs.length, rect, ...this.styleOf(objs[0], k) };
+      }
+      return { kind: "mixed", count: objs.length, rect };
+    }
+
+    const k = kindOf(active);
+    return { kind: k, count: 1, rect, ...this.styleOf(active, k) };
+  }
+
   private getState(): EditorState {
     return {
       tool: this.tool,
@@ -135,10 +237,10 @@ export class CanvasController {
       canRedo: this.history.canRedo(),
       canvasStyle: this.canvasStyle,
       hasSelection: this.canvas.getActiveObjects().length > 0,
+      selection: this.buildSelection(),
     };
   }
 
-  // Coalesce many rapid emits (drawing, zoom, pan) into one React update/frame.
   private emit(): void {
     if (this.emitScheduled || this.disposed) return;
     this.emitScheduled = true;
@@ -168,7 +270,6 @@ export class CanvasController {
     }, delay);
   }
 
-  /** Persist the current document immediately (page switch, unload, new page). */
   flush(): void {
     if (this.persistTimer) {
       clearTimeout(this.persistTimer);
@@ -178,6 +279,16 @@ export class CanvasController {
     this.persistPending = false;
     this.lastPersistAt = Date.now();
     this.cb.onPersist(this.canvas.toJSON());
+  }
+
+  /* ------------------------------ tool defaults --------------------------- */
+
+  setDefaults(patch: Partial<ToolDefaults>): void {
+    this.defaults = { ...this.defaults, ...patch };
+    if (this.tool === "pen" && this.canvas.freeDrawingBrush) {
+      this.canvas.freeDrawingBrush.color = this.defaults.penColor;
+      this.canvas.freeDrawingBrush.width = this.defaults.penWidth;
+    }
   }
 
   /* -------------------------------- tools --------------------------------- */
@@ -237,14 +348,12 @@ export class CanvasController {
     c.isDrawingMode = this.tool === "pen";
 
     if (this.tool === "pen" && c.freeDrawingBrush) {
-      c.freeDrawingBrush.color = COLORS.ink;
-      c.freeDrawingBrush.width = PEN_WIDTH;
+      c.freeDrawingBrush.color = this.defaults.penColor;
+      c.freeDrawingBrush.width = this.defaults.penWidth;
     }
 
     c.selection = this.tool === "select";
-    // Only "select" and "eraser" need to hit-test objects.
     c.skipTargetFind = !(this.tool === "select" || this.tool === "eraser");
-
     c.defaultCursor = this.baseCursor();
     c.hoverCursor = this.tool === "select" ? "move" : this.baseCursor();
 
@@ -259,7 +368,53 @@ export class CanvasController {
     c.requestRenderAll();
   }
 
-  /* ---------------------------- clipboard / all --------------------------- */
+  /* ------------------------------- styling -------------------------------- */
+
+  applyStyle(patch: StylePatch): void {
+    const objs = this.canvas.getActiveObjects();
+    if (objs.length === 0) return;
+
+    for (const obj of objs) {
+      const k = kindOf(obj);
+
+      if (patch.stroke !== undefined) {
+        if (obj instanceof fabric.Group) styleArrow(obj, { stroke: patch.stroke });
+        else if (k === "shape" || k === "path") obj.set("stroke", patch.stroke);
+      }
+      if (patch.strokeWidth !== undefined) {
+        if (obj instanceof fabric.Group)
+          styleArrow(obj, { strokeWidth: patch.strokeWidth });
+        else if (k === "shape" || k === "path")
+          obj.set("strokeWidth", patch.strokeWidth);
+      }
+      if (patch.fill !== undefined) {
+        if (k === "shape" && !(obj instanceof fabric.Group)) obj.set("fill", patch.fill);
+      }
+      if (patch.textColor !== undefined && (k === "text" || k === "note")) {
+        obj.set("fill", patch.textColor);
+      }
+      if (patch.noteFill !== undefined && k === "note") {
+        obj.set("backgroundColor", patch.noteFill);
+      }
+      if (patch.fontSize !== undefined && (k === "text" || k === "note")) {
+        obj.set("fontSize", patch.fontSize);
+        (obj as fabric.Textbox).initDimensions?.();
+      }
+      if (patch.bold !== undefined && k === "text") {
+        obj.set("fontWeight", patch.bold ? "bold" : "normal");
+      }
+      if (patch.textAlign !== undefined && (k === "text" || k === "note")) {
+        obj.set("textAlign", patch.textAlign);
+      }
+      obj.set("dirty", true);
+    }
+
+    this.canvas.requestRenderAll();
+    this.recordHistory();
+    this.schedulePersist();
+  }
+
+  /* ---------------------------- duplicate / clip -------------------------- */
 
   async copySelection(): Promise<void> {
     const active = this.canvas.getActiveObject();
@@ -269,7 +424,16 @@ export class CanvasController {
 
   async pasteClipboard(): Promise<void> {
     if (!this.clipboard) return;
-    const clone = await this.clipboard.clone();
+    await this.placeClone(await this.clipboard.clone());
+  }
+
+  async duplicateSelection(): Promise<void> {
+    const active = this.canvas.getActiveObject();
+    if (!active) return;
+    await this.placeClone(await active.clone());
+  }
+
+  private async placeClone(clone: fabric.FabricObject): Promise<void> {
     this.canvas.discardActiveObject();
     clone.set({
       left: (clone.left ?? 0) + 24,
@@ -304,6 +468,30 @@ export class CanvasController {
     }
     this.canvas.requestRenderAll();
     this.emit();
+  }
+
+  /* ------------------------------ layer order ----------------------------- */
+
+  private layerOp(fn: (o: fabric.FabricObject) => void): void {
+    const objs = this.canvas.getActiveObjects();
+    if (objs.length === 0) return;
+    objs.forEach(fn);
+    this.canvas.requestRenderAll();
+    this.recordHistory();
+    this.schedulePersist();
+  }
+
+  bringForward(): void {
+    this.layerOp((o) => this.canvas.bringObjectForward(o));
+  }
+  sendBackward(): void {
+    this.layerOp((o) => this.canvas.sendObjectBackwards(o));
+  }
+  bringToFront(): void {
+    this.layerOp((o) => this.canvas.bringObjectToFront(o));
+  }
+  sendToBack(): void {
+    this.layerOp((o) => this.canvas.sendObjectToBack(o));
   }
 
   /* ------------------------------ undo/redo ------------------------------- */
@@ -354,11 +542,9 @@ export class CanvasController {
   zoomIn(): void {
     this.applyZoom(this.canvas.getZoom() * 1.2);
   }
-
   zoomOut(): void {
     this.applyZoom(this.canvas.getZoom() / 1.2);
   }
-
   resetZoom(): void {
     this.canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
     this.updateGrid();
@@ -447,8 +633,8 @@ export class CanvasController {
     const text = new fabric.IText("", {
       left: x,
       top: y,
-      fontSize: 24,
-      fill: COLORS.ink,
+      fontSize: this.defaults.textFontSize,
+      fill: this.defaults.textColor,
       fontFamily: CANVAS_FONT,
     });
     this.setTool("select");
@@ -461,7 +647,6 @@ export class CanvasController {
 
   /* ------------------------------- documents ------------------------------ */
 
-  /** Load a page document (or clear if undefined/empty). Resets history. */
   loadDoc(doc: CanvasDoc | undefined): Promise<void> {
     return this.runExclusive(async () => {
       this.suppress = true;
@@ -480,7 +665,6 @@ export class CanvasController {
     });
   }
 
-  /** Reset to a blank page (New Page). Persists the empty doc. */
   clearPage(): void {
     void this.runExclusive(async () => {
       this.suppress = true;
@@ -498,7 +682,6 @@ export class CanvasController {
 
   /* -------------------------------- export -------------------------------- */
 
-  /** Export all content as a PNG (2x) on a white background and download it. */
   exportPNG(fileName = "notedrift"): void {
     const c = this.canvas;
     const objects = c.getObjects();
@@ -507,10 +690,8 @@ export class CanvasController {
     const prevW = c.getWidth();
     const prevH = c.getHeight();
 
-    // Never export while an object is selected — selection handles are UI, and
-    // they render onto the upper canvas, not the export, but discarding keeps
-    // the exported bitmap unquestionably content-only.
     c.discardActiveObject();
+    this.activeGuides = [];
 
     let dataUrl: string;
 
@@ -523,7 +704,6 @@ export class CanvasController {
       const pad = 48;
       const w = Math.ceil(b.width + pad * 2);
       const h = Math.ceil(b.height + pad * 2);
-      // Keep the exported bitmap within a sane pixel budget.
       const multiplier = w * 2 > 12000 || h * 2 > 12000 ? 1 : 2;
 
       c.setDimensions({ width: w, height: h });
@@ -548,9 +728,12 @@ export class CanvasController {
     a.remove();
   }
 
-  private contentBounds(
-    objects: fabric.FabricObject[],
-  ): { left: number; top: number; width: number; height: number } {
+  private contentBounds(objects: fabric.FabricObject[]): {
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  } {
     let minX = Infinity;
     let minY = Infinity;
     let maxX = -Infinity;
@@ -569,6 +752,101 @@ export class CanvasController {
     return { left: minX, top: minY, width: maxX - minX, height: maxY - minY };
   }
 
+  /* -------------------------- alignment guides ---------------------------- */
+
+  private sceneBounds(obj: fabric.FabricObject) {
+    const c = obj.aCoords;
+    const xs = [c.tl.x, c.tr.x, c.br.x, c.bl.x];
+    const ys = [c.tl.y, c.tr.y, c.br.y, c.bl.y];
+    const left = Math.min(...xs);
+    const right = Math.max(...xs);
+    const top = Math.min(...ys);
+    const bottom = Math.max(...ys);
+    return { left, right, top, bottom, cx: (left + right) / 2, cy: (top + bottom) / 2 };
+  }
+
+  private applySnap(obj: fabric.FabricObject): void {
+    const zoom = this.canvas.getZoom();
+    const threshold = SNAP_SCREEN_PX / zoom;
+    obj.setCoords();
+    const b = this.sceneBounds(obj);
+    const selected = new Set(this.canvas.getActiveObjects());
+
+    const movingX = [b.left, b.cx, b.right];
+    const movingY = [b.top, b.cy, b.bottom];
+
+    let bestV: { delta: number; pos: number } | null = null;
+    let bestH: { delta: number; pos: number } | null = null;
+
+    this.canvas.forEachObject((o) => {
+      if (o === obj || selected.has(o)) return;
+      o.setCoords();
+      const ob = this.sceneBounds(o);
+      const targetX = [ob.left, ob.cx, ob.right];
+      const targetY = [ob.top, ob.cy, ob.bottom];
+      for (const mv of movingX)
+        for (const tv of targetX) {
+          const d = tv - mv;
+          if (Math.abs(d) <= threshold && (!bestV || Math.abs(d) < Math.abs(bestV.delta)))
+            bestV = { delta: d, pos: tv };
+        }
+      for (const mv of movingY)
+        for (const tv of targetY) {
+          const d = tv - mv;
+          if (Math.abs(d) <= threshold && (!bestH || Math.abs(d) < Math.abs(bestH.delta)))
+            bestH = { delta: d, pos: tv };
+        }
+    });
+
+    const guides: Guide[] = [];
+    if (bestV) {
+      obj.set("left", (obj.left ?? 0) + (bestV as { delta: number }).delta);
+      guides.push({ axis: "v", pos: (bestV as { pos: number }).pos });
+    }
+    if (bestH) {
+      obj.set("top", (obj.top ?? 0) + (bestH as { delta: number }).delta);
+      guides.push({ axis: "h", pos: (bestH as { pos: number }).pos });
+    }
+    if (bestV || bestH) obj.setCoords();
+    this.activeGuides = guides;
+  }
+
+  private drawGuides(): void {
+    if (this.activeGuides.length === 0) return;
+    const ctx = this.canvas.contextTop;
+    if (!ctx) return;
+    const vpt = this.canvas.viewportTransform;
+    const retina = this.canvas.getRetinaScaling();
+    const W = this.canvas.getWidth();
+    const H = this.canvas.getHeight();
+    ctx.save();
+    ctx.setTransform(retina, 0, 0, retina, 0, 0);
+    ctx.strokeStyle = "rgba(91, 140, 255, 0.95)";
+    ctx.lineWidth = 1;
+    ctx.setLineDash([5, 4]);
+    for (const g of this.activeGuides) {
+      ctx.beginPath();
+      if (g.axis === "v") {
+        const x = g.pos * vpt[0] + vpt[4];
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, H);
+      } else {
+        const y = g.pos * vpt[3] + vpt[5];
+        ctx.moveTo(0, y);
+        ctx.lineTo(W, y);
+      }
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  private endInteraction(): void {
+    if (!this.interacting && this.activeGuides.length === 0) return;
+    this.interacting = false;
+    this.activeGuides = [];
+    this.canvas.requestRenderAll();
+  }
+
   /* ------------------------------ event wiring ---------------------------- */
 
   private wireEvents(): void {
@@ -577,13 +855,31 @@ export class CanvasController {
     this.canvas.on("mouse:up", this.onMouseUp);
     this.canvas.on("mouse:wheel", this.onWheel);
     this.canvas.on("mouse:dblclick", this.onDblClick);
+    this.canvas.on("after:render", () => this.drawGuides());
+
+    this.canvas.on("object:moving", (opt) => {
+      const obj = opt.target;
+      if (!obj) return;
+      this.interacting = true;
+      this.applySnap(obj);
+      this.canvas.requestRenderAll();
+      this.emit();
+    });
+    this.canvas.on("object:scaling", () => {
+      this.interacting = true;
+      this.emit();
+    });
+    this.canvas.on("object:rotating", () => {
+      this.interacting = true;
+      this.emit();
+    });
 
     this.canvas.on("path:created", () => {
-      // A freehand pen stroke finished.
       this.recordHistory();
       this.schedulePersist();
     });
     this.canvas.on("object:modified", () => {
+      this.endInteraction();
       this.recordHistory();
       this.schedulePersist();
     });
@@ -594,13 +890,13 @@ export class CanvasController {
     });
     this.canvas.on("selection:created", () => this.emit());
     this.canvas.on("selection:updated", () => this.emit());
-    this.canvas.on("selection:cleared", () => this.emit());
+    this.canvas.on("selection:cleared", () => {
+      this.endInteraction();
+      this.emit();
+    });
   }
 
   private onDblClick = (opt: PointerInfo): void => {
-    // Double-clicking empty canvas (in select mode) drops a text object ready
-    // to type. Double-clicking an existing object is left to Fabric (e.g. text
-    // editing).
     if (this.tool !== "select" || opt.target) return;
     const p = this.canvas.getScenePoint(opt.e);
     this.createTextAt(p.x, p.y);
@@ -609,7 +905,6 @@ export class CanvasController {
   private onMouseDown = (opt: PointerInfo): void => {
     const e = opt.e as MouseEvent;
 
-    // Pan: hold space, or middle-mouse button.
     if (this.spaceDown || e.button === 1) {
       this.isPanning = true;
       this.lastPan = { x: e.clientX, y: e.clientY };
@@ -623,7 +918,7 @@ export class CanvasController {
       return;
     }
 
-    if (this.tool === "select") return; // native Fabric selection/drag
+    if (this.tool === "select") return;
 
     const p = this.canvas.getScenePoint(opt.e);
     this.start = { x: p.x, y: p.y };
@@ -635,12 +930,11 @@ export class CanvasController {
     }
 
     if (this.tool === "note") {
-      const note = makeStickyNote(p.x, p.y);
+      const note = makeStickyNote(p.x, p.y, this.defaults.noteFill);
       this.setTool("select");
       this.canvas.add(note);
       this.canvas.setActiveObject(note);
       note.enterEditing();
-      note.selectAll();
       note.hiddenTextarea?.focus();
       this.canvas.requestRenderAll();
       this.recordHistory();
@@ -648,7 +942,6 @@ export class CanvasController {
       return;
     }
 
-    // rect / ellipse / line / arrow: begin a drag-draw.
     this.drawing = true;
     let draft: fabric.FabricObject;
     if (this.tool === "rect") {
@@ -659,9 +952,10 @@ export class CanvasController {
         height: 0,
         rx: 3,
         ry: 3,
-        fill: "transparent",
-        stroke: COLORS.ink,
-        strokeWidth: STROKE_WIDTH,
+        fill: this.defaults.shapeFill,
+        stroke: this.defaults.shapeStroke,
+        strokeWidth: this.defaults.shapeStrokeWidth,
+        strokeUniform: true,
       });
     } else if (this.tool === "ellipse") {
       draft = new fabric.Ellipse({
@@ -669,16 +963,17 @@ export class CanvasController {
         top: p.y,
         rx: 0,
         ry: 0,
-        fill: "transparent",
-        stroke: COLORS.ink,
-        strokeWidth: STROKE_WIDTH,
+        fill: this.defaults.shapeFill,
+        stroke: this.defaults.shapeStroke,
+        strokeWidth: this.defaults.shapeStrokeWidth,
+        strokeUniform: true,
       });
     } else {
-      // line and arrow both preview as a line
       draft = new fabric.Line([p.x, p.y, p.x, p.y], {
-        stroke: COLORS.ink,
-        strokeWidth: STROKE_WIDTH,
+        stroke: this.defaults.lineStroke,
+        strokeWidth: this.defaults.lineStrokeWidth,
         strokeLineCap: "round",
+        strokeUniform: true,
       });
     }
     draft.selectable = false;
@@ -703,7 +998,6 @@ export class CanvasController {
     }
 
     if (this.isErasing) {
-      // Fabric v7's findTarget returns a target-info object, not the object.
       const target = this.canvas.findTarget(opt.e)?.target;
       if (target) this.canvas.remove(target);
       return;
@@ -737,6 +1031,8 @@ export class CanvasController {
   };
 
   private onMouseUp = (): void => {
+    if (this.interacting) this.endInteraction();
+
     if (this.isPanning) {
       this.isPanning = false;
       this.setSpace(this.spaceDown);
@@ -762,7 +1058,6 @@ export class CanvasController {
     const dist = Math.hypot(ex - sx, ey - sy);
     const tool = this.tool;
 
-    // Discard accidental tiny drags.
     const tooSmall =
       tool === "rect" || tool === "ellipse"
         ? Math.abs(ex - sx) < 4 && Math.abs(ey - sy) < 4
@@ -777,7 +1072,14 @@ export class CanvasController {
 
     if (tool === "arrow") {
       this.canvas.remove(draft);
-      const arrow = makeArrow(sx, sy, ex, ey, COLORS.ink, STROKE_WIDTH);
+      const arrow = makeArrow(
+        sx,
+        sy,
+        ex,
+        ey,
+        this.defaults.lineStroke,
+        this.defaults.lineStrokeWidth,
+      );
       this.canvas.add(arrow);
       this.canvas.setActiveObject(arrow);
     } else {
@@ -797,13 +1099,11 @@ export class CanvasController {
     e.stopPropagation();
 
     if (e.ctrlKey || e.metaKey) {
-      // Pinch-to-zoom (trackpad) or Ctrl+wheel: zoom toward the pointer.
       let zoom = this.canvas.getZoom();
       zoom *= Math.pow(0.999, e.deltaY * 2);
       const vp = this.canvas.getViewportPoint(opt.e);
       this.applyZoom(zoom, { x: vp.x, y: vp.y });
     } else {
-      // Plain scroll / two-finger swipe: pan.
       const vpt = this.canvas.viewportTransform;
       vpt[4] -= e.deltaX;
       vpt[5] -= e.deltaY;

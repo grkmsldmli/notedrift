@@ -7,7 +7,7 @@
 // Everything here is client-only and defensively guarded so it never throws
 // during SSR or in privacy modes where storage is unavailable.
 
-import type { CanvasDoc, CanvasStyle, PageMeta } from "./types";
+import type { CanvasDoc, CanvasStyle, PageMeta, ToolDefaults } from "./types";
 
 const DB_NAME = "notedrift";
 const STORE = "pages";
@@ -155,6 +155,32 @@ export function loadPrefs(): Prefs {
 
 export function savePrefs(prefs: Prefs): void {
   writeJSON(PREFS_KEY, prefs);
+}
+
+const TOOLDEFAULTS_KEY = "notedrift:tooldefaults";
+
+const DEFAULT_TOOL_DEFAULTS: ToolDefaults = {
+  penColor: "#20242e",
+  penWidth: 4,
+  shapeStroke: "#20242e",
+  shapeStrokeWidth: 4,
+  shapeFill: "transparent",
+  lineStroke: "#20242e",
+  lineStrokeWidth: 4,
+  textColor: "#20242e",
+  textFontSize: 24,
+  noteFill: "#fef3c7",
+};
+
+export function loadToolDefaults(): ToolDefaults {
+  return {
+    ...DEFAULT_TOOL_DEFAULTS,
+    ...readJSON<Partial<ToolDefaults>>(TOOLDEFAULTS_KEY, {}),
+  };
+}
+
+export function saveToolDefaults(defaults: ToolDefaults): void {
+  writeJSON(TOOLDEFAULTS_KEY, defaults);
 }
 
 /* --------------------------------- misc ----------------------------------- */
