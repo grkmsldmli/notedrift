@@ -22,6 +22,9 @@ export const SHAPE_TOOLS: readonly Tool[] = ["rect", "ellipse", "line"];
 /** Background appearance of the canvas paper (persisted per page). */
 export type CanvasStyle = "blank" | "dots" | "grid";
 
+/** Freehand drawing stabilization level (persisted per drawing tool). */
+export type PenStabilization = "off" | "low" | "medium" | "high";
+
 /** Category of the current selection, used to pick contextual controls. */
 export type ObjKind =
   | "none"
@@ -62,12 +65,20 @@ export interface SelectionInfo {
   collapsed?: boolean;
   /** Mind-map: the node's current soft accent key. */
   nodeAccent?: string;
+  /** A freehand ink stroke (filled Path): color edits map to `fill`, no width. */
+  isInk?: boolean;
 }
 
 /** Default styling applied to newly created objects (persisted locally). */
 export interface ToolDefaults {
   penColor: string;
   penWidth: number;
+  /** Freehand stroke opacity (0–1). Engine-ready; UI arrives with brush family. */
+  penOpacity: number;
+  /** Freehand stabilization level. */
+  penStabilization: PenStabilization;
+  /** Pressure-aware width when the input device (stylus) reports pressure. */
+  penPressure: boolean;
   shapeStroke: string;
   shapeStrokeWidth: number;
   shapeFill: string;

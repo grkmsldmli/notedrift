@@ -125,6 +125,39 @@ export function AccentRow({ value, onChange }: AccentRowProps) {
   );
 }
 
+interface SegmentedProps {
+  options: { value: string; label: string }[];
+  value: string;
+  onChange: (value: string) => void;
+}
+
+/** Compact segmented control (e.g. stabilization Off/Low/Med/High). */
+export function Segmented({ options, value, onChange }: SegmentedProps) {
+  return (
+    <div className="flex items-center gap-0.5 rounded-lg bg-nd-surface-2 p-0.5">
+      {options.map((o) => {
+        const active = o.value === value;
+        return (
+          <button
+            key={o.value}
+            type="button"
+            aria-pressed={active}
+            onClick={() => onChange(o.value)}
+            className={[
+              "rounded-md px-2 py-1 text-xs font-medium transition-colors",
+              active
+                ? "bg-nd-surface text-nd-text shadow-sm ring-1 ring-nd-border"
+                : "text-nd-muted hover:text-nd-text",
+            ].join(" ")}
+          >
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export function Divider() {
   return <div className="mx-0.5 h-6 w-px bg-nd-border" />;
 }

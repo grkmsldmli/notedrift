@@ -24,6 +24,8 @@ import {
   type NodeAccent,
 } from "./constants";
 import { History } from "./history";
+import { FreehandBrush } from "./brush/freehand";
+import { brushSpecFor } from "./tools/registry";
 import { makeArrow, makeStickyNote, styleArrow } from "./shapes";
 import {
   ANCHORS,
@@ -84,6 +86,20 @@ function isNodeBox(o: fabric.FabricObject | null | undefined): o is NodeBox {
   return !!o && ((o as { type?: string }).type ?? "").toLowerCase() === "nodebox";
 }
 
+/** A freehand ink stroke: a filled Path (fill set, no stroke) from the brush
+ *  engine — distinct from a legacy PencilBrush Path (stroke set, no fill). */
+function isInkPath(o: fabric.FabricObject): boolean {
+  if (((o as { type?: string }).type ?? "").toLowerCase() !== "path") return false;
+  const fill = o.fill;
+  const stroke = o.stroke;
+  return (
+    typeof fill === "string" &&
+    fill !== "" &&
+    fill !== "transparent" &&
+    (!stroke || stroke === "")
+  );
+}
+
 /** Categorize a Fabric object for the contextual toolbar. */
 function kindOf(obj: fabric.FabricObject): ObjKind {
   if (ndRole(obj) === "connector") return "connector";
@@ -106,6 +122,7 @@ export class CanvasController {
   private tool: Tool = "select";
   private canvasStyle: CanvasStyle;
   private defaults: ToolDefaults;
+  private freehand!: FreehandBrush;
 
   // Interaction state
   private suppress = false;
@@ -182,9 +199,10 @@ export class CanvasController {
       backgroundColor: undefined,
     });
 
-    this.canvas.freeDrawingBrush = new fabric.PencilBrush(this.canvas);
-    this.canvas.freeDrawingBrush.color = defaults.penColor;
-    this.canvas.freeDrawingBrush.width = defaults.penWidth;
+    // The professional freehand engine replaces PencilBrush (see brush/freehand).
+    this.freehand = new FreehandBrush(this.canvas);
+    this.canvas.freeDrawingBrush = this.freehand;
+    this.configureBrush();
 
     this.resize();
     this.setCanvasStyle(style);
@@ -282,6 +300,8 @@ export class CanvasController {
       };
     }
     if (kind === "path") {
+      // Freehand ink stores its color in `fill`; surface that as the swatch value.
+      if (isInkPath(obj)) return { stroke: obj.fill as string };
       return { stroke: obj.stroke as string, strokeWidth: obj.strokeWidth };
     }
     return {};
@@ -310,6 +330,7 @@ export class CanvasController {
       rect,
       ...this.styleOf(active, k),
     };
+    if (k === "path" && isInkPath(active)) info.isInk = true;
     // Mind-map extras for a single node (skip during drags — the toolbar is
     // hidden then anyway, and the traversal is wasted work).
     if (!this.interacting && isNodeBox(active)) {
@@ -1057,10 +1078,29 @@ export class CanvasController {
 
   setDefaults(patch: Partial<ToolDefaults>): void {
     this.defaults = { ...this.defaults, ...patch };
-    if (this.tool === "pen" && this.canvas.freeDrawingBrush) {
-      this.canvas.freeDrawingBrush.color = this.defaults.penColor;
-      this.canvas.freeDrawingBrush.width = this.defaults.penWidth;
-    }
+    this.configureBrush();
+  }
+
+  /** Push the current pen defaults into the freehand engine. The registry is the
+   *  authority on whether Pen draws freehand — proving the tool-registry pattern. */
+  private configureBrush(): void {
+    if (brushSpecFor("pen")?.kind !== "freehand") return;
+    this.freehand.configure({
+      color: this.defaults.penColor,
+      size: this.defaults.penWidth,
+      opacity: this.defaults.penOpacity,
+      stabilization: this.defaults.penStabilization,
+      pressure: this.defaults.penPressure,
+    });
+  }
+
+  /** Freehand engine diagnostics from the last completed stroke (perf report). */
+  lastStrokeStats(): { raw: number; kept: number; outline: number } {
+    return {
+      raw: this.freehand.lastRawCount,
+      kept: this.freehand.lastKeptCount,
+      outline: this.freehand.lastOutlineCount,
+    };
   }
 
   /* -------------------------------- tools --------------------------------- */
@@ -1126,11 +1166,7 @@ export class CanvasController {
   private applyToolMode(): void {
     const c = this.canvas;
     c.isDrawingMode = this.tool === "pen";
-
-    if (this.tool === "pen" && c.freeDrawingBrush) {
-      c.freeDrawingBrush.color = this.defaults.penColor;
-      c.freeDrawingBrush.width = this.defaults.penWidth;
-    }
+    if (this.tool === "pen") this.configureBrush();
 
     c.selection = this.tool === "select";
     c.skipTargetFind = !(this.tool === "select" || this.tool === "eraser");
@@ -1175,12 +1211,14 @@ export class CanvasController {
 
       if (patch.stroke !== undefined) {
         if (obj instanceof fabric.Group) styleArrow(obj, { stroke: patch.stroke });
+        else if (k === "path" && isInkPath(obj)) obj.set("fill", patch.stroke);
         else if (k === "shape" || k === "path") obj.set("stroke", patch.stroke);
       }
       if (patch.strokeWidth !== undefined) {
         if (obj instanceof fabric.Group)
           styleArrow(obj, { strokeWidth: patch.strokeWidth });
-        else if (k === "shape" || k === "path")
+        // Ink width is baked into the filled outline geometry — not retro-editable.
+        else if ((k === "shape" || k === "path") && !isInkPath(obj))
           obj.set("strokeWidth", patch.strokeWidth);
       }
       if (patch.fill !== undefined) {
@@ -1899,12 +1937,8 @@ export class CanvasController {
 
   /** Discard an in-progress single-finger stroke/transform (a finger became a gesture). */
   private abortActiveInteraction(): void {
-    if (this.canvas.freeDrawingBrush) {
-      const b = new fabric.PencilBrush(this.canvas);
-      b.color = this.defaults.penColor;
-      b.width = this.defaults.penWidth;
-      this.canvas.freeDrawingBrush = b;
-    }
+    // Discard any in-progress freehand stroke (a finger became a gesture).
+    this.freehand.cancel();
     this.canvas.isDrawingMode = false;
     this.cancelFabricTransform();
     this.fingerPan = null;

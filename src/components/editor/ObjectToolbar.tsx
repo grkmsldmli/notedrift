@@ -155,11 +155,16 @@ export const ObjectToolbar = memo(function ObjectToolbar({
             onChange={(v) => onStyle({ stroke: v })}
           />
           <Divider />
-          <WidthPicker
-            value={selection.strokeWidth}
-            onChange={(w) => onStyle({ strokeWidth: w })}
-          />
-          <Divider />
+          {/* Ink strokes carry width in their baked outline — no width control. */}
+          {!selection.isInk && (
+            <>
+              <WidthPicker
+                value={selection.strokeWidth}
+                onChange={(w) => onStyle({ strokeWidth: w })}
+              />
+              <Divider />
+            </>
+          )}
         </>
       );
     }

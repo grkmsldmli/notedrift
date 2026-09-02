@@ -162,6 +162,9 @@ const TOOLDEFAULTS_KEY = "notedrift:tooldefaults";
 const DEFAULT_TOOL_DEFAULTS: ToolDefaults = {
   penColor: "#20242e",
   penWidth: 4,
+  penOpacity: 1,
+  penStabilization: "low",
+  penPressure: false,
   shapeStroke: "#20242e",
   shapeStrokeWidth: 4,
   shapeFill: "transparent",
