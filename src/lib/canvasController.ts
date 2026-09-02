@@ -68,6 +68,9 @@ const PERSIST_MAXWAIT = 4000;
 const SNAP_SCREEN_PX = 6;
 /** Forgiving anchor/endpoint hit radius for touch & pen (mouse uses ANCHOR_HIT). */
 const ANCHOR_HIT_TOUCH = 26;
+/** How far outside an object's edge the connection anchors sit, so they don't
+ *  collide with Fabric's mid-edge resize handles. */
+const ANCHOR_OFFSET = 14;
 
 const ndId = (o: fabric.FabricObject): string | undefined => (o as NdObj).ndId;
 const ndRole = (o: fabric.FabricObject): string | undefined => (o as NdObj).ndRole;
@@ -1162,9 +1165,13 @@ export class CanvasController {
   /* ------------------------------ text / note ----------------------------- */
 
   private createTextAt(x: number, y: number): void {
-    const text = new fabric.IText("", {
+    // A Textbox (not point text): it has a real width, so its handles never
+    // collapse into a cramped column, and the side handles widen it (reflowing
+    // the text) — while corners still scale and the box grows in height.
+    const text = new fabric.Textbox("", {
       left: x,
       top: y,
+      width: 200,
       fontSize: this.defaults.textFontSize,
       fill: this.defaults.textColor,
       fontFamily: CANVAS_FONT,
@@ -1365,6 +1372,34 @@ export class CanvasController {
     return { x: p.x * vpt[0] + vpt[4], y: p.y * vpt[3] + vpt[5] };
   }
 
+  /** Screen position of a connection anchor, nudged just outside the edge so it
+   *  doesn't overlap Fabric's mid-edge resize handle. */
+  private anchorScreenPos(host: fabric.FabricObject, a: Anchor): Pt {
+    const sp = this.toScreen(anchorScenePoint(host, a));
+    const off =
+      a === "top"
+        ? { x: 0, y: -1 }
+        : a === "right"
+          ? { x: 1, y: 0 }
+          : a === "bottom"
+            ? { x: 0, y: 1 }
+            : { x: -1, y: 0 };
+    return { x: sp.x + off.x * ANCHOR_OFFSET, y: sp.y + off.y * ANCHOR_OFFSET };
+  }
+
+  /** Is the pointer over one of the object's resize/rotate handles? */
+  private pointerOnControl(obj: fabric.FabricObject, vp: Pt): boolean {
+    const oc = obj.oCoords as
+      | Record<string, { x: number; y: number }>
+      | undefined;
+    if (!oc) return false;
+    for (const k in oc) {
+      const c = oc[k];
+      if (c && Math.hypot(vp.x - c.x, vp.y - c.y) <= 12) return true;
+    }
+    return false;
+  }
+
   private drawOverlays(): void {
     const ctx = this.overlayCtx();
     if (!ctx) return;
@@ -1399,7 +1434,7 @@ export class CanvasController {
       if (host) {
         ctx.save();
         for (const a of ANCHORS) {
-          const sp = this.toScreen(anchorScenePoint(host, a));
+          const sp = this.anchorScreenPos(host, a);
           ctx.beginPath();
           ctx.arc(sp.x, sp.y, ANCHOR_R, 0, Math.PI * 2);
           ctx.fillStyle = "#ffffff";
@@ -1664,7 +1699,19 @@ export class CanvasController {
       this.updateConnectors();
       this.schedulePersist();
     });
-    this.canvas.on("text:editing:exited", () => {
+    this.canvas.on("text:editing:exited", (opt) => {
+      // Drop an empty free-text box so it never lingers as a cramped, useless
+      // object. Sticky notes and mind-map nodes are kept even when empty.
+      const t = (opt as { target?: fabric.FabricObject }).target ??
+        this.canvas.getActiveObject() ?? undefined;
+      const type = ((t as { type?: string } | undefined)?.type ?? "").toLowerCase();
+      const isFreeText = type === "textbox" || type === "i-text" || type === "itext";
+      const txt = (t as fabric.Textbox | undefined)?.text ?? "";
+      if (t && isFreeText && txt.trim() === "") {
+        this.canvas.remove(t);
+        this.canvas.discardActiveObject();
+        this.canvas.requestRenderAll();
+      }
       this.recordHistory();
       this.schedulePersist();
     });
@@ -1703,11 +1750,15 @@ export class CanvasController {
       }
     }
 
-    // Start a new connector from a host anchor?
+    // A resize/rotate handle of the selected object wins over connecting, so any
+    // object (including text boxes) can be resized from its mid-edge handles.
+    if (active && this.pointerOnControl(active, vp)) return;
+
+    // Start a new connector from a host anchor (offset just outside the edge)?
     const host = this.currentAnchorHost();
     if (host && ndId(host)) {
       for (const a of ANCHORS) {
-        const sp = this.toScreen(anchorScenePoint(host, a));
+        const sp = this.anchorScreenPos(host, a);
         if (dist(vp, sp) <= hit) {
           this.pendingConnect = { sourceId: ndId(host)!, anchor: a };
           this.canvas.selection = false;
