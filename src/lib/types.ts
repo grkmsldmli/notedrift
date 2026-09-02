@@ -8,6 +8,11 @@
 export type Tool =
   | "select"
   | "pen"
+  | "pencil"
+  | "marker"
+  | "highlighter"
+  | "brush"
+  | "technical"
   | "text"
   | "rect"
   | "ellipse"
@@ -15,6 +20,15 @@ export type Tool =
   | "arrow"
   | "note"
   | "eraser";
+
+/** The freehand drawing instruments (share the Phase 1.6A brush engine). */
+export type DrawTool =
+  | "pen"
+  | "pencil"
+  | "marker"
+  | "highlighter"
+  | "brush"
+  | "technical";
 
 /** Tools grouped under the single "Shape" toolbar button. */
 export const SHAPE_TOOLS: readonly Tool[] = ["rect", "ellipse", "line"];
@@ -67,18 +81,25 @@ export interface SelectionInfo {
   nodeAccent?: string;
   /** A freehand ink stroke (filled Path): color edits map to `fill`, no width. */
   isInk?: boolean;
+  /** Object opacity (0–1), surfaced for ink strokes. */
+  opacity?: number;
+}
+
+/** Persisted preferences for a single drawing instrument. */
+export interface DrawToolPrefs {
+  color: string;
+  width: number;
+  /** Stroke opacity (0–1). */
+  opacity: number;
+  stabilization: PenStabilization;
+  /** Pressure / brush-dynamics width response, where the tool supports it. */
+  pressure: boolean;
 }
 
 /** Default styling applied to newly created objects (persisted locally). */
 export interface ToolDefaults {
-  penColor: string;
-  penWidth: number;
-  /** Freehand stroke opacity (0–1). Engine-ready; UI arrives with brush family. */
-  penOpacity: number;
-  /** Freehand stabilization level. */
-  penStabilization: PenStabilization;
-  /** Pressure-aware width when the input device (stylus) reports pressure. */
-  penPressure: boolean;
+  /** Per-instrument preferences for the freehand drawing family. */
+  draw: Record<DrawTool, DrawToolPrefs>;
   shapeStroke: string;
   shapeStrokeWidth: number;
   shapeFill: string;
@@ -104,6 +125,8 @@ export interface StylePatch {
   hasArrow?: boolean;
   /** Mind-map node soft accent key. */
   nodeAccent?: string;
+  /** Object opacity (0–1) — used to restyle a completed ink stroke. */
+  opacity?: number;
 }
 
 /** UI-facing snapshot the controller emits to React on every change. */

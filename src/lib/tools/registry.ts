@@ -31,8 +31,14 @@ export function brushSpecFor(id: Tool): BrushSpec | undefined {
 }
 
 // --- Seed --------------------------------------------------------------------
-// Pen is the one tool whose behavior flows through the registry in 1.6A.
+// The freehand drawing family: behavior flows through the registry (brush spec)
+// and the active material (src/lib/brush/materials.ts).
 registerTool({ id: "pen", label: "Pen", category: "draw", brush: { kind: "freehand" } });
+registerTool({ id: "pencil", label: "Pencil", category: "draw", brush: { kind: "freehand" } });
+registerTool({ id: "marker", label: "Marker", category: "draw", brush: { kind: "freehand" } });
+registerTool({ id: "highlighter", label: "Highlighter", category: "draw", brush: { kind: "freehand" } });
+registerTool({ id: "brush", label: "Brush", category: "draw", brush: { kind: "freehand" } });
+registerTool({ id: "technical", label: "Technical", category: "draw", brush: { kind: "freehand" } });
 
 // Metadata-only for now; existing controller logic still drives these.
 registerTool({ id: "select", label: "Select", category: "organize" });

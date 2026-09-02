@@ -146,4 +146,6 @@ export const NOTEDRIFT_PROPS = [
   "hier", // connector: true = parent→child hierarchy edge, false = freeform link
   "ndAccent", // node: soft accent key
   "ndCollapsed", // node: branch collapsed (descendants hidden)
+  // Phase 1.6B — which brush produced a freehand ink path.
+  "ndBrush",
 ];

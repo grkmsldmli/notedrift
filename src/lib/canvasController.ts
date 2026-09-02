@@ -25,6 +25,7 @@ import {
 } from "./constants";
 import { History } from "./history";
 import { FreehandBrush } from "./brush/freehand";
+import { DRAW_TOOLS, materialFor } from "./brush/materials";
 import { brushSpecFor } from "./tools/registry";
 import { makeArrow, makeStickyNote, styleArrow } from "./shapes";
 import {
@@ -44,6 +45,8 @@ import type {
   Anchor,
   CanvasDoc,
   CanvasStyle,
+  DrawTool,
+  DrawToolPrefs,
   EditorState,
   ObjKind,
   SelectionInfo,
@@ -51,6 +54,11 @@ import type {
   ToolDefaults,
   Tool,
 } from "./types";
+
+const DRAW_TOOL_SET = new Set<Tool>(DRAW_TOOLS);
+function isDrawTool(t: Tool): t is DrawTool {
+  return DRAW_TOOL_SET.has(t);
+}
 
 export interface ControllerCallbacks {
   onState: (state: EditorState) => void;
@@ -68,6 +76,20 @@ interface Guide {
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 const dist = (a: Pt, b: Pt) => Math.hypot(a.x - b.x, a.y - b.y);
+
+/** A soft circular brush-size cursor (dark + dashed-white rings so it reads on
+ *  any background), with the hotspot at its center. */
+function brushCursor(diameter: number): string {
+  const size = Math.max(10, Math.min(Math.round(diameter), 120));
+  const c = size / 2;
+  const r = c - 1.5;
+  const svg =
+    `<svg xmlns='http://www.w3.org/2000/svg' width='${size}' height='${size}'>` +
+    `<circle cx='${c}' cy='${c}' r='${r}' fill='none' stroke='rgba(15,23,42,0.75)' stroke-width='1.25'/>` +
+    `<circle cx='${c}' cy='${c}' r='${r}' fill='none' stroke='rgba(255,255,255,0.85)' stroke-width='1.25' stroke-dasharray='3 3'/>` +
+    `</svg>`;
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}") ${c} ${c}, crosshair`;
+}
 
 const PERSIST_IDLE = 500;
 const PERSIST_MAXWAIT = 4000;
@@ -301,7 +323,7 @@ export class CanvasController {
     }
     if (kind === "path") {
       // Freehand ink stores its color in `fill`; surface that as the swatch value.
-      if (isInkPath(obj)) return { stroke: obj.fill as string };
+      if (isInkPath(obj)) return { stroke: obj.fill as string, opacity: obj.opacity ?? 1 };
       return { stroke: obj.stroke as string, strokeWidth: obj.strokeWidth };
     }
     return {};
@@ -330,7 +352,10 @@ export class CanvasController {
       rect,
       ...this.styleOf(active, k),
     };
-    if (k === "path" && isInkPath(active)) info.isInk = true;
+    if (k === "path" && isInkPath(active)) {
+      info.isInk = true;
+      info.opacity = active.opacity ?? 1;
+    }
     // Mind-map extras for a single node (skip during drags — the toolbar is
     // hidden then anyway, and the traversal is wasted work).
     if (!this.interacting && isNodeBox(active)) {
@@ -1081,17 +1106,40 @@ export class CanvasController {
     this.configureBrush();
   }
 
-  /** Push the current pen defaults into the freehand engine. The registry is the
-   *  authority on whether Pen draws freehand — proving the tool-registry pattern. */
+  /** Update the persisted preferences for a single drawing instrument. */
+  setDrawPref(tool: DrawTool, patch: Partial<DrawToolPrefs>): void {
+    this.defaults.draw[tool] = { ...this.defaults.draw[tool], ...patch };
+    if (this.tool === tool) this.configureBrush();
+  }
+
+  /** Configure the freehand engine from the active drawing tool's material +
+   *  its persisted preferences. The registry's brush spec gates this, proving the
+   *  tool-registry pattern drives the whole drawing family. */
   private configureBrush(): void {
-    if (brushSpecFor("pen")?.kind !== "freehand") return;
+    const tool = this.tool;
+    if (!isDrawTool(tool) || brushSpecFor(tool)?.kind !== "freehand") return;
+    const mat = materialFor(tool);
+    const p = this.defaults.draw[tool];
     this.freehand.configure({
-      color: this.defaults.penColor,
-      size: this.defaults.penWidth,
-      opacity: this.defaults.penOpacity,
-      stabilization: this.defaults.penStabilization,
-      pressure: this.defaults.penPressure,
+      color: p.color,
+      size: p.width,
+      opacity: p.opacity,
+      stabilization: p.stabilization,
+      pressure: p.pressure,
+      smoothing: mat.smoothing,
+      thinning: mat.thinning,
+      dynamics: mat.dynamics,
+      brushId: tool,
     });
+    this.updateBrushCursor();
+  }
+
+  /** A circle cursor approximating the current brush footprint, visible on both
+   *  white canvas and dark chrome. */
+  private updateBrushCursor(): void {
+    if (!isDrawTool(this.tool)) return;
+    const d = this.defaults.draw[this.tool].width * this.canvas.getZoom();
+    this.canvas.freeDrawingCursor = brushCursor(d);
   }
 
   /** Freehand engine diagnostics from the last completed stroke (perf report). */
@@ -1165,8 +1213,8 @@ export class CanvasController {
 
   private applyToolMode(): void {
     const c = this.canvas;
-    c.isDrawingMode = this.tool === "pen";
-    if (this.tool === "pen") this.configureBrush();
+    c.isDrawingMode = isDrawTool(this.tool);
+    if (isDrawTool(this.tool)) this.configureBrush();
 
     c.selection = this.tool === "select";
     c.skipTargetFind = !(this.tool === "select" || this.tool === "eraser");
@@ -1193,12 +1241,16 @@ export class CanvasController {
 
   /* ------------------------------- styling -------------------------------- */
 
-  applyStyle(patch: StylePatch): void {
+  /** Apply a style patch to the selection. `commit` false = a live drag preview
+   *  (no history entry, no persist); the caller records once on release. */
+  applyStyle(patch: StylePatch, commit = true): void {
     const objs = this.canvas.getActiveObjects();
     if (objs.length === 0) return;
 
     for (const obj of objs) {
       const k = kindOf(obj);
+
+      if (patch.opacity !== undefined) obj.set("opacity", patch.opacity);
 
       if (k === "connector") {
         const c = obj as Connector;
@@ -1249,8 +1301,10 @@ export class CanvasController {
 
     this.updateConnectors();
     this.canvas.requestRenderAll();
-    this.recordHistory();
-    this.schedulePersist();
+    if (commit) {
+      this.recordHistory();
+      this.schedulePersist();
+    }
   }
 
   /* ------------------------- duplicate / clipboard ------------------------ */
@@ -1441,6 +1495,7 @@ export class CanvasController {
       : new fabric.Point(this.canvas.getWidth() / 2, this.canvas.getHeight() / 2);
     this.canvas.zoomToPoint(point, z);
     this.updateGrid();
+    this.updateBrushCursor();
     this.emit();
   }
 
@@ -1453,6 +1508,7 @@ export class CanvasController {
   resetZoom(): void {
     this.canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
     this.updateGrid();
+    this.updateBrushCursor();
     this.emit();
   }
 
@@ -1977,9 +2033,9 @@ export class CanvasController {
       return;
     }
 
-    // Single finger. In Pen mode, once a stylus has been seen, a finger navigates
-    // (pans) instead of drawing — the best web-safe palm rejection.
-    if (this.tool === "pen" && this.penSeen) {
+    // Single finger. In any drawing mode, once a stylus has been seen, a finger
+    // navigates (pans) instead of drawing — the best web-safe palm rejection.
+    if (isDrawTool(this.tool) && this.penSeen) {
       e.stopPropagation();
       e.preventDefault();
       this.fingerPan = { id: e.pointerId, last: { x: e.clientX, y: e.clientY } };
@@ -2013,6 +2069,7 @@ export class CanvasController {
       );
       this.canvas.zoomToPoint(new fabric.Point(at.x, at.y), zoom);
       this.updateGrid();
+      this.updateBrushCursor();
       this.emit();
       this.lastMid = mid;
       this.lastDist = d;
@@ -2058,7 +2115,7 @@ export class CanvasController {
       if (this.gestureLatch) {
         this.gestureLatch = false;
         // Restore the drawing mode the active tool expects.
-        this.canvas.isDrawingMode = this.tool === "pen";
+        this.canvas.isDrawingMode = isDrawTool(this.tool);
       }
     } else if (this.gestureLatch) {
       e.stopPropagation();
@@ -2200,9 +2257,9 @@ export class CanvasController {
       return;
     }
 
-    // In pen mode Fabric's freeDrawingBrush owns the stroke — never create a
-    // shape draft here (mouse:down still fires to us in drawing mode).
-    if (this.tool === "pen") return;
+    // In any drawing mode Fabric's freeDrawingBrush owns the stroke — never
+    // create a shape draft here (mouse:down still fires to us in drawing mode).
+    if (isDrawTool(this.tool)) return;
 
     if (this.tool === "eraser") {
       this.isErasing = true;

@@ -7,7 +7,16 @@
 // Everything here is client-only and defensively guarded so it never throws
 // during SSR or in privacy modes where storage is unavailable.
 
-import type { CanvasDoc, CanvasStyle, PageMeta, ToolDefaults } from "./types";
+import type {
+  CanvasDoc,
+  CanvasStyle,
+  DrawTool,
+  DrawToolPrefs,
+  PageMeta,
+  PenStabilization,
+  ToolDefaults,
+} from "./types";
+import { DRAW_TOOLS, defaultPrefsFor } from "./brush/materials";
 
 const DB_NAME = "notedrift";
 const STORE = "pages";
@@ -159,31 +168,98 @@ export function savePrefs(prefs: Prefs): void {
 
 const TOOLDEFAULTS_KEY = "notedrift:tooldefaults";
 
-const DEFAULT_TOOL_DEFAULTS: ToolDefaults = {
-  penColor: "#20242e",
-  penWidth: 4,
-  penOpacity: 1,
-  penStabilization: "low",
-  penPressure: false,
-  shapeStroke: "#20242e",
-  shapeStrokeWidth: 4,
-  shapeFill: "transparent",
-  lineStroke: "#20242e",
-  lineStrokeWidth: 4,
-  textColor: "#20242e",
-  textFontSize: 24,
-  noteFill: "#fef3c7",
-};
+function freshToolDefaults(): ToolDefaults {
+  const draw = {} as Record<DrawTool, DrawToolPrefs>;
+  for (const t of DRAW_TOOLS) draw[t] = defaultPrefsFor(t);
+  return {
+    draw,
+    shapeStroke: "#20242e",
+    shapeStrokeWidth: 4,
+    shapeFill: "transparent",
+    lineStroke: "#20242e",
+    lineStrokeWidth: 4,
+    textColor: "#20242e",
+    textFontSize: 24,
+    noteFill: "#fef3c7",
+  };
+}
+
+const SCALAR_KEYS = [
+  "shapeStroke",
+  "shapeStrokeWidth",
+  "shapeFill",
+  "lineStroke",
+  "lineStrokeWidth",
+  "textColor",
+  "textFontSize",
+  "noteFill",
+] as const;
 
 export function loadToolDefaults(): ToolDefaults {
-  return {
-    ...DEFAULT_TOOL_DEFAULTS,
-    ...readJSON<Partial<ToolDefaults>>(TOOLDEFAULTS_KEY, {}),
-  };
+  const stored = readJSON<Record<string, unknown>>(TOOLDEFAULTS_KEY, {});
+  const base = freshToolDefaults();
+
+  // Migrate legacy flat pen prefs (Phase 1.6A and earlier) into draw.pen.
+  if (stored.penColor !== undefined && stored.draw === undefined) {
+    base.draw.pen = {
+      color: (stored.penColor as string) ?? base.draw.pen.color,
+      width: (stored.penWidth as number) ?? base.draw.pen.width,
+      opacity: (stored.penOpacity as number) ?? base.draw.pen.opacity,
+      stabilization:
+        (stored.penStabilization as PenStabilization) ??
+        base.draw.pen.stabilization,
+      pressure: (stored.penPressure as boolean) ?? base.draw.pen.pressure,
+    };
+  }
+
+  // Merge any stored per-tool draw prefs over the material defaults.
+  const storedDraw = (stored.draw ?? {}) as Partial<
+    Record<DrawTool, Partial<DrawToolPrefs>>
+  >;
+  for (const t of DRAW_TOOLS) {
+    base.draw[t] = { ...base.draw[t], ...(storedDraw[t] ?? {}) };
+  }
+
+  const rec = base as unknown as Record<string, unknown>;
+  for (const k of SCALAR_KEYS) {
+    if (stored[k] !== undefined) rec[k] = stored[k];
+  }
+  return base;
 }
 
 export function saveToolDefaults(defaults: ToolDefaults): void {
   writeJSON(TOOLDEFAULTS_KEY, defaults);
+}
+
+/* ------------------------------ colors: recents / favorites ---------------- */
+
+const RECENT_COLORS_KEY = "notedrift:recentcolors";
+const FAVORITE_COLORS_KEY = "notedrift:favcolors";
+const MAX_RECENT_COLORS = 8;
+
+export function loadRecentColors(): string[] {
+  const list = readJSON<string[]>(RECENT_COLORS_KEY, []);
+  return Array.isArray(list) ? list.slice(0, MAX_RECENT_COLORS) : [];
+}
+
+/** Record a used color: most-recent-first, de-duplicated, capped. Returns the list. */
+export function pushRecentColor(hex: string): string[] {
+  const norm = hex.toLowerCase();
+  const next = [norm, ...loadRecentColors().filter((c) => c.toLowerCase() !== norm)].slice(
+    0,
+    MAX_RECENT_COLORS,
+  );
+  writeJSON(RECENT_COLORS_KEY, next);
+  return next;
+}
+
+export function loadFavoriteColors(): string[] {
+  const list = readJSON<string[]>(FAVORITE_COLORS_KEY, []);
+  return Array.isArray(list) ? list : [];
+}
+
+export function saveFavoriteColors(colors: string[]): void {
+  writeJSON(FAVORITE_COLORS_KEY, colors);
 }
 
 /* --------------------------------- misc ----------------------------------- */

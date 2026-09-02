@@ -36,7 +36,15 @@ export interface FreehandConfig {
   size: number;
   opacity: number;
   stabilization: PenStabilization;
+  /** Pressure / dynamics width response toggle (where the brush supports it). */
   pressure: boolean;
+  /** Brush character (from the active material). */
+  smoothing: number;
+  thinning: number;
+  /** Velocity-based width dynamics (Brush) when no real stylus pressure. */
+  dynamics: boolean;
+  /** The active brush id, stored on the committed path. */
+  brushId: string;
 }
 
 type Sample = [number, number, number]; // [sceneX, sceneY, pressure]
@@ -75,10 +83,15 @@ export class FreehandBrush extends fabric.BaseBrush {
   private inkOpacity = 1;
   private stabilization: PenStabilization = "low";
   private pressureEnabled = false;
+  private matSmoothing = 0.55;
+  private matThinning = 0.5;
+  private matDynamics = false;
+  private brushId = "pen";
 
   private samples: Sample[] = [];
   private lastClient: { x: number; y: number } | null = null;
   private drawing = false;
+  private strokeSawPen = false;
 
   /** Diagnostics for the performance report (raw vs kept sample counts). */
   lastRawCount = 0;
@@ -91,6 +104,10 @@ export class FreehandBrush extends fabric.BaseBrush {
     this.inkOpacity = cfg.opacity;
     this.stabilization = cfg.stabilization;
     this.pressureEnabled = cfg.pressure;
+    this.matSmoothing = cfg.smoothing;
+    this.matThinning = cfg.thinning;
+    this.matDynamics = cfg.dynamics;
+    this.brushId = cfg.brushId;
   }
 
   /** Abandon an in-progress stroke (e.g. a gesture took over). */
@@ -107,7 +124,9 @@ export class FreehandBrush extends fabric.BaseBrush {
     this.lastClient = null;
     this.lastRawCount = 0;
     this.drawing = true;
+    this.strokeSawPen = false;
     const e = ev.e as PointerEvent;
+    if (e.pointerType === "pen") this.strokeSawPen = true;
     this.addSample(pointer.x, pointer.y, e.clientX, e.clientY, this.pressureOf(e));
     this.renderPreview();
   }
@@ -115,6 +134,7 @@ export class FreehandBrush extends fabric.BaseBrush {
   onMouseMove(pointer: fabric.Point, ev: fabric.TBrushEventData): void {
     if (!this.drawing) return;
     const e = ev.e as PointerEvent;
+    if (e.pointerType === "pen") this.strokeSawPen = true;
     const coalesced =
       typeof e.getCoalescedEvents === "function" ? e.getCoalescedEvents() : null;
     if (coalesced && coalesced.length) {
@@ -185,13 +205,22 @@ export class FreehandBrush extends fabric.BaseBrush {
   }
 
   private strokeOptions(committed: boolean) {
+    // Width varies only when the tool's pressure/dynamics control is on AND the
+    // material has a width response. Velocity dynamics (Brush) kick in only when
+    // no real stylus pressure is present — and are honest brush dynamics, never
+    // faked hardware pressure.
+    let thinning = 0;
+    let simulate = false;
+    if (this.pressureEnabled && this.matThinning > 0) {
+      thinning = this.matThinning;
+      simulate = this.matDynamics && !this.strokeSawPen;
+    }
     return {
       size: this.size,
-      // thinning 0 = honest fixed width (no faked pressure); pressure on = taper.
-      thinning: this.pressureEnabled ? 0.5 : 0,
-      smoothing: 0.55,
+      thinning,
+      smoothing: this.matSmoothing,
       streamline: STREAMLINE[this.stabilization],
-      simulatePressure: false,
+      simulatePressure: simulate,
       last: committed,
     };
   }
@@ -240,6 +269,7 @@ export class FreehandBrush extends fabric.BaseBrush {
       opacity: this.inkOpacity,
       objectCaching: true,
     });
+    (path as fabric.Path & { ndBrush?: string }).ndBrush = this.brushId;
     this.canvas.add(path);
     this.canvas.requestRenderAll();
     // Mirror PencilBrush: let the controller record history / autosave once.

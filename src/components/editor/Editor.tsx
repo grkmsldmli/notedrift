@@ -19,12 +19,15 @@ import {
 import type {
   CanvasDoc,
   CanvasStyle,
+  DrawTool,
+  DrawToolPrefs,
   EditorState,
   PageMeta,
   StylePatch,
   Tool,
   ToolDefaults,
 } from "@/lib/types";
+import { DRAW_TOOLS } from "@/lib/brush/materials";
 import { Toolbar } from "./Toolbar";
 import { TopBar } from "./TopBar";
 import { ZoomControls } from "./ZoomControls";
@@ -444,9 +447,37 @@ export default function Editor() {
     controllerRef.current?.setDefaults(patch);
   }, []);
 
+  // Per-drawing-tool preferences (the active brush's color/width/opacity/etc.).
+  const drawToolsSet = DRAW_TOOLS as readonly Tool[];
+  const onSetDrawPref = useCallback(
+    (patch: Partial<DrawToolPrefs>, commit = true) => {
+      const c = controllerRef.current;
+      if (!c) return;
+      const t = c.getTool();
+      if (!drawToolsSet.includes(t)) return;
+      const dt = t as DrawTool;
+      c.setDrawPref(dt, patch); // live: brush reflects it immediately
+      setToolDefaults((prev) => {
+        const base = prev ?? loadToolDefaults();
+        const next: ToolDefaults = {
+          ...base,
+          draw: { ...base.draw, [dt]: { ...base.draw[dt], ...patch } },
+        };
+        // Only touch localStorage on commit (not per slider frame).
+        if (commit) saveToolDefaults(next);
+        return next;
+      });
+    },
+    // drawToolsSet is a stable module constant reference
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+
   const onStyle = useCallback(
-    (patch: StylePatch) => {
-      controllerRef.current?.applyStyle(patch);
+    (patch: StylePatch, commit = true) => {
+      controllerRef.current?.applyStyle(patch, commit);
+      // Live drag previews don't record history or update remembered defaults.
+      if (!commit) return;
       // Remember the styling so newly created objects match.
       const d: Partial<ToolDefaults> = {};
       if (patch.stroke !== undefined) {
@@ -559,6 +590,7 @@ export default function Editor() {
             tool={state.tool}
             defaults={toolDefaults}
             onSetDefault={applyDefaults}
+            onSetDrawPref={onSetDrawPref}
           />
         )}
 

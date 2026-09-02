@@ -5,10 +5,15 @@ import {
   ArrowUpRight,
   Circle,
   Eraser,
+  Highlighter,
   Image as ImageIcon,
   Minus,
   MousePointer2,
+  Paintbrush,
   Pen,
+  Pencil,
+  PenLine,
+  PenTool,
   Square,
   StickyNote,
   Type,
@@ -31,6 +36,20 @@ const SHAPE_OPTIONS: { tool: Tool; label: string; icon: React.ReactNode }[] = [
   { tool: "line", label: "Line", icon: <Minus size={ICON} /> },
 ];
 
+const DRAW_OPTIONS: { tool: Tool; label: string; hint: string; icon: React.ReactNode }[] = [
+  { tool: "pen", label: "Pen", hint: "Smooth & crisp", icon: <Pen size={ICON} /> },
+  { tool: "pencil", label: "Pencil", hint: "Soft sketch", icon: <Pencil size={ICON} /> },
+  { tool: "marker", label: "Marker", hint: "Bold coverage", icon: <PenLine size={ICON} /> },
+  {
+    tool: "highlighter",
+    label: "Highlighter",
+    hint: "Translucent",
+    icon: <Highlighter size={ICON} />,
+  },
+  { tool: "brush", label: "Brush", hint: "Expressive", icon: <Paintbrush size={ICON} /> },
+  { tool: "technical", label: "Technical", hint: "Precise", icon: <PenTool size={ICON} /> },
+];
+
 const Divider = () => <div className="my-1 h-px w-6 bg-nd-border" />;
 
 export const Toolbar = memo(function Toolbar({
@@ -40,10 +59,21 @@ export const Toolbar = memo(function Toolbar({
 }: ToolbarProps) {
   const [shapeOpen, setShapeOpen] = useState(false);
   const [lastShape, setLastShape] = useState<Tool>("rect");
+  const [drawOpen, setDrawOpen] = useState(false);
+  const [lastDraw, setLastDraw] = useState<Tool>("pen");
 
   const shapeActive = SHAPE_TOOLS.includes(tool);
   const shapeIcon =
     SHAPE_OPTIONS.find((o) => o.tool === lastShape)?.icon ?? <Square size={ICON} />;
+
+  const drawActive = DRAW_OPTIONS.some((o) => o.tool === tool);
+  // Remember the active drawing tool so its icon shows on the rail (in-render
+  // adjust — no effect).
+  if (drawActive && lastDraw !== tool) setLastDraw(tool);
+  const drawIcon =
+    DRAW_OPTIONS.find((o) => o.tool === (drawActive ? tool : lastDraw))?.icon ?? (
+      <Pen size={ICON} />
+    );
 
   return (
     <div className="absolute left-4 top-1/2 z-20 -translate-y-1/2">
@@ -57,12 +87,49 @@ export const Toolbar = memo(function Toolbar({
 
         <Divider />
 
-        <IconButton
-          icon={<Pen size={ICON} />}
-          label="Pen  (P)"
-          active={tool === "pen"}
-          onClick={() => onSelectTool("pen")}
-        />
+        {/* Drawing family */}
+        <div className="relative">
+          <IconButton
+            icon={drawIcon}
+            label="Draw  (P)"
+            active={drawActive}
+            onClick={() => {
+              onSelectTool(drawActive ? tool : lastDraw);
+              setDrawOpen((o) => !o);
+            }}
+          />
+          {drawOpen && (
+            <>
+              <div className="fixed inset-0 z-30" onClick={() => setDrawOpen(false)} />
+              <div className="absolute left-full top-0 z-40 ml-2 w-44 rounded-xl border border-nd-border bg-nd-surface p-1 shadow-2xl">
+                {DRAW_OPTIONS.map((o) => (
+                  <button
+                    key={o.tool}
+                    type="button"
+                    onClick={() => {
+                      setLastDraw(o.tool);
+                      onSelectTool(o.tool);
+                      setDrawOpen(false);
+                    }}
+                    className={[
+                      "flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors",
+                      tool === o.tool ? "bg-nd-accent/15 text-nd-text" : "hover:bg-white/5",
+                    ].join(" ")}
+                  >
+                    <span className={tool === o.tool ? "text-nd-accent" : "text-nd-muted"}>
+                      {o.icon}
+                    </span>
+                    <span className="flex flex-col">
+                      <span className="text-sm text-nd-text">{o.label}</span>
+                      <span className="text-[10px] text-nd-faint">{o.hint}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+
         <IconButton
           icon={<Type size={ICON} />}
           label="Text  (T)"

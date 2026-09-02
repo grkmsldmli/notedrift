@@ -27,13 +27,15 @@ import {
 import { FONT_SIZES, NOTE_COLORS, PALETTE, SHAPE_FILLS } from "@/lib/constants";
 import type { SelectionInfo, StylePatch } from "@/lib/types";
 import { AccentRow, Divider, SwatchRow, WidthPicker } from "../ui/controls";
+import { ColorPopover } from "../ui/ColorPopover";
+import { OpacityControl } from "../ui/BrushControls";
 
 export type LayerOp = "front" | "forward" | "backward" | "back";
 
 interface ObjectToolbarProps {
   selection: SelectionInfo;
   paperOffset: { left: number; top: number };
-  onStyle: (patch: StylePatch) => void;
+  onStyle: (patch: StylePatch, commit?: boolean) => void;
   onDuplicate: () => void;
   onDelete: () => void;
   onLayer: (op: LayerOp) => void;
@@ -147,6 +149,25 @@ export const ObjectToolbar = memo(function ObjectToolbar({
       );
     }
     if (kind === "path") {
+      // Freehand ink: recolor (full picker) + opacity. Width is baked into the
+      // outline, so it is intentionally not editable.
+      if (selection.isInk) {
+        return (
+          <>
+            <ColorPopover
+              value={selection.stroke ?? "#20242e"}
+              onChange={(v, commit) => onStyle({ stroke: v }, commit)}
+            />
+            <Divider />
+            <OpacityControl
+              value={selection.opacity ?? 1}
+              onChange={(o, commit) => onStyle({ opacity: o }, commit)}
+            />
+            <Divider />
+          </>
+        );
+      }
+      // Legacy stroked path: keep stroke color + width controls.
       return (
         <>
           <SwatchRow
@@ -155,16 +176,11 @@ export const ObjectToolbar = memo(function ObjectToolbar({
             onChange={(v) => onStyle({ stroke: v })}
           />
           <Divider />
-          {/* Ink strokes carry width in their baked outline — no width control. */}
-          {!selection.isInk && (
-            <>
-              <WidthPicker
-                value={selection.strokeWidth}
-                onChange={(w) => onStyle({ strokeWidth: w })}
-              />
-              <Divider />
-            </>
-          )}
+          <WidthPicker
+            value={selection.strokeWidth}
+            onChange={(w) => onStyle({ strokeWidth: w })}
+          />
+          <Divider />
         </>
       );
     }
