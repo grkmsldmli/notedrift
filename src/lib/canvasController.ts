@@ -20,7 +20,6 @@ import {
   MINDMAP_GAP_X,
   MINDMAP_GAP_Y,
   NODE_H,
-  NODE_W,
   NOTEDRIFT_PROPS,
 } from "./constants";
 import { History } from "./history";
@@ -442,6 +441,13 @@ export class CanvasController {
     return node;
   }
 
+  /** Move `o` so its rendered bounds are centered on `p`. */
+  private centerAt(o: fabric.FabricObject, p: Pt): void {
+    const b = sceneBoundsOf(o);
+    o.set({ left: (o.left ?? 0) + (p.x - b.cx), top: (o.top ?? 0) + (p.y - b.cy) });
+    o.setCoords();
+  }
+
   private cancelFabricTransform(): void {
     (this.canvas as unknown as { _currentTransform: unknown | null })._currentTransform =
       null;
@@ -539,6 +545,7 @@ export class CanvasController {
     this.canvas.selection = true;
     const c = drag.connector;
     let selectObj: fabric.FabricObject = c;
+    let spawned: fabric.FabricObject | null = null;
 
     if (this.hoverTarget) {
       if (drag.end === "target") {
@@ -560,17 +567,26 @@ export class CanvasController {
         this.emit();
         return;
       }
-      // Quick Connect: drop a new node at the release point.
-      const node = this.spawnNode(free.x - NODE_W / 2, free.y - NODE_H / 2);
+      // Quick Connect: drop a new node centered on the release point. Center it
+      // from its measured bounds, so padding and text-driven sizing can't push
+      // the node away from where the pointer let go.
+      const node = this.spawnNode(free.x, free.y);
+      this.centerAt(node, free);
       c.targetId = ndId(node)!;
       c.targetAnchor = nearestAnchor(node, srcPt);
       c.targetFree = null;
       selectObj = node;
+      spawned = node;
     }
     // reassign to empty leaves the free endpoint as-is.
 
     this.updateConnectors();
     this.canvas.setActiveObject(selectObj);
+    // A Quick Connect node opens for typing straight away, like a Tab/Enter one.
+    if (spawned) {
+      (spawned as fabric.IText).enterEditing?.();
+      (spawned as fabric.IText).hiddenTextarea?.focus();
+    }
     this.canvas.requestRenderAll();
     this.recordHistory();
     this.schedulePersist();
