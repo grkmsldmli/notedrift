@@ -12,6 +12,7 @@ import {
   CANVAS_FONT,
   CONNECTOR_STROKE,
   CONNECTOR_WIDTH,
+  DEFAULT_NODE_ACCENT,
   GRID_COLOR,
   GRID_LINE_COLOR,
   GRID_SIZE,
@@ -20,14 +21,17 @@ import {
   MINDMAP_GAP_X,
   MINDMAP_GAP_Y,
   NOTEDRIFT_PROPS,
+  type NodeAccent,
 } from "./constants";
 import { History } from "./history";
 import { makeArrow, makeStickyNote, styleArrow } from "./shapes";
 import {
   ANCHORS,
   Connector,
+  NodeBox,
   anchorScenePoint,
   isConnectable,
+  isHierEdge,
   makeNode,
   nearestAnchor,
   nid,
@@ -74,6 +78,11 @@ const ANCHOR_OFFSET = 14;
 
 const ndId = (o: fabric.FabricObject): string | undefined => (o as NdObj).ndId;
 const ndRole = (o: fabric.FabricObject): string | undefined => (o as NdObj).ndRole;
+
+/** True when the object is an editable mind-map node (NodeBox). */
+function isNodeBox(o: fabric.FabricObject | null | undefined): o is NodeBox {
+  return !!o && ((o as { type?: string }).type ?? "").toLowerCase() === "nodebox";
+}
 
 /** Categorize a Fabric object for the contextual toolbar. */
 function kindOf(obj: fabric.FabricObject): ObjKind {
@@ -295,7 +304,26 @@ export class CanvasController {
     }
 
     const k = kindOf(active);
-    return { kind: k, count: 1, rect, ...this.styleOf(active, k) };
+    const info: SelectionInfo = {
+      kind: k,
+      count: 1,
+      rect,
+      ...this.styleOf(active, k),
+    };
+    // Mind-map extras for a single node (skip during drags — the toolbar is
+    // hidden then anyway, and the traversal is wasted work).
+    if (!this.interacting && isNodeBox(active)) {
+      const id = ndId(active);
+      if (id) {
+        const map = this.objByIdMap();
+        info.isNode = true;
+        info.hasChildren = this.childrenOf(id, map).length > 0;
+        info.isRoot = this.isRootNode(id, map);
+        info.collapsed = !!active.ndCollapsed;
+        info.nodeAccent = active.ndAccent ?? DEFAULT_NODE_ACCENT;
+      }
+    }
+    return info;
   }
 
   private getState(): EditorState {
@@ -432,6 +460,7 @@ export class CanvasController {
     sourceAnchor: Anchor,
     targetId: string,
     targetAnchor: Anchor,
+    hier = true,
   ): Connector {
     const c = new Connector([0, 0, 0, 0], {
       sourceId,
@@ -441,6 +470,7 @@ export class CanvasController {
       connKind: "arrow",
       stroke: CONNECTOR_STROKE,
       strokeWidth: CONNECTOR_WIDTH,
+      hier,
     });
     c.selectable = true;
     c.evented = true;
@@ -450,12 +480,21 @@ export class CanvasController {
     return c;
   }
 
-  private spawnNode(left = 0, top = 0): fabric.FabricObject {
-    const node = makeNode(left, top);
+  private spawnNode(
+    left = 0,
+    top = 0,
+    accent: NodeAccent = DEFAULT_NODE_ACCENT,
+  ): NodeBox {
+    const node = makeNode(left, top, "", accent);
     node.selectable = true;
     node.evented = true;
     this.canvas.add(node);
     return node;
+  }
+
+  /** Accent to give a new node spawned from `source` (inherit, else neutral). */
+  private inheritedAccent(source: fabric.FabricObject | null): NodeAccent {
+    return isNodeBox(source) ? source.ndAccent : DEFAULT_NODE_ACCENT;
   }
 
   /** Move `o` so its rendered bounds are centered on `p`. */
@@ -584,6 +623,8 @@ export class CanvasController {
         c.sourceAnchor = this.hoverTarget.anchor;
         c.sourceFree = null;
       }
+      // Linking two pre-existing objects is a freeform link, not a hierarchy edge.
+      if (drag.mode === "create") c.hier = false;
       this.hoverTarget = null;
     } else if (drag.mode === "create") {
       const free = drag.end === "target" ? c.targetFree : c.sourceFree;
@@ -594,20 +635,26 @@ export class CanvasController {
         this.emit();
         return;
       }
-      // Quick Connect: drop a new node centered on the release point. Center it
-      // from its measured bounds, so padding and text-driven sizing can't push
-      // the node away from where the pointer let go.
-      const node = this.spawnNode(free.x, free.y);
+      // Quick Connect: drop a new child node centered on the release point.
+      // Center it from its measured bounds, so padding and text-driven sizing
+      // can't push the node away from where the pointer let go. The new node is
+      // a hierarchy child of the source and inherits its accent.
+      const source = c.sourceId ? this.objByIdMap().get(c.sourceId) ?? null : null;
+      // Quick-connecting a child off a collapsed node expands it too.
+      if (isNodeBox(source) && source.ndCollapsed) source.ndCollapsed = false;
+      const node = this.spawnNode(free.x, free.y, this.inheritedAccent(source));
       this.centerAt(node, free);
       c.targetId = ndId(node)!;
       c.targetAnchor = nearestAnchor(node, srcPt);
       c.targetFree = null;
+      c.hier = true;
       selectObj = node;
       spawned = node;
     }
     // reassign to empty leaves the free endpoint as-is.
 
     this.updateConnectors();
+    this.applyCollapseVisibility();
     this.canvas.setActiveObject(selectObj);
     // A Quick Connect node opens for typing straight away, like a Tab/Enter one.
     if (spawned) {
@@ -622,13 +669,14 @@ export class CanvasController {
 
   /* --------------------------- mind-map flow ------------------------------ */
 
+  /** Hierarchical children of a node (via hierarchy edges only). */
   private childrenOf(
     parentId: string,
     map: Map<string, fabric.FabricObject>,
   ): fabric.FabricObject[] {
     const res: fabric.FabricObject[] = [];
     for (const c of this.connectors()) {
-      if (c.sourceId === parentId && c.targetId) {
+      if (isHierEdge(c) && c.sourceId === parentId && c.targetId) {
         const t = map.get(c.targetId);
         if (t) res.push(t);
       }
@@ -636,12 +684,13 @@ export class CanvasController {
     return res;
   }
 
+  /** First hierarchical parent of a node, if any. */
   private parentOf(
     nodeId: string,
     map: Map<string, fabric.FabricObject>,
   ): fabric.FabricObject | null {
     for (const c of this.connectors()) {
-      if (c.targetId === nodeId && c.sourceId) {
+      if (isHierEdge(c) && c.targetId === nodeId && c.sourceId) {
         const s = map.get(c.sourceId);
         if (s) return s;
       }
@@ -649,8 +698,76 @@ export class CanvasController {
     return null;
   }
 
+  /** A node is a mind-map root when it has no hierarchical parent. */
+  private isRootNode(nodeId: string, map: Map<string, fabric.FabricObject>): boolean {
+    return this.parentOf(nodeId, map) === null;
+  }
+
+  /**
+   * All descendants of a node (cycle-safe, excludes the node itself). Ordered
+   * breadth-first. When `respectCollapse` is true, a collapsed node's subtree is
+   * treated as hidden and skipped.
+   */
+  private descendantsOf(
+    rootId: string,
+    map: Map<string, fabric.FabricObject>,
+    respectCollapse = false,
+  ): fabric.FabricObject[] {
+    const out: fabric.FabricObject[] = [];
+    const seen = new Set<string>([rootId]);
+    const queue: string[] = [rootId];
+    while (queue.length) {
+      const id = queue.shift()!;
+      const node = map.get(id);
+      if (respectCollapse && id !== rootId && isNodeBox(node) && node.ndCollapsed) {
+        continue; // its own subtree stays hidden
+      }
+      for (const child of this.childrenOf(id, map)) {
+        const cid = ndId(child);
+        if (!cid || seen.has(cid)) continue;
+        seen.add(cid);
+        out.push(child);
+        queue.push(cid);
+      }
+    }
+    return out;
+  }
+
+  /**
+   * The full branch rooted at a node: the node, all descendants, and every
+   * connector whose endpoints both lie inside that set (hierarchy edges and any
+   * internal freeform links alike).
+   */
+  private branchOf(rootId: string): {
+    nodes: fabric.FabricObject[];
+    connectors: Connector[];
+  } {
+    const map = this.objByIdMap();
+    const root = map.get(rootId);
+    if (!root) return { nodes: [], connectors: [] };
+    const nodes = [root, ...this.descendantsOf(rootId, map)];
+    const ids = new Set(nodes.map(ndId).filter(Boolean) as string[]);
+    const connectors = this.connectors().filter(
+      (c) =>
+        !!c.sourceId &&
+        !!c.targetId &&
+        ids.has(c.sourceId) &&
+        ids.has(c.targetId),
+    );
+    return { nodes, connectors };
+  }
+
+  /** The active object if it is a single mind-map node, else null. */
+  private activeNode(): NodeBox | null {
+    const a = this.canvas.getActiveObject();
+    return isNodeBox(a) && this.canvas.getActiveObjects().length === 1 ? a : null;
+  }
+
   private focusNewNode(node: fabric.FabricObject): void {
     this.setTool("select");
+    // Keep collapse invariants consistent (e.g. a child added under a just-expanded
+    // parent) before the new node's state is recorded/persisted.
+    this.applyCollapseVisibility();
     this.canvas.setActiveObject(node);
     (node as fabric.IText).enterEditing?.();
     (node as fabric.IText).hiddenTextarea?.focus();
@@ -660,8 +777,25 @@ export class CanvasController {
     this.emit();
   }
 
+  /** True when at least one object is selected. */
+  hasActiveSelection(): boolean {
+    return this.canvas.getActiveObjects().length > 0;
+  }
+
+  /**
+   * Start a mind map: create a fresh root node at the viewport centre and open
+   * it for typing. Bound to Tab on an empty canvas — no modal, no mode switch.
+   */
+  createRoot(): void {
+    const node = this.spawnNode();
+    this.centerAt(node, this.viewportCenterScene());
+    this.focusNewNode(node);
+  }
+
   /** Tab: create a child node to the right of the selected node. */
   createChild(): void {
+    // Commit any in-progress text edit first (a separate, granular undo step).
+    this.exitEditing();
     const sel = this.canvas.getActiveObject();
     if (
       !sel ||
@@ -671,10 +805,13 @@ export class CanvasController {
     ) {
       return;
     }
+    // Adding a child to a collapsed node expands it, so the new child is visible
+    // and editable (rather than born hidden inside the collapsed subtree).
+    if (isNodeBox(sel) && sel.ndCollapsed) sel.ndCollapsed = false;
     const pb = sceneBoundsOf(sel);
     const map = this.objByIdMap();
     const children = this.childrenOf(ndId(sel)!, map);
-    const node = this.spawnNode();
+    const node = this.spawnNode(0, 0, this.inheritedAccent(sel));
     const nb = sceneBoundsOf(node);
     let cy = pb.cy;
     if (children.length) {
@@ -683,13 +820,14 @@ export class CanvasController {
       cy = maxBottom + MINDMAP_GAP_Y + (nb.bottom - nb.top) / 2;
     }
     this.placeNodeLeftAt(node, pb.right + MINDMAP_GAP_X, cy);
-    this.addConnector(ndId(sel)!, "right", ndId(node)!, "left");
+    this.addConnector(ndId(sel)!, "right", ndId(node)!, "left", true);
     this.updateConnectors();
     this.focusNewNode(node);
   }
 
   /** Enter: create a sibling (sharing the selected node's parent when known). */
   createSibling(): void {
+    this.exitEditing();
     const sel = this.canvas.getActiveObject();
     if (
       !sel ||
@@ -702,13 +840,13 @@ export class CanvasController {
     const map = this.objByIdMap();
     const selB = sceneBoundsOf(sel);
     const parent = this.parentOf(ndId(sel)!, map);
-    const node = this.spawnNode();
+    const node = this.spawnNode(0, 0, this.inheritedAccent(sel));
     const nb = sceneBoundsOf(node);
     const cy = selB.bottom + MINDMAP_GAP_Y + (nb.bottom - nb.top) / 2;
     if (parent) {
       const pb = sceneBoundsOf(parent);
       this.placeNodeLeftAt(node, pb.right + MINDMAP_GAP_X, cy);
-      this.addConnector(ndId(parent)!, "right", ndId(node)!, "left");
+      this.addConnector(ndId(parent)!, "right", ndId(node)!, "left", true);
       this.updateConnectors();
       this.focusNewNode(node);
     } else {
@@ -716,6 +854,203 @@ export class CanvasController {
       this.centerAt(node, { x: selB.cx, y: cy });
       this.focusNewNode(node);
     }
+  }
+
+  /** True while a mind-map node is being text-edited (drives the keyboard flow). */
+  isEditingNode(): boolean {
+    const a = this.canvas.getActiveObject() as
+      | (fabric.FabricObject & { isEditing?: boolean })
+      | undefined;
+    return isNodeBox(a) && Boolean(a?.isEditing);
+  }
+
+  /* --------------------------- mind-map operations ------------------------- */
+
+  private toolSelectable(): boolean {
+    return this.tool === "select";
+  }
+  private toolEvented(): boolean {
+    return this.tool === "select" || this.tool === "eraser";
+  }
+
+  /**
+   * Deterministic right-flowing tree layout of the branch rooted at `rootId`.
+   * Children flow to the right of their parent; sibling subtrees stack vertically
+   * with a consistent gap, using each node's real measured size so nothing
+   * overlaps. The root keeps its current position; only descendants move. Applied
+   * as a single history action. Collapsed nodes are treated as leaves.
+   */
+  private arrangeFrom(rootId: string): void {
+    const map = this.objByIdMap();
+    const root = map.get(rootId);
+    if (!root) return;
+
+    // Lay out into a local space (root's left edge at x=0), then translate the
+    // whole plan so the root's centre returns to where it is now.
+    const plan = new Map<string, { cx: number; cy: number }>();
+    const cursor = { y: 0 };
+    const visited = new Set<string>();
+
+    const layout = (id: string, leftX: number): number | null => {
+      if (visited.has(id)) return null;
+      visited.add(id);
+      const node = map.get(id);
+      if (!node) return null;
+      const b = sceneBoundsOf(node);
+      const w = b.right - b.left;
+      const h = b.bottom - b.top;
+      const collapsed = isNodeBox(node) && node.ndCollapsed;
+      const children = collapsed
+        ? []
+        : this.childrenOf(id, map).filter((c) => {
+            const cid = ndId(c);
+            return !!cid && !visited.has(cid);
+          });
+
+      if (children.length === 0) {
+        const cy = cursor.y + h / 2;
+        cursor.y += h + MINDMAP_GAP_Y;
+        plan.set(id, { cx: leftX + w / 2, cy });
+        return cy;
+      }
+
+      const childLeft = leftX + w + MINDMAP_GAP_X;
+      const startY = cursor.y;
+      const beforeKeys = new Set(plan.keys());
+      const childCys: number[] = [];
+      for (const ch of children) {
+        const r = layout(ndId(ch)!, childLeft);
+        if (r !== null) childCys.push(r);
+      }
+      let cy = childCys.length
+        ? (childCys[0] + childCys[childCys.length - 1]) / 2
+        : startY + h / 2;
+
+      // Reserve the parent's OWN height: if it is taller than the vertical band its
+      // children occupy, grow the slot to the parent's height and shift the whole
+      // child subtree down to stay centred — so a multi-line parent never overlaps
+      // the adjacent sibling subtree (above or below).
+      const bandH = Math.max(0, cursor.y - MINDMAP_GAP_Y - startY);
+      if (h > bandH) {
+        const shift = (h - bandH) / 2;
+        for (const k of plan.keys()) {
+          if (!beforeKeys.has(k)) plan.get(k)!.cy += shift;
+        }
+        cy = startY + h / 2;
+        cursor.y = startY + h + MINDMAP_GAP_Y;
+      }
+
+      plan.set(id, { cx: leftX + w / 2, cy });
+      return cy;
+    };
+
+    layout(rootId, 0);
+    const rootPlan = plan.get(rootId);
+    if (!rootPlan) return;
+    const now = sceneBoundsOf(root);
+    const dx = now.cx - rootPlan.cx;
+    const dy = now.cy - rootPlan.cy;
+
+    for (const [id, pos] of plan) {
+      const node = map.get(id);
+      if (node) this.centerAt(node, { x: pos.cx + dx, y: pos.cy + dy });
+    }
+    this.updateConnectors();
+    this.canvas.requestRenderAll();
+    this.recordHistory();
+    this.schedulePersist();
+  }
+
+  /** Arrange the branch (or full map, if the node is a root) of the selection. */
+  arrangeSelected(): void {
+    const node = this.activeNode();
+    if (!node || !ndId(node)) return;
+    this.arrangeFrom(ndId(node)!);
+    this.canvas.setActiveObject(node);
+    this.emit();
+  }
+
+  /**
+   * Recompute node/connector visibility from collapse state. A node is hidden
+   * when any hierarchical ancestor is collapsed (nesting-correct); a connector is
+   * hidden when either linked end is hidden. Positions are never touched.
+   */
+  private applyCollapseVisibility(): void {
+    const map = this.objByIdMap();
+    const hidden = new Set<string>();
+    for (const [id] of map) {
+      const seen = new Set<string>([id]);
+      let cur = this.parentOf(id, map);
+      while (cur) {
+        const pid = ndId(cur);
+        if (!pid || seen.has(pid)) break;
+        seen.add(pid);
+        if (isNodeBox(cur) && cur.ndCollapsed) {
+          hidden.add(id);
+          break;
+        }
+        cur = this.parentOf(pid, map);
+      }
+    }
+
+    const sel = this.toolSelectable();
+    const evt = this.toolEvented();
+    for (const [id, node] of map) {
+      const vis = !hidden.has(id);
+      if (node.visible !== vis || (node.selectable !== (vis && sel))) {
+        node.set({ visible: vis, selectable: vis && sel, evented: vis && evt });
+      }
+    }
+    for (const c of this.connectors()) {
+      const sOk = c.sourceId ? !hidden.has(c.sourceId) : true;
+      const tOk = c.targetId ? !hidden.has(c.targetId) : true;
+      const vis = sOk && tOk;
+      if (c.visible !== vis) {
+        c.set({ visible: vis, selectable: vis && sel, evented: vis && evt });
+      }
+    }
+    this.canvas.requestRenderAll();
+  }
+
+  /** Toggle collapse/expand of the selected node's branch (one history action). */
+  toggleCollapseSelected(): void {
+    const node = this.activeNode();
+    if (!node || !ndId(node)) return;
+    if (this.childrenOf(ndId(node)!, this.objByIdMap()).length === 0) return;
+    node.ndCollapsed = !node.ndCollapsed;
+    this.applyCollapseVisibility();
+    this.canvas.setActiveObject(node); // the collapsed node itself stays visible
+    this.canvas.requestRenderAll();
+    this.recordHistory();
+    this.schedulePersist();
+    this.emit();
+  }
+
+  /** Select the whole branch (node + descendants + their internal connectors). */
+  selectBranchSelected(): void {
+    const node = this.activeNode();
+    if (!node || !ndId(node)) return;
+    const { nodes, connectors } = this.branchOf(ndId(node)!);
+    const objs: fabric.FabricObject[] = [...nodes, ...connectors];
+    if (objs.length === 0) return;
+    this.setTool("select");
+    this.canvas.discardActiveObject();
+    if (objs.length === 1) {
+      this.canvas.setActiveObject(objs[0]);
+    } else {
+      const selection = new fabric.ActiveSelection(objs, { canvas: this.canvas });
+      this.canvas.setActiveObject(selection);
+    }
+    this.canvas.requestRenderAll();
+    this.emit();
+  }
+
+  /** Duplicate the whole branch with fresh ids, offset slightly (atomic). */
+  async duplicateBranchSelected(): Promise<void> {
+    const node = this.activeNode();
+    if (!node || !ndId(node)) return;
+    const { nodes, connectors } = this.branchOf(ndId(node)!);
+    await this.cloneAndPlace(nodes, connectors, 28, 28);
   }
 
   /* ------------------------------ tool defaults --------------------------- */
@@ -805,8 +1140,10 @@ export class CanvasController {
     const selectable = this.tool === "select";
     const evented = this.tool === "select" || this.tool === "eraser";
     c.forEachObject((o) => {
-      o.selectable = selectable;
-      o.evented = evented;
+      // Collapsed (hidden) objects stay non-interactive across tool changes.
+      const vis = o.visible !== false;
+      o.selectable = selectable && vis;
+      o.evented = evented && vis;
     });
 
     if (this.tool !== "select") {
@@ -848,6 +1185,10 @@ export class CanvasController {
       }
       if (patch.fill !== undefined) {
         if (k === "shape" && !(obj instanceof fabric.Group)) obj.set("fill", patch.fill);
+      }
+      if (patch.nodeAccent !== undefined && isNodeBox(obj)) {
+        obj.setAccent(patch.nodeAccent as NodeAccent);
+        continue;
       }
       if (patch.textColor !== undefined && (k === "text" || k === "note")) {
         obj.set("fill", patch.textColor);
@@ -939,6 +1280,7 @@ export class CanvasController {
     }
 
     this.updateConnectors();
+    this.applyCollapseVisibility();
     this.setTool("select");
     this.canvas.discardActiveObject();
     if (clones.length === 1) {
@@ -1045,6 +1387,7 @@ export class CanvasController {
       this.suppress = false;
       this.applyToolMode();
       this.updateConnectors();
+      this.applyCollapseVisibility();
       this.canvas.requestRenderAll();
       this.emit();
       this.schedulePersist();
@@ -1123,6 +1466,9 @@ export class CanvasController {
     toRemove.forEach((o) => this.canvas.remove(o));
     this.canvas.discardActiveObject();
     this.anchorHost = null;
+    // Deleting a collapsed parent orphans its hidden children — re-reveal any node
+    // that no longer sits under a collapsed ancestor.
+    this.applyCollapseVisibility();
     this.canvas.requestRenderAll();
     this.recordHistory();
     this.schedulePersist();
@@ -1191,6 +1537,7 @@ export class CanvasController {
     const migrated = this.ensureIds();
     this.cleanupOrphans();
     this.updateConnectors();
+    this.applyCollapseVisibility();
     this.anchorHost = null;
     if (migrated) this.schedulePersist();
   }
@@ -1445,6 +1792,41 @@ export class CanvasController {
         }
         ctx.restore();
       }
+    }
+
+    // Collapsed-branch indicators: a subtle pill showing the hidden child count.
+    if (this.tool === "select" && !this.interacting) {
+      const map = this.objByIdMap();
+      ctx.save();
+      ctx.font = `600 11px ${CANVAS_FONT}`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      for (const [id, node] of map) {
+        if (!isNodeBox(node) || !node.ndCollapsed || node.visible === false) continue;
+        const count = this.childrenOf(id, map).length;
+        if (count === 0) continue;
+        const b = sceneBoundsOf(node);
+        const sp = this.toScreen({ x: b.right, y: b.cy });
+        const label = String(count);
+        const w = Math.max(18, 11 + label.length * 7);
+        const h = 16;
+        const cx = sp.x + 5 + w / 2;
+        const x = cx - w / 2;
+        const y = sp.y - h / 2;
+        const r = h / 2;
+        ctx.beginPath();
+        ctx.moveTo(x + r, y);
+        ctx.arcTo(x + w, y, x + w, y + h, r);
+        ctx.arcTo(x + w, y + h, x, y + h, r);
+        ctx.arcTo(x, y + h, x, y, r);
+        ctx.arcTo(x, y, x + w, y, r);
+        ctx.closePath();
+        ctx.fillStyle = "rgba(91, 140, 255, 0.95)";
+        ctx.fill();
+        ctx.fillStyle = "#ffffff";
+        ctx.fillText(label, cx, sp.y + 0.5);
+      }
+      ctx.restore();
     }
 
     // Highlight the target anchor while dragging a connector.
@@ -1783,6 +2165,10 @@ export class CanvasController {
       this.canvas.setCursor("grabbing");
       return;
     }
+
+    // In pen mode Fabric's freeDrawingBrush owns the stroke — never create a
+    // shape draft here (mouse:down still fires to us in drawing mode).
+    if (this.tool === "pen") return;
 
     if (this.tool === "eraser") {
       this.isErasing = true;

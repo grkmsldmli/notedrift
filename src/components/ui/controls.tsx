@@ -1,6 +1,6 @@
 "use client";
 
-import { STROKE_WIDTHS } from "@/lib/constants";
+import { NODE_ACCENT_LIST, NODE_ACCENTS, STROKE_WIDTHS } from "@/lib/constants";
 
 const CHECKER =
   "linear-gradient(45deg,#9aa0ae 25%,transparent 25%,transparent 75%,#9aa0ae 75%)," +
@@ -85,6 +85,40 @@ export function WidthPicker({ value, onChange }: WidthPickerProps) {
               }}
             />
           </button>
+        );
+      })}
+    </div>
+  );
+}
+
+interface AccentRowProps {
+  value?: string;
+  onChange: (key: string) => void;
+}
+
+/** Soft-accent swatches for mind-map nodes (fill tinted, border from accent). */
+export function AccentRow({ value, onChange }: AccentRowProps) {
+  return (
+    <div className="flex items-center gap-1.5">
+      {NODE_ACCENT_LIST.map((a) => {
+        const acc = NODE_ACCENTS[a.key];
+        const active = value === a.key;
+        return (
+          <button
+            key={a.key}
+            type="button"
+            title={a.name}
+            aria-label={`${a.name} accent`}
+            aria-pressed={active}
+            onClick={() => onChange(a.key)}
+            className={[
+              "h-5 w-5 rounded-full border-2 transition",
+              active
+                ? "ring-2 ring-white/80 ring-offset-2 ring-offset-nd-surface"
+                : "hover:scale-110",
+            ].join(" ")}
+            style={{ backgroundColor: acc.fill, borderColor: acc.border }}
+          />
         );
       })}
     </div>

@@ -76,10 +76,50 @@ export const NODE_H = 46;
 export const NODE_MIN_W = 84;
 export const NODE_PAD = 10;
 export const NODE_RADIUS = 10;
-export const NODE_FILL = "#eef2ff";
 export const NODE_INK = "#20242e";
 export const MINDMAP_GAP_X = 90;
-export const MINDMAP_GAP_Y = 22;
+export const MINDMAP_GAP_Y = 24;
+
+/**
+ * Soft accent palette for mind-map nodes. Intentionally small and lightweight —
+ * a node reads as a light card, never a heavy flowchart block. `neutral` is the
+ * default (white card, faint neutral border). Each accent tints the fill,
+ * border, and text ink together so the node stays legible and calm.
+ */
+export type NodeAccent =
+  | "neutral"
+  | "blue"
+  | "violet"
+  | "green"
+  | "orange"
+  | "pink";
+
+export const NODE_ACCENTS: Record<
+  NodeAccent,
+  { fill: string; border: string; ink: string }
+> = {
+  neutral: { fill: "#ffffff", border: "rgba(15,23,42,0.16)", ink: "#20242e" },
+  blue: { fill: "#eef4ff", border: "rgba(59,130,246,0.55)", ink: "#1e3a8a" },
+  violet: { fill: "#f4efff", border: "rgba(139,92,246,0.55)", ink: "#4c1d95" },
+  green: { fill: "#ebfbf1", border: "rgba(22,163,74,0.55)", ink: "#14532d" },
+  orange: { fill: "#fff4ea", border: "rgba(234,88,12,0.55)", ink: "#7c2d12" },
+  pink: { fill: "#fdeff6", border: "rgba(219,39,119,0.55)", ink: "#831843" },
+};
+
+export const DEFAULT_NODE_ACCENT: NodeAccent = "neutral";
+
+/** Default fill kept for backward-compat with any node missing an accent. */
+export const NODE_FILL = NODE_ACCENTS.neutral.fill;
+
+/** Accent choices offered in the contextual toolbar (order matters). */
+export const NODE_ACCENT_LIST: { key: NodeAccent; name: string }[] = [
+  { key: "neutral", name: "Neutral" },
+  { key: "blue", name: "Blue" },
+  { key: "violet", name: "Violet" },
+  { key: "green", name: "Green" },
+  { key: "orange", name: "Orange" },
+  { key: "pink", name: "Pink" },
+];
 
 // Connectors.
 export const CONNECTOR_STROKE = "#64748b";
@@ -102,4 +142,8 @@ export const NOTEDRIFT_PROPS = [
   "connKind",
   "sourceFree",
   "targetFree",
+  // Phase 1.5 — mind-map relationship/state props.
+  "hier", // connector: true = parent→child hierarchy edge, false = freeform link
+  "ndAccent", // node: soft accent key
+  "ndCollapsed", // node: branch collapsed (descendants hidden)
 ];

@@ -6,20 +6,27 @@ import {
   AlignLeft,
   AlignRight,
   Bold,
+  BoxSelect,
   ChevronsDown,
   ChevronsUp,
   Copy,
+  CopyPlus,
+  CornerDownRight,
   Layers,
+  Maximize2,
+  Minimize2,
   Minus,
+  MoreHorizontal,
   MoveDown,
   MoveRight,
   MoveUp,
+  Network,
   Plus,
   Trash2,
 } from "lucide-react";
 import { FONT_SIZES, NOTE_COLORS, PALETTE, SHAPE_FILLS } from "@/lib/constants";
 import type { SelectionInfo, StylePatch } from "@/lib/types";
-import { Divider, SwatchRow, WidthPicker } from "../ui/controls";
+import { AccentRow, Divider, SwatchRow, WidthPicker } from "../ui/controls";
 
 export type LayerOp = "front" | "forward" | "backward" | "back";
 
@@ -30,6 +37,12 @@ interface ObjectToolbarProps {
   onDuplicate: () => void;
   onDelete: () => void;
   onLayer: (op: LayerOp) => void;
+  onAddChild: () => void;
+  onAddSibling: () => void;
+  onCollapseToggle: () => void;
+  onArrange: () => void;
+  onSelectBranch: () => void;
+  onDuplicateBranch: () => void;
 }
 
 function nearestIndex(size: number): number {
@@ -55,8 +68,15 @@ export const ObjectToolbar = memo(function ObjectToolbar({
   onDuplicate,
   onDelete,
   onLayer,
+  onAddChild,
+  onAddSibling,
+  onCollapseToggle,
+  onArrange,
+  onSelectBranch,
+  onDuplicateBranch,
 }: ObjectToolbarProps) {
   const [layerOpen, setLayerOpen] = useState(false);
+  const [mindOpen, setMindOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState<{ left: number; top: number } | null>(null);
 
@@ -139,6 +159,46 @@ export const ObjectToolbar = memo(function ObjectToolbar({
             value={selection.strokeWidth}
             onChange={(w) => onStyle({ strokeWidth: w })}
           />
+          <Divider />
+        </>
+      );
+    }
+    if (kind === "text" && selection.isNode) {
+      // Mind-map node: soft accents + rapid add / collapse controls.
+      return (
+        <>
+          <AccentRow
+            value={selection.nodeAccent}
+            onChange={(v) => onStyle({ nodeAccent: v })}
+          />
+          <Divider />
+          <button
+            type="button"
+            className={iconBtn}
+            title="Add child  (Tab)"
+            onClick={onAddChild}
+          >
+            <CornerDownRight size={16} />
+          </button>
+          <button
+            type="button"
+            className={iconBtn}
+            title="Add sibling  (Enter)"
+            onClick={onAddSibling}
+          >
+            <Plus size={16} />
+          </button>
+          {selection.hasChildren && (
+            <button
+              type="button"
+              className={iconBtn}
+              title={selection.collapsed ? "Expand branch" : "Collapse branch"}
+              aria-pressed={selection.collapsed}
+              onClick={onCollapseToggle}
+            >
+              {selection.collapsed ? <Maximize2 size={15} /> : <Minimize2 size={15} />}
+            </button>
+          )}
           <Divider />
         </>
       );
@@ -307,6 +367,61 @@ export const ObjectToolbar = memo(function ObjectToolbar({
             </>
           )}
         </div>
+
+        {selection.isNode && selection.hasChildren && (
+          <div className="relative">
+            <button
+              type="button"
+              className={[iconBtn, mindOpen ? "bg-white/10 text-nd-text" : ""].join(" ")}
+              title="Branch actions"
+              onClick={() => setMindOpen((o) => !o)}
+            >
+              <MoreHorizontal size={15} />
+            </button>
+            {mindOpen && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setMindOpen(false)} />
+                <div className="absolute right-0 top-full z-50 mt-1 w-48 rounded-lg border border-nd-border bg-nd-surface p-1 shadow-2xl">
+                  {(
+                    [
+                      {
+                        key: "arrange",
+                        label: selection.isRoot ? "Arrange mind map" : "Arrange branch",
+                        icon: <Network size={15} />,
+                        run: onArrange,
+                      },
+                      {
+                        key: "select",
+                        label: "Select branch",
+                        icon: <BoxSelect size={15} />,
+                        run: onSelectBranch,
+                      },
+                      {
+                        key: "duplicate",
+                        label: "Duplicate branch",
+                        icon: <CopyPlus size={15} />,
+                        run: onDuplicateBranch,
+                      },
+                    ] as { key: string; label: string; icon: React.ReactNode; run: () => void }[]
+                  ).map((it) => (
+                    <button
+                      key={it.key}
+                      type="button"
+                      onClick={() => {
+                        it.run();
+                        setMindOpen(false);
+                      }}
+                      className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-sm text-nd-text transition-colors hover:bg-white/5"
+                    >
+                      <span className="text-nd-muted">{it.icon}</span>
+                      {it.label}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        )}
 
         <button
           type="button"

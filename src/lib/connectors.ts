@@ -14,13 +14,14 @@ import {
   CANVAS_FONT,
   CONNECTOR_STROKE,
   CONNECTOR_WIDTH,
-  NODE_FILL,
+  DEFAULT_NODE_ACCENT,
+  NODE_ACCENTS,
   NODE_H,
-  NODE_INK,
   NODE_MIN_W,
   NODE_PAD,
   NODE_RADIUS,
   NODE_W,
+  type NodeAccent,
 } from "./constants";
 import type { Anchor } from "./types";
 
@@ -138,6 +139,13 @@ export class Connector extends fabric.Line {
   declare connKind: "arrow" | "straight";
   declare sourceFree: Pt | null;
   declare targetFree: Pt | null;
+  /**
+   * Mind-map hierarchy marker. `true` = a parent→child hierarchy edge (Tab /
+   * Enter / quick-add / Quick-Connect to empty). `false` = an explicit freeform
+   * link between two existing objects. `undefined` = legacy/unmarked, treated as
+   * hierarchical for backward compatibility (see `isHierEdge`).
+   */
+  declare hier: boolean | undefined;
 
   constructor(points: number[] = [0, 0, 0, 0], options: Record<string, unknown> = {}) {
     super(points as [number, number, number, number], {
@@ -162,6 +170,7 @@ export class Connector extends fabric.Line {
     this.connKind = (options.connKind as "arrow" | "straight") ?? "arrow";
     this.sourceFree = (options.sourceFree as Pt) ?? null;
     this.targetFree = (options.targetFree as Pt) ?? null;
+    this.hier = options.hier as boolean | undefined;
   }
 
   resolveEnd(
@@ -222,6 +231,17 @@ export class Connector extends fabric.Line {
 
 fabric.classRegistry.setClass(Connector);
 
+/**
+ * Is this connector a mind-map hierarchy edge (parent = source, child = target)?
+ * It must link two real objects (both ids present) and not be an explicit
+ * freeform link (`hier === false`). Legacy/unmarked connectors (`hier ===
+ * undefined`) count as hierarchical so mind maps built before Phase 1.5 keep
+ * their structure.
+ */
+export function isHierEdge(c: Connector): boolean {
+  return c.hier !== false && !!c.sourceId && !!c.targetId;
+}
+
 /* --------------------------------- node ----------------------------------- */
 
 type TextboxOptions = ConstructorParameters<typeof fabric.Textbox>[1];
@@ -231,19 +251,33 @@ export class NodeBox extends fabric.Textbox {
   static type = "NodeBox";
 
   declare ndId: string;
+  /** Soft accent key (drives fill / border / ink). */
+  declare ndAccent: NodeAccent;
+  /** Branch collapsed — descendants are hidden (positions preserved). */
+  declare ndCollapsed: boolean;
 
   constructor(text: string, options: Record<string, unknown> = {}) {
+    const accent = accentOf(options.ndAccent);
     super(text, {
       width: NODE_W - NODE_PAD * 2,
       minWidth: NODE_MIN_W - NODE_PAD * 2,
       fontSize: 16,
       textAlign: "center",
-      fill: NODE_INK,
+      fill: (options.fill as string) ?? accent.ink,
       fontFamily: CANVAS_FONT,
-      backgroundColor: (options.backgroundColor as string) ?? NODE_FILL,
+      backgroundColor: (options.backgroundColor as string) ?? accent.fill,
       ...options,
     } as TextboxOptions);
     this.ndId = (options.ndId as string) ?? nid();
+    this.ndAccent = accentKey(options.ndAccent);
+    this.ndCollapsed = Boolean(options.ndCollapsed);
+  }
+
+  /** Apply an accent, updating fill, ink, and border together. */
+  setAccent(key: NodeAccent): void {
+    const a = NODE_ACCENTS[key] ?? NODE_ACCENTS[DEFAULT_NODE_ACCENT];
+    this.ndAccent = key;
+    this.set({ backgroundColor: a.fill, fill: a.ink, dirty: true });
   }
 
   initDimensions(): void {
@@ -258,20 +292,22 @@ export class NodeBox extends fabric.Textbox {
   }
 
   _renderBackground(ctx: CanvasRenderingContext2D): void {
+    const a = NODE_ACCENTS[this.ndAccent] ?? NODE_ACCENTS[DEFAULT_NODE_ACCENT];
     const w = this.width + NODE_PAD * 2;
     const h = this.height + NODE_PAD * 2;
     const x = -w / 2;
     const y = -h / 2;
+    // A single soft drop shadow keeps the node feeling light — not a heavy block.
     ctx.save();
-    ctx.shadowColor = "rgba(15, 23, 42, 0.10)";
-    ctx.shadowBlur = 8;
+    ctx.shadowColor = "rgba(15, 23, 42, 0.08)";
+    ctx.shadowBlur = 7;
     ctx.shadowOffsetY = 2;
-    ctx.fillStyle = (this.backgroundColor as string) || NODE_FILL;
+    ctx.fillStyle = (this.backgroundColor as string) || a.fill;
     roundRect(ctx, x, y, w, h, NODE_RADIUS);
     ctx.fill();
     ctx.restore();
     ctx.save();
-    ctx.strokeStyle = "rgba(91, 140, 255, 0.45)";
+    ctx.strokeStyle = a.border;
     ctx.lineWidth = 1.25;
     roundRect(ctx, x, y, w, h, NODE_RADIUS);
     ctx.stroke();
@@ -281,7 +317,22 @@ export class NodeBox extends fabric.Textbox {
 
 fabric.classRegistry.setClass(NodeBox);
 
-/** Create a mind-map node at (left, top). */
-export function makeNode(left: number, top: number, text = ""): NodeBox {
-  return new NodeBox(text, { left, top });
+function accentKey(v: unknown): NodeAccent {
+  return typeof v === "string" && v in NODE_ACCENTS
+    ? (v as NodeAccent)
+    : DEFAULT_NODE_ACCENT;
+}
+
+function accentOf(v: unknown) {
+  return NODE_ACCENTS[accentKey(v)];
+}
+
+/** Create a mind-map node at (left, top), optionally with an accent. */
+export function makeNode(
+  left: number,
+  top: number,
+  text = "",
+  accent: NodeAccent = DEFAULT_NODE_ACCENT,
+): NodeBox {
+  return new NodeBox(text, { left, top, ndAccent: accent });
 }

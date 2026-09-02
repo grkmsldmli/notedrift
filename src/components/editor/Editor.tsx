@@ -30,6 +30,7 @@ import { TopBar } from "./TopBar";
 import { ZoomControls } from "./ZoomControls";
 import { ToolOptionsBar } from "./ToolOptionsBar";
 import { ObjectToolbar, type LayerOp } from "./ObjectToolbar";
+import { NodeQuickAdd } from "./NodeQuickAdd";
 import { Logo } from "./Logo";
 
 const INITIAL_STATE: EditorState = {
@@ -82,6 +83,7 @@ export default function Editor() {
   const [currentId, setCurrentId] = useState<string | null>(null);
   const [toolDefaults, setToolDefaults] = useState<ToolDefaults | null>(null);
   const [paperOffset, setPaperOffset] = useState({ left: 0, top: 0 });
+  const [paperSize, setPaperSize] = useState({ width: 0, height: 0 });
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -149,10 +151,14 @@ export default function Editor() {
       setReady(true);
     });
 
-    setPaperOffset({ left: paperEl.offsetLeft, top: paperEl.offsetTop });
+    const measurePaper = () => {
+      setPaperOffset({ left: paperEl.offsetLeft, top: paperEl.offsetTop });
+      setPaperSize({ width: paperEl.clientWidth, height: paperEl.clientHeight });
+    };
+    measurePaper();
     const ro = new ResizeObserver(() => {
       controller.resize();
-      setPaperOffset({ left: paperEl.offsetLeft, top: paperEl.offsetTop });
+      measurePaper();
     });
     ro.observe(paperEl);
 
@@ -218,6 +224,7 @@ export default function Editor() {
       if (e.key === "Tab") {
         e.preventDefault();
         if (c.canBranch()) c.createChild();
+        else if (!c.hasActiveSelection()) c.createRoot(); // Tab on empty → root
         return;
       }
       if (e.key === "Enter") {
@@ -252,6 +259,31 @@ export default function Editor() {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
     };
+  }, []);
+
+  // Rapid mind-map flow while EDITING a node: Tab makes a child, Enter makes a
+  // sibling (Shift+Enter still inserts a newline). Capture phase so we intercept
+  // before Fabric's hidden textarea consumes the key. Only mind-map nodes are
+  // hijacked — normal multiline editing of free text and sticky notes is intact.
+  useEffect(() => {
+    const onKeyDownCapture = (e: KeyboardEvent) => {
+      const c = controllerRef.current;
+      if (!c || !c.isEditingNode()) return;
+      // Never hijack Enter/Tab while an IME composition is active — that Enter
+      // confirms the candidate, it must not spawn a sibling.
+      if (e.isComposing || e.keyCode === 229) return;
+      if (e.key === "Tab") {
+        e.preventDefault();
+        e.stopPropagation();
+        c.createChild();
+      } else if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        c.createSibling();
+      }
+    };
+    window.addEventListener("keydown", onKeyDownCapture, true);
+    return () => window.removeEventListener("keydown", onKeyDownCapture, true);
   }, []);
 
   // Paste images from clipboard (not while editing text).
@@ -451,6 +483,29 @@ export default function Editor() {
     else c.sendToBack();
   }, []);
 
+  // Mind-map node actions (shared by the contextual toolbar and touch quick-add).
+  const onAddChild = useCallback(() => controllerRef.current?.createChild(), []);
+  const onAddSibling = useCallback(
+    () => controllerRef.current?.createSibling(),
+    [],
+  );
+  const onCollapseToggle = useCallback(
+    () => controllerRef.current?.toggleCollapseSelected(),
+    [],
+  );
+  const onArrange = useCallback(
+    () => controllerRef.current?.arrangeSelected(),
+    [],
+  );
+  const onSelectBranch = useCallback(
+    () => controllerRef.current?.selectBranchSelected(),
+    [],
+  );
+  const onDuplicateBranch = useCallback(
+    () => void controllerRef.current?.duplicateBranchSelected(),
+    [],
+  );
+
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     const c = controllerRef.current;
@@ -514,6 +569,20 @@ export default function Editor() {
           onDuplicate={onDuplicate}
           onDelete={onDeleteSel}
           onLayer={onLayer}
+          onAddChild={onAddChild}
+          onAddSibling={onAddSibling}
+          onCollapseToggle={onCollapseToggle}
+          onArrange={onArrange}
+          onSelectBranch={onSelectBranch}
+          onDuplicateBranch={onDuplicateBranch}
+        />
+
+        <NodeQuickAdd
+          selection={state.selection}
+          paperOffset={paperOffset}
+          paperSize={paperSize}
+          onAddChild={onAddChild}
+          onAddSibling={onAddSibling}
         />
 
         <ZoomControls

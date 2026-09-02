@@ -52,6 +52,16 @@ export interface SelectionInfo {
   noteFill?: string;
   /** Whether a connector shows an arrowhead. */
   hasArrow?: boolean;
+  /** Mind-map: the single selection is an editable mind-map node (NodeBox). */
+  isNode?: boolean;
+  /** Mind-map: the node has hierarchical children (can arrange/collapse/branch). */
+  hasChildren?: boolean;
+  /** Mind-map: the node has no hierarchical parent (it is a root). */
+  isRoot?: boolean;
+  /** Mind-map: the node's branch is currently collapsed. */
+  collapsed?: boolean;
+  /** Mind-map: the node's current soft accent key. */
+  nodeAccent?: string;
 }
 
 /** Default styling applied to newly created objects (persisted locally). */
@@ -81,6 +91,8 @@ export interface StylePatch {
   noteFill?: string;
   /** Connector arrowhead on/off. */
   hasArrow?: boolean;
+  /** Mind-map node soft accent key. */
+  nodeAccent?: string;
 }
 
 /** UI-facing snapshot the controller emits to React on every change. */
