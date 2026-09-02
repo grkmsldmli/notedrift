@@ -1,25 +1,35 @@
 "use client";
 
-import { Grid2x2, Minus, Plus } from "lucide-react";
+import { memo, useState } from "react";
+import { Check, Grid3x3, Grip, Minus, Plus, Square } from "lucide-react";
+import type { CanvasStyle } from "@/lib/types";
 
 interface ZoomControlsProps {
   zoom: number;
-  gridOn: boolean;
+  canvasStyle: CanvasStyle;
   onZoomIn: () => void;
   onZoomOut: () => void;
   onReset: () => void;
-  onToggleGrid: () => void;
+  onSetStyle: (style: CanvasStyle) => void;
 }
 
-export function ZoomControls({
+const STYLES: { id: CanvasStyle; label: string; icon: React.ReactNode }[] = [
+  { id: "blank", label: "Blank", icon: <Square size={15} /> },
+  { id: "dots", label: "Dots", icon: <Grip size={15} /> },
+  { id: "grid", label: "Grid", icon: <Grid3x3 size={15} /> },
+];
+
+export const ZoomControls = memo(function ZoomControls({
   zoom,
-  gridOn,
+  canvasStyle,
   onZoomIn,
   onZoomOut,
   onReset,
-  onToggleGrid,
+  onSetStyle,
 }: ZoomControlsProps) {
+  const [open, setOpen] = useState(false);
   const pct = Math.round(zoom * 100);
+  const current = STYLES.find((s) => s.id === canvasStyle) ?? STYLES[1];
 
   return (
     <div className="absolute bottom-5 left-4 z-20 flex items-center gap-1 rounded-xl border border-nd-border bg-nd-surface/95 p-1 shadow-xl backdrop-blur">
@@ -54,21 +64,49 @@ export function ZoomControls({
 
       <div className="mx-1 h-5 w-px bg-nd-border" />
 
-      <button
-        type="button"
-        onClick={onToggleGrid}
-        title="Toggle dotted grid"
-        aria-pressed={gridOn}
-        className={[
-          "flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs font-medium transition-colors",
-          gridOn
-            ? "bg-nd-accent/15 text-white ring-1 ring-nd-accent/40"
-            : "text-nd-muted hover:bg-white/5 hover:text-nd-text",
-        ].join(" ")}
-      >
-        <Grid2x2 size={15} />
-        <span className="hidden sm:inline">Infinite</span>
-      </button>
+      <div className="relative">
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          title="Canvas appearance"
+          aria-label="Canvas appearance"
+          aria-expanded={open}
+          className={[
+            "flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs font-medium transition-colors",
+            open
+              ? "bg-white/10 text-nd-text"
+              : "text-nd-muted hover:bg-white/5 hover:text-nd-text",
+          ].join(" ")}
+        >
+          {current.icon}
+          <span className="hidden sm:inline">{current.label}</span>
+        </button>
+
+        {open && (
+          <>
+            <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
+            <div className="absolute bottom-full left-0 z-40 mb-2 w-36 rounded-xl border border-nd-border bg-nd-surface p-1 shadow-2xl">
+              {STYLES.map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  onClick={() => {
+                    onSetStyle(s.id);
+                    setOpen(false);
+                  }}
+                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-nd-text transition-colors hover:bg-white/5"
+                >
+                  <span className="text-nd-muted">{s.icon}</span>
+                  <span className="flex-1 text-left">{s.label}</span>
+                  {canvasStyle === s.id && (
+                    <Check size={15} className="text-nd-accent" />
+                  )}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
-}
+});

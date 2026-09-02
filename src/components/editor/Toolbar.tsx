@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { memo, useState } from "react";
 import {
   ArrowUpRight,
   Circle,
@@ -33,7 +33,11 @@ const SHAPE_OPTIONS: { tool: Tool; label: string; icon: React.ReactNode }[] = [
 
 const Divider = () => <div className="my-1 h-px w-6 bg-nd-border" />;
 
-export function Toolbar({ tool, onSelectTool, onPickImage }: ToolbarProps) {
+export const Toolbar = memo(function Toolbar({
+  tool,
+  onSelectTool,
+  onPickImage,
+}: ToolbarProps) {
   const [shapeOpen, setShapeOpen] = useState(false);
   const [lastShape, setLastShape] = useState<Tool>("rect");
 
@@ -130,4 +134,4 @@ export function Toolbar({ tool, onSelectTool, onPickImage }: ToolbarProps) {
       </div>
     </div>
   );
-}
+});

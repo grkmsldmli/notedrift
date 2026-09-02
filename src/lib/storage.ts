@@ -7,7 +7,7 @@
 // Everything here is client-only and defensively guarded so it never throws
 // during SSR or in privacy modes where storage is unavailable.
 
-import type { CanvasDoc, PageMeta } from "./types";
+import type { CanvasDoc, CanvasStyle, PageMeta } from "./types";
 
 const DB_NAME = "notedrift";
 const STORE = "pages";
@@ -18,10 +18,11 @@ const CURRENT_KEY = "notedrift:current";
 const PREFS_KEY = "notedrift:prefs";
 
 export interface Prefs {
-  gridOn: boolean;
+  /** Canvas style applied to newly created pages. */
+  defaultStyle: CanvasStyle;
 }
 
-const DEFAULT_PREFS: Prefs = { gridOn: true };
+const DEFAULT_PREFS: Prefs = { defaultStyle: "dots" };
 
 /* ------------------------------- IndexedDB -------------------------------- */
 

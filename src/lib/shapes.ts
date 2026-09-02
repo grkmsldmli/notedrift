@@ -1,12 +1,14 @@
-// Factory helpers for the two composite objects Fabric has no primitive for:
-// an arrow (line + arrowhead) and a sticky note (card + editable text).
+// Custom Fabric objects: an arrow (line + head) and a sticky note.
 //
-// Both are built as plain Fabric Groups so they serialize/deserialize with the
-// standard `toJSON()` / `loadFromJSON()` round-trip — no custom class registry
-// needed.
+// The sticky note is a `Textbox` SUBCLASS — not a group — so it stays natively
+// editable (double-click to type) and round-trips through `toJSON()` /
+// `loadFromJSON()` with its text, position, size and styling intact. It only
+// overrides how its background is painted (a rounded, padded, shadowed card).
 
 import * as fabric from "fabric";
 import { CANVAS_FONT, COLORS, STROKE_WIDTH } from "./constants";
+
+/* --------------------------------- arrow ---------------------------------- */
 
 /** Build an arrow group pointing from (x1,y1) to (x2,y2), in scene coords. */
 export function makeArrow(
@@ -41,48 +43,82 @@ export function makeArrow(
     angle: (angle * 180) / Math.PI + 90,
   });
 
-  return new fabric.Group([line, tip], {
-    objectCaching: false,
-  });
+  return new fabric.Group([line, tip], { objectCaching: false });
 }
 
-/** Build a sticky note (yellow card + editable text) at (left, top). */
-export function makeStickyNote(left: number, top: number): fabric.Group {
-  const W = 200;
-  const H = 150;
+/* ------------------------------ sticky note ------------------------------- */
 
-  const card = new fabric.Rect({
-    left,
-    top,
-    width: W,
-    height: H,
-    rx: 16,
-    ry: 16,
-    fill: COLORS.note,
-    stroke: COLORS.noteBorder,
-    strokeWidth: 1,
-    shadow: new fabric.Shadow({
-      color: "rgba(15, 23, 42, 0.18)",
-      blur: 18,
-      offsetX: 0,
-      offsetY: 8,
-    }),
-  });
+const NOTE_PADDING = 14;
+const NOTE_RADIUS = 14;
 
-  const text = new fabric.Textbox("Note", {
-    left: left + 16,
-    top: top + 16,
-    width: W - 32,
-    fontSize: 18,
-    lineHeight: 1.25,
-    fill: COLORS.noteInk,
-    fontFamily: CANVAS_FONT,
-  });
+function roundRectPath(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number,
+): void {
+  const radius = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.arcTo(x + w, y, x + w, y + h, radius);
+  ctx.arcTo(x + w, y + h, x, y + h, radius);
+  ctx.arcTo(x, y + h, x, y, radius);
+  ctx.arcTo(x, y, x + w, y, radius);
+  ctx.closePath();
+}
 
-  // `interactive` + `subTargetCheck` let the user double-click the note to edit
-  // its text in place during the session.
-  return new fabric.Group([card, text], {
-    interactive: true,
-    subTargetCheck: true,
-  });
+type TextboxOptions = ConstructorParameters<typeof fabric.Textbox>[1];
+
+export class StickyNote extends fabric.Textbox {
+  static type = "StickyNote";
+
+  constructor(text: string, options: TextboxOptions = {}) {
+    super(text, {
+      width: 200,
+      padding: NOTE_PADDING,
+      fontSize: 18,
+      lineHeight: 1.3,
+      fill: COLORS.noteInk,
+      fontFamily: CANVAS_FONT,
+      textAlign: "left",
+      backgroundColor: "",
+      ...options,
+    });
+  }
+
+  // Paint the rounded, padded, shadowed card behind the text. Called by
+  // Fabric's render pipeline before the text is drawn.
+  _renderBackground(ctx: CanvasRenderingContext2D): void {
+    const pad = this.padding ?? 0;
+    const w = this.width + pad * 2;
+    const h = this.height + pad * 2;
+    const x = -w / 2;
+    const y = -h / 2;
+
+    ctx.save();
+    ctx.shadowColor = "rgba(15, 23, 42, 0.18)";
+    ctx.shadowBlur = 18;
+    ctx.shadowOffsetY = 8;
+    ctx.fillStyle = COLORS.note;
+    roundRectPath(ctx, x, y, w, h, NOTE_RADIUS);
+    ctx.fill();
+    ctx.restore();
+
+    ctx.save();
+    ctx.strokeStyle = COLORS.noteBorder;
+    ctx.lineWidth = 1;
+    roundRectPath(ctx, x, y, w, h, NOTE_RADIUS);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+// Register so the class survives serialization (type: "StickyNote").
+fabric.classRegistry.setClass(StickyNote);
+
+/** Build a sticky note at (left, top), in scene coords. */
+export function makeStickyNote(left: number, top: number): StickyNote {
+  return new StickyNote("Note", { left, top });
 }

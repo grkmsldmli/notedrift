@@ -9,6 +9,7 @@ import {
   CANVAS_FONT,
   COLORS,
   GRID_COLOR,
+  GRID_LINE_COLOR,
   GRID_SIZE,
   MAX_ZOOM,
   MIN_ZOOM,
@@ -17,7 +18,7 @@ import {
 } from "./constants";
 import { History } from "./history";
 import { makeArrow, makeStickyNote } from "./shapes";
-import type { CanvasDoc, EditorState, Tool } from "./types";
+import type { CanvasDoc, CanvasStyle, EditorState, Tool } from "./types";
 
 export interface ControllerCallbacks {
   onState: (state: EditorState) => void;
@@ -30,6 +31,11 @@ type WheelInfo = fabric.TPointerEventInfo<WheelEvent>;
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
+// Autosave debounce: save ~0.5s after the last change, but never let more than
+// PERSIST_MAXWAIT elapse during continuous activity.
+const PERSIST_IDLE = 500;
+const PERSIST_MAXWAIT = 4000;
+
 export class CanvasController {
   readonly canvas: fabric.Canvas;
   private readonly paperEl: HTMLElement;
@@ -37,10 +43,11 @@ export class CanvasController {
   private readonly history = new History();
 
   private tool: Tool = "select";
-  private gridOn: boolean;
+  private canvasStyle: CanvasStyle;
 
   // Interaction state
   private suppress = false; // suppress history/persist during programmatic loads
+  private disposed = false;
   private drawing = false;
   private draft: fabric.FabricObject | null = null;
   private start = { x: 0, y: 0 };
@@ -49,7 +56,16 @@ export class CanvasController {
   private isErasing = false;
   private spaceDown = false;
   private lastPan = { x: 0, y: 0 };
+  private clipboard: fabric.FabricObject | null = null;
+
+  // Autosave bookkeeping
   private persistTimer: ReturnType<typeof setTimeout> | null = null;
+  private persistPending = false;
+  private lastPersistAt = 0;
+
+  // rAF-coalesced state emission (avoids a React render per raw event)
+  private emitScheduled = false;
+
   // Serializes async canvas loads so rapid undo/redo/page-switches can't
   // interleave `loadFromJSON` calls and corrupt the result.
   private loadQueue: Promise<void> = Promise.resolve();
@@ -58,11 +74,11 @@ export class CanvasController {
     el: HTMLCanvasElement,
     paperEl: HTMLElement,
     cb: ControllerCallbacks,
-    gridOn: boolean,
+    style: CanvasStyle,
   ) {
     this.paperEl = paperEl;
     this.cb = cb;
-    this.gridOn = gridOn;
+    this.canvasStyle = style;
 
     this.canvas = new fabric.Canvas(el, {
       preserveObjectStacking: true,
@@ -78,7 +94,7 @@ export class CanvasController {
     this.canvas.freeDrawingBrush.width = PEN_WIDTH;
 
     this.resize();
-    this.setGrid(gridOn);
+    this.setCanvasStyle(style);
     this.wireEvents();
     this.applyToolMode();
     this.history.reset(this.snapshot());
@@ -97,7 +113,11 @@ export class CanvasController {
   }
 
   dispose(): void {
-    if (this.persistTimer) clearTimeout(this.persistTimer);
+    this.disposed = true;
+    if (this.persistTimer) {
+      clearTimeout(this.persistTimer);
+      this.persistTimer = null;
+    }
     void this.canvas.dispose();
   }
 
@@ -113,13 +133,21 @@ export class CanvasController {
       zoom: this.canvas.getZoom(),
       canUndo: this.history.canUndo(),
       canRedo: this.history.canRedo(),
-      gridOn: this.gridOn,
+      canvasStyle: this.canvasStyle,
       hasSelection: this.canvas.getActiveObjects().length > 0,
     };
   }
 
+  // Coalesce many rapid emits (drawing, zoom, pan) into one React update/frame.
   private emit(): void {
-    this.cb.onState(this.getState());
+    if (this.emitScheduled || this.disposed) return;
+    this.emitScheduled = true;
+    const run = () => {
+      this.emitScheduled = false;
+      if (!this.disposed) this.cb.onState(this.getState());
+    };
+    if (typeof requestAnimationFrame === "function") requestAnimationFrame(run);
+    else run();
   }
 
   private recordHistory(): void {
@@ -130,19 +158,25 @@ export class CanvasController {
 
   private schedulePersist(): void {
     if (this.suppress) return;
+    this.persistPending = true;
     if (this.persistTimer) clearTimeout(this.persistTimer);
+    const sinceLast = Date.now() - this.lastPersistAt;
+    const delay = Math.max(0, Math.min(PERSIST_IDLE, PERSIST_MAXWAIT - sinceLast));
     this.persistTimer = setTimeout(() => {
       this.persistTimer = null;
-      this.cb.onPersist(this.canvas.toJSON());
-    }, 600);
+      if (this.persistPending) this.flush();
+    }, delay);
   }
 
-  /** Persist immediately (used before switching pages). */
+  /** Persist the current document immediately (page switch, unload, new page). */
   flush(): void {
     if (this.persistTimer) {
       clearTimeout(this.persistTimer);
       this.persistTimer = null;
     }
+    if (this.disposed) return;
+    this.persistPending = false;
+    this.lastPersistAt = Date.now();
     this.cb.onPersist(this.canvas.toJSON());
   }
 
@@ -165,6 +199,16 @@ export class CanvasController {
     return Boolean(active?.isEditing);
   }
 
+  exitEditing(): void {
+    const active = this.canvas.getActiveObject() as
+      | (fabric.FabricObject & { isEditing?: boolean; exitEditing?: () => void })
+      | undefined;
+    if (active?.isEditing && active.exitEditing) {
+      active.exitEditing();
+      this.canvas.requestRenderAll();
+    }
+  }
+
   isSpaceDown(): boolean {
     return this.spaceDown;
   }
@@ -183,8 +227,6 @@ export class CanvasController {
         return "text";
       case "eraser":
         return "cell";
-      case "pen":
-        return "crosshair";
       default:
         return "crosshair";
     }
@@ -215,6 +257,53 @@ export class CanvasController {
 
     if (this.tool !== "select") c.discardActiveObject();
     c.requestRenderAll();
+  }
+
+  /* ---------------------------- clipboard / all --------------------------- */
+
+  async copySelection(): Promise<void> {
+    const active = this.canvas.getActiveObject();
+    if (!active) return;
+    this.clipboard = await active.clone();
+  }
+
+  async pasteClipboard(): Promise<void> {
+    if (!this.clipboard) return;
+    const clone = await this.clipboard.clone();
+    this.canvas.discardActiveObject();
+    clone.set({
+      left: (clone.left ?? 0) + 24,
+      top: (clone.top ?? 0) + 24,
+      evented: true,
+      selectable: true,
+    });
+    if (clone instanceof fabric.ActiveSelection) {
+      clone.canvas = this.canvas;
+      clone.forEachObject((o) => this.canvas.add(o));
+      clone.setCoords();
+    } else {
+      this.canvas.add(clone);
+    }
+    this.setTool("select");
+    this.canvas.setActiveObject(clone);
+    this.canvas.requestRenderAll();
+    this.recordHistory();
+    this.schedulePersist();
+  }
+
+  selectAllObjects(): void {
+    this.setTool("select");
+    const objs = this.canvas.getObjects();
+    if (objs.length === 0) return;
+    this.canvas.discardActiveObject();
+    if (objs.length === 1) {
+      this.canvas.setActiveObject(objs[0]);
+    } else {
+      const sel = new fabric.ActiveSelection(objs, { canvas: this.canvas });
+      this.canvas.setActiveObject(sel);
+    }
+    this.canvas.requestRenderAll();
+    this.emit();
   }
 
   /* ------------------------------ undo/redo ------------------------------- */
@@ -276,25 +365,26 @@ export class CanvasController {
     this.emit();
   }
 
-  /* -------------------------------- grid ---------------------------------- */
+  /* --------------------------- canvas appearance -------------------------- */
 
-  setGrid(on: boolean): void {
-    this.gridOn = on;
-    if (on) {
-      this.paperEl.style.backgroundImage = `radial-gradient(circle, ${GRID_COLOR} 1.3px, transparent 1.3px)`;
-      this.updateGrid();
+  setCanvasStyle(style: CanvasStyle): void {
+    this.canvasStyle = style;
+    const el = this.paperEl;
+    if (style === "blank") {
+      el.style.backgroundImage = "none";
+    } else if (style === "dots") {
+      el.style.backgroundImage = `radial-gradient(circle, ${GRID_COLOR} 1.3px, transparent 1.3px)`;
     } else {
-      this.paperEl.style.backgroundImage = "none";
+      el.style.backgroundImage =
+        `linear-gradient(to right, ${GRID_LINE_COLOR} 1px, transparent 1px), ` +
+        `linear-gradient(to bottom, ${GRID_LINE_COLOR} 1px, transparent 1px)`;
     }
+    this.updateGrid();
     this.emit();
   }
 
-  toggleGrid(): void {
-    this.setGrid(!this.gridOn);
-  }
-
   private updateGrid(): void {
-    if (!this.gridOn) return;
+    if (this.canvasStyle === "blank") return;
     const vpt = this.canvas.viewportTransform;
     const zoom = this.canvas.getZoom();
     const size = GRID_SIZE * zoom;
@@ -351,6 +441,24 @@ export class CanvasController {
     return { x: p.x, y: p.y };
   }
 
+  /* ------------------------------ text / note ----------------------------- */
+
+  private createTextAt(x: number, y: number): void {
+    const text = new fabric.IText("", {
+      left: x,
+      top: y,
+      fontSize: 24,
+      fill: COLORS.ink,
+      fontFamily: CANVAS_FONT,
+    });
+    this.setTool("select");
+    this.canvas.add(text);
+    this.canvas.setActiveObject(text);
+    text.enterEditing();
+    text.hiddenTextarea?.focus();
+    this.canvas.requestRenderAll();
+  }
+
   /* ------------------------------- documents ------------------------------ */
 
   /** Load a page document (or clear if undefined/empty). Resets history. */
@@ -398,6 +506,11 @@ export class CanvasController {
     const prevBg = c.backgroundColor;
     const prevW = c.getWidth();
     const prevH = c.getHeight();
+
+    // Never export while an object is selected — selection handles are UI, and
+    // they render onto the upper canvas, not the export, but discarding keeps
+    // the exported bitmap unquestionably content-only.
+    c.discardActiveObject();
 
     let dataUrl: string;
 
@@ -463,6 +576,7 @@ export class CanvasController {
     this.canvas.on("mouse:move", this.onMouseMove);
     this.canvas.on("mouse:up", this.onMouseUp);
     this.canvas.on("mouse:wheel", this.onWheel);
+    this.canvas.on("mouse:dblclick", this.onDblClick);
 
     this.canvas.on("path:created", () => {
       // A freehand pen stroke finished.
@@ -482,6 +596,15 @@ export class CanvasController {
     this.canvas.on("selection:updated", () => this.emit());
     this.canvas.on("selection:cleared", () => this.emit());
   }
+
+  private onDblClick = (opt: PointerInfo): void => {
+    // Double-clicking empty canvas (in select mode) drops a text object ready
+    // to type. Double-clicking an existing object is left to Fabric (e.g. text
+    // editing).
+    if (this.tool !== "select" || opt.target) return;
+    const p = this.canvas.getScenePoint(opt.e);
+    this.createTextAt(p.x, p.y);
+  };
 
   private onMouseDown = (opt: PointerInfo): void => {
     const e = opt.e as MouseEvent;
@@ -507,29 +630,21 @@ export class CanvasController {
     this.cur = { x: p.x, y: p.y };
 
     if (this.tool === "text") {
-      const text = new fabric.IText("", {
-        left: p.x,
-        top: p.y,
-        fontSize: 24,
-        fill: COLORS.ink,
-        fontFamily: CANVAS_FONT,
-      });
-      this.canvas.add(text);
-      this.canvas.setActiveObject(text);
-      text.enterEditing();
-      text.hiddenTextarea?.focus();
-      this.setTool("select");
+      this.createTextAt(p.x, p.y);
       return;
     }
 
     if (this.tool === "note") {
       const note = makeStickyNote(p.x, p.y);
+      this.setTool("select");
       this.canvas.add(note);
       this.canvas.setActiveObject(note);
+      note.enterEditing();
+      note.selectAll();
+      note.hiddenTextarea?.focus();
       this.canvas.requestRenderAll();
       this.recordHistory();
       this.schedulePersist();
-      this.setTool("select");
       return;
     }
 
@@ -649,7 +764,7 @@ export class CanvasController {
 
     // Discard accidental tiny drags.
     const tooSmall =
-      (tool === "rect" || tool === "ellipse")
+      tool === "rect" || tool === "ellipse"
         ? Math.abs(ex - sx) < 4 && Math.abs(ey - sy) < 4
         : dist < 4;
 
@@ -694,6 +809,7 @@ export class CanvasController {
       vpt[5] -= e.deltaY;
       this.canvas.setViewportTransform(vpt);
       this.updateGrid();
+      this.emit();
     }
   };
 }

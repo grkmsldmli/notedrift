@@ -19,8 +19,9 @@ export const STROKE_WIDTH = 2.5;
 export const CANVAS_FONT =
   'system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
 
-/** Color of the dotted grid points on the white paper. */
+/** Color of the dotted grid points / grid lines on the white paper. */
 export const GRID_COLOR = "#dbe0ec";
+export const GRID_LINE_COLOR = "#e8ebf2";
 
 export const COLORS = {
   /** Default drawing ink — dark, readable on white paper. */

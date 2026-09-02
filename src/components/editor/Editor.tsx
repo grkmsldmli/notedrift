@@ -14,7 +14,13 @@ import {
   setCurrentPageId,
   uid,
 } from "@/lib/storage";
-import type { CanvasDoc, EditorState, PageMeta, Tool } from "@/lib/types";
+import type {
+  CanvasDoc,
+  CanvasStyle,
+  EditorState,
+  PageMeta,
+  Tool,
+} from "@/lib/types";
 import { Toolbar } from "./Toolbar";
 import { TopBar } from "./TopBar";
 import { ZoomControls } from "./ZoomControls";
@@ -25,7 +31,7 @@ const INITIAL_STATE: EditorState = {
   zoom: 1,
   canUndo: false,
   canRedo: false,
-  gridOn: true,
+  canvasStyle: "dots",
   hasSelection: false,
 };
 
@@ -49,10 +55,12 @@ function slugify(title: string): string {
   return base || "notedrift";
 }
 
-function newPageMeta(): PageMeta {
+function newPageMeta(style: CanvasStyle): PageMeta {
   const now = Date.now();
-  return { id: uid(), title: "Untitled", createdAt: now, updatedAt: now };
+  return { id: uid(), title: "Untitled", createdAt: now, updatedAt: now, style };
 }
+
+const styleOf = (p: PageMeta | undefined): CanvasStyle => p?.style ?? "dots";
 
 export default function Editor() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -60,6 +68,7 @@ export default function Editor() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const controllerRef = useRef<CanvasController | null>(null);
   const currentIdRef = useRef<string | null>(null);
+  const pagesRef = useRef<PageMeta[]>([]);
 
   const [state, setState] = useState<EditorState>(INITIAL_STATE);
   const [pages, setPages] = useState<PageMeta[]>([]);
@@ -69,6 +78,9 @@ export default function Editor() {
   useEffect(() => {
     currentIdRef.current = currentId;
   }, [currentId]);
+  useEffect(() => {
+    pagesRef.current = pages;
+  }, [pages]);
 
   // Debounced autosave target: always the *current* page.
   const persistDoc = useCallback((doc: CanvasDoc) => {
@@ -92,8 +104,10 @@ export default function Editor() {
 
     let list = loadPages();
     let curId = getCurrentPageId();
+    const prefs = loadPrefs();
+
     if (list.length === 0) {
-      const first = newPageMeta();
+      const first = newPageMeta(prefs.defaultStyle);
       list = [first];
       curId = first.id;
       savePages(list);
@@ -104,21 +118,24 @@ export default function Editor() {
       setCurrentPageId(curId);
     }
 
+    const curPage = list.find((p) => p.id === curId);
+
     setPages(list);
     setCurrentId(curId);
     currentIdRef.current = curId;
+    pagesRef.current = list;
 
-    const prefs = loadPrefs();
     const controller = new CanvasController(
       canvasEl,
       paperEl,
       { onState: setState, onPersist: persistDoc },
-      prefs.gridOn,
+      styleOf(curPage),
     );
     controllerRef.current = controller;
 
     void loadCanvasDoc(curId).then((doc) => {
       controller.loadDoc(doc);
+      controller.setCanvasStyle(styleOf(curPage));
       setReady(true);
     });
 
@@ -137,9 +154,20 @@ export default function Editor() {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const c = controllerRef.current;
-      if (!c || c.isEditing()) return;
+      if (!c) return;
       const el = document.activeElement;
-      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA")) return;
+      const typingInField =
+        !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA");
+
+      // Escape: exit text editing, otherwise return to the Select tool.
+      if (e.key === "Escape") {
+        if (c.isEditing()) c.exitEditing();
+        else if (!typingInField) c.setTool("select");
+        return;
+      }
+
+      // Never let shortcuts fire while the user is typing.
+      if (c.isEditing() || typingInField) return;
 
       const meta = e.metaKey || e.ctrlKey;
       if (meta) {
@@ -151,6 +179,13 @@ export default function Editor() {
         } else if (k === "y") {
           e.preventDefault();
           c.redo();
+        } else if (k === "c") {
+          void c.copySelection();
+        } else if (k === "v") {
+          void c.pasteClipboard();
+        } else if (k === "a") {
+          e.preventDefault();
+          c.selectAllObjects();
         } else if (e.key === "=" || e.key === "+") {
           e.preventDefault();
           c.zoomIn();
@@ -190,11 +225,11 @@ export default function Editor() {
     };
   }, []);
 
-  // Paste images from clipboard anywhere.
+  // Paste images from clipboard anywhere (but not while editing text).
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
       const c = controllerRef.current;
-      if (!c) return;
+      if (!c || c.isEditing()) return;
       const items = e.clipboardData?.items;
       if (!items) return;
       for (const item of items) {
@@ -211,13 +246,29 @@ export default function Editor() {
     return () => window.removeEventListener("paste", onPaste);
   }, []);
 
+  // Flush the autosave before the tab is hidden or closed so a refresh never
+  // loses the most recent edit.
+  useEffect(() => {
+    const flush = () => controllerRef.current?.flush();
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") flush();
+    };
+    window.addEventListener("beforeunload", flush);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("beforeunload", flush);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, []);
+
   /* --------------------------------- page ops -------------------------------- */
 
   const handleNewPage = useCallback(() => {
     const c = controllerRef.current;
     if (!c) return;
     c.flush();
-    const meta = newPageMeta();
+    const style = loadPrefs().defaultStyle;
+    const meta = newPageMeta(style);
     setPages((prev) => {
       const next = [meta, ...prev];
       savePages(next);
@@ -227,6 +278,7 @@ export default function Editor() {
     currentIdRef.current = meta.id;
     setCurrentPageId(meta.id);
     c.clearPage();
+    c.setCanvasStyle(style);
   }, []);
 
   const handleSwitchPage = useCallback(async (id: string) => {
@@ -236,47 +288,47 @@ export default function Editor() {
     setCurrentId(id);
     currentIdRef.current = id;
     setCurrentPageId(id);
+    const target = pagesRef.current.find((p) => p.id === id);
     const doc = await loadCanvasDoc(id);
     await c.loadDoc(doc);
+    c.setCanvasStyle(styleOf(target));
   }, []);
 
-  const handleDeletePage = useCallback(
-    (id: string) => {
-      const c = controllerRef.current;
-      if (!c) return;
-      void deleteCanvasDoc(id);
-      const remaining = pages.filter((p) => p.id !== id);
+  const handleDeletePage = useCallback((id: string) => {
+    const c = controllerRef.current;
+    if (!c) return;
+    void deleteCanvasDoc(id);
+    const remaining = pagesRef.current.filter((p) => p.id !== id);
 
-      if (remaining.length === 0) {
-        const meta = newPageMeta();
-        setPages([meta]);
-        savePages([meta]);
-        setCurrentId(meta.id);
-        currentIdRef.current = meta.id;
-        setCurrentPageId(meta.id);
-        c.clearPage();
-        return;
-      }
+    if (remaining.length === 0) {
+      const style = loadPrefs().defaultStyle;
+      const meta = newPageMeta(style);
+      setPages([meta]);
+      savePages([meta]);
+      setCurrentId(meta.id);
+      currentIdRef.current = meta.id;
+      setCurrentPageId(meta.id);
+      c.clearPage();
+      c.setCanvasStyle(style);
+      return;
+    }
 
-      setPages(remaining);
-      savePages(remaining);
+    setPages(remaining);
+    savePages(remaining);
 
-      if (id === currentIdRef.current) {
-        const nextId = remaining[0].id;
-        setCurrentId(nextId);
-        currentIdRef.current = nextId;
-        setCurrentPageId(nextId);
-        void loadCanvasDoc(nextId).then((doc) => c.loadDoc(doc));
-      }
-    },
-    [pages],
-  );
+    if (id === currentIdRef.current) {
+      const target = remaining[0];
+      setCurrentId(target.id);
+      currentIdRef.current = target.id;
+      setCurrentPageId(target.id);
+      void loadCanvasDoc(target.id).then((doc) => {
+        c.loadDoc(doc);
+        c.setCanvasStyle(styleOf(target));
+      });
+    }
+  }, []);
 
-  const handleRenamePage = useCallback((id: string) => {
-    const current = loadPages().find((p) => p.id === id);
-    const input = window.prompt("Rename page", current?.title ?? "Untitled");
-    if (input === null) return;
-    const title = input.trim() || "Untitled";
+  const handleRenamePage = useCallback((id: string, title: string) => {
     setPages((prev) => {
       const next = prev.map((p) => (p.id === id ? { ...p, title } : p));
       savePages(next);
@@ -291,27 +343,36 @@ export default function Editor() {
     [],
   );
   const onPickImage = useCallback(() => fileInputRef.current?.click(), []);
-  const onFileChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (file) void controllerRef.current?.addImageFile(file);
-      e.target.value = "";
-    },
-    [],
-  );
+  const onFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) void controllerRef.current?.addImageFile(file);
+    e.target.value = "";
+  }, []);
+
+  const onUndo = useCallback(() => controllerRef.current?.undo(), []);
+  const onRedo = useCallback(() => controllerRef.current?.redo(), []);
+  const onZoomIn = useCallback(() => controllerRef.current?.zoomIn(), []);
+  const onZoomOut = useCallback(() => controllerRef.current?.zoomOut(), []);
+  const onReset = useCallback(() => controllerRef.current?.resetZoom(), []);
 
   const onExport = useCallback(() => {
     const title =
-      pages.find((p) => p.id === currentIdRef.current)?.title ?? "notedrift";
+      pagesRef.current.find((p) => p.id === currentIdRef.current)?.title ??
+      "notedrift";
     controllerRef.current?.exportPNG(slugify(title));
-  }, [pages]);
+  }, []);
 
-  const onToggleGrid = useCallback(() => {
-    const c = controllerRef.current;
-    if (!c) return;
-    c.toggleGrid();
-    savePrefs({ gridOn: !state.gridOn });
-  }, [state.gridOn]);
+  const onSetStyle = useCallback((style: CanvasStyle) => {
+    const id = currentIdRef.current;
+    if (!id) return;
+    controllerRef.current?.setCanvasStyle(style);
+    savePrefs({ defaultStyle: style });
+    setPages((prev) => {
+      const next = prev.map((p) => (p.id === id ? { ...p, style } : p));
+      savePages(next);
+      return next;
+    });
+  }, []);
 
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -335,12 +396,10 @@ export default function Editor() {
         currentTitle={currentTitle}
         canUndo={state.canUndo}
         canRedo={state.canRedo}
-        gridOn={state.gridOn}
         onNewPage={handleNewPage}
-        onUndo={() => controllerRef.current?.undo()}
-        onRedo={() => controllerRef.current?.redo()}
+        onUndo={onUndo}
+        onRedo={onRedo}
         onExport={onExport}
-        onToggleGrid={onToggleGrid}
         onSwitchPage={handleSwitchPage}
         onDeletePage={handleDeletePage}
         onRenamePage={handleRenamePage}
@@ -366,11 +425,11 @@ export default function Editor() {
 
         <ZoomControls
           zoom={state.zoom}
-          gridOn={state.gridOn}
-          onZoomIn={() => controllerRef.current?.zoomIn()}
-          onZoomOut={() => controllerRef.current?.zoomOut()}
-          onReset={() => controllerRef.current?.resetZoom()}
-          onToggleGrid={onToggleGrid}
+          canvasStyle={state.canvasStyle}
+          onZoomIn={onZoomIn}
+          onZoomOut={onZoomOut}
+          onReset={onReset}
+          onSetStyle={onSetStyle}
         />
 
         {!ready && (

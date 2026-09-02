@@ -1,12 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { memo, useState } from "react";
 import {
-  Check,
   ChevronDown,
   Download,
   FileText,
-  Grid2x2,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -24,15 +22,13 @@ interface TopBarProps {
   currentTitle: string;
   canUndo: boolean;
   canRedo: boolean;
-  gridOn: boolean;
   onNewPage: () => void;
   onUndo: () => void;
   onRedo: () => void;
   onExport: () => void;
-  onToggleGrid: () => void;
   onSwitchPage: (id: string) => void;
   onDeletePage: (id: string) => void;
-  onRenamePage: (id: string) => void;
+  onRenamePage: (id: string, title: string) => void;
 }
 
 function timeAgo(ts: number): string {
@@ -46,19 +42,17 @@ function timeAgo(ts: number): string {
   return `${d}d ago`;
 }
 
-export function TopBar(props: TopBarProps) {
+export const TopBar = memo(function TopBar(props: TopBarProps) {
   const {
     pages,
     currentPageId,
     currentTitle,
     canUndo,
     canRedo,
-    gridOn,
     onNewPage,
     onUndo,
     onRedo,
     onExport,
-    onToggleGrid,
     onSwitchPage,
     onDeletePage,
     onRenamePage,
@@ -66,10 +60,26 @@ export function TopBar(props: TopBarProps) {
 
   const [pagesOpen, setPagesOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [confirmId, setConfirmId] = useState<string | null>(null);
 
   const closeAll = () => {
     setPagesOpen(false);
     setMenuOpen(false);
+    setConfirmId(null);
+  };
+
+  const startEditing = () => {
+    closeAll();
+    setDraft(currentTitle);
+    setEditing(true);
+  };
+
+  const commitEditing = () => {
+    if (!editing) return;
+    setEditing(false);
+    if (currentPageId) onRenamePage(currentPageId, draft.trim() || "Untitled");
   };
 
   return (
@@ -86,18 +96,41 @@ export function TopBar(props: TopBarProps) {
         </span>
 
         <div className="relative ml-1">
-          <button
-            type="button"
-            onClick={() => {
-              setMenuOpen(false);
-              setPagesOpen((o) => !o);
-            }}
-            className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm text-nd-muted transition-colors hover:bg-white/5 hover:text-nd-text"
-          >
-            <FileText size={14} />
-            <span className="max-w-[130px] truncate">{currentTitle}</span>
-            <ChevronDown size={14} />
-          </button>
+          {editing ? (
+            <input
+              autoFocus
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onBlur={commitEditing}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  commitEditing();
+                } else if (e.key === "Escape") {
+                  e.preventDefault();
+                  setEditing(false);
+                }
+              }}
+              className="w-44 rounded-md bg-nd-surface-2 px-2 py-1.5 text-sm text-nd-text outline-none ring-1 ring-nd-accent/50"
+              aria-label="Page title"
+            />
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                setMenuOpen(false);
+                setConfirmId(null);
+                setPagesOpen((o) => !o);
+              }}
+              onDoubleClick={startEditing}
+              title="Switch pages — double-click to rename"
+              className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm text-nd-muted transition-colors hover:bg-white/5 hover:text-nd-text"
+            >
+              <FileText size={14} />
+              <span className="max-w-[130px] truncate">{currentTitle}</span>
+              <ChevronDown size={14} />
+            </button>
+          )}
 
           {pagesOpen && (
             <>
@@ -109,6 +142,7 @@ export function TopBar(props: TopBarProps) {
                 <div className="nd-scroll max-h-80 overflow-auto">
                   {pages.map((p) => {
                     const active = p.id === currentPageId;
+                    const confirming = confirmId === p.id;
                     return (
                       <div
                         key={p.id}
@@ -117,37 +151,56 @@ export function TopBar(props: TopBarProps) {
                           active ? "bg-white/10" : "hover:bg-white/5",
                         ].join(" ")}
                       >
-                        <button
-                          type="button"
-                          onClick={() => {
-                            onSwitchPage(p.id);
-                            closeAll();
-                          }}
-                          className="flex min-w-0 flex-1 items-center justify-between gap-2 px-2 py-2 text-left"
-                        >
-                          <span className="truncate text-sm text-nd-text">
-                            {p.title}
-                          </span>
-                          <span className="shrink-0 text-[11px] text-nd-muted">
-                            {timeAgo(p.updatedAt)}
-                          </span>
-                        </button>
-                        <button
-                          type="button"
-                          title="Rename"
-                          onClick={() => onRenamePage(p.id)}
-                          className="flex h-7 w-7 items-center justify-center rounded-md text-nd-muted opacity-0 transition hover:bg-white/10 hover:text-nd-text group-hover:opacity-100"
-                        >
-                          <Pencil size={14} />
-                        </button>
-                        <button
-                          type="button"
-                          title="Delete"
-                          onClick={() => onDeletePage(p.id)}
-                          className="flex h-7 w-7 items-center justify-center rounded-md text-nd-muted opacity-0 transition hover:bg-white/10 hover:text-red-400 group-hover:opacity-100"
-                        >
-                          <Trash2 size={14} />
-                        </button>
+                        {confirming ? (
+                          <div className="flex flex-1 items-center gap-2 px-2 py-1.5">
+                            <span className="flex-1 truncate text-sm text-nd-muted">
+                              Delete this page?
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                onDeletePage(p.id);
+                                setConfirmId(null);
+                              }}
+                              className="rounded-md bg-red-500/90 px-2 py-1 text-xs font-medium text-white hover:bg-red-500"
+                            >
+                              Delete
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmId(null)}
+                              className="rounded-md px-2 py-1 text-xs text-nd-muted hover:bg-white/10 hover:text-nd-text"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                onSwitchPage(p.id);
+                                closeAll();
+                              }}
+                              className="flex min-w-0 flex-1 items-center justify-between gap-2 px-2 py-2 text-left"
+                            >
+                              <span className="truncate text-sm text-nd-text">
+                                {p.title}
+                              </span>
+                              <span className="shrink-0 text-[11px] text-nd-muted">
+                                {timeAgo(p.updatedAt)}
+                              </span>
+                            </button>
+                            <button
+                              type="button"
+                              title="Delete"
+                              onClick={() => setConfirmId(p.id)}
+                              className="flex h-7 w-7 items-center justify-center rounded-md text-nd-muted opacity-0 transition hover:bg-white/10 hover:text-red-400 group-hover:opacity-100"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </>
+                        )}
                       </div>
                     );
                   })}
@@ -196,6 +249,7 @@ export function TopBar(props: TopBarProps) {
             active={menuOpen}
             onClick={() => {
               setPagesOpen(false);
+              setConfirmId(null);
               setMenuOpen((o) => !o);
             }}
           />
@@ -205,21 +259,7 @@ export function TopBar(props: TopBarProps) {
               <div className="absolute right-0 top-full z-50 mt-1.5 w-52 rounded-xl border border-nd-border bg-nd-surface p-1 shadow-2xl">
                 <button
                   type="button"
-                  onClick={() => {
-                    onToggleGrid();
-                  }}
-                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-nd-text transition-colors hover:bg-white/5"
-                >
-                  <Grid2x2 size={16} className="text-nd-muted" />
-                  <span className="flex-1 text-left">Dotted grid</span>
-                  {gridOn && <Check size={15} className="text-nd-accent" />}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (currentPageId) onRenamePage(currentPageId);
-                    closeAll();
-                  }}
+                  onClick={startEditing}
                   className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-nd-text transition-colors hover:bg-white/5"
                 >
                   <Pencil size={16} className="text-nd-muted" />
@@ -243,4 +283,4 @@ export function TopBar(props: TopBarProps) {
       </div>
     </header>
   );
-}
+});
