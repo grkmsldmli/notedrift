@@ -16,6 +16,9 @@ import {
   Copy,
   CopyPlus,
   CornerDownRight,
+  Crop,
+  FlipHorizontal,
+  FlipVertical,
   Group as GroupIcon,
   Layers,
   Lock,
@@ -69,6 +72,8 @@ interface ObjectToolbarProps {
   onAlign: (edge: AlignEdge) => void;
   onDistribute: (axis: "h" | "v") => void;
   onNoteSize: (cardWidth: number, fontSize: number) => void;
+  onCrop: () => void;
+  onFlip: (axis: "h" | "v") => void;
   onAddChild: () => void;
   onAddSibling: () => void;
   onCollapseToggle: () => void;
@@ -77,6 +82,8 @@ interface ObjectToolbarProps {
   onDuplicateBranch: () => void;
   /** Height (px) the software keyboard covers, so the bar stays above it. */
   keyboardInset?: number;
+  /** An image is being cropped — hide this bar (the crop bar shows instead). */
+  cropping?: boolean;
 }
 
 const iconBtn =
@@ -96,6 +103,8 @@ export const ObjectToolbar = memo(function ObjectToolbar({
   onAlign,
   onDistribute,
   onNoteSize,
+  onCrop,
+  onFlip,
   onAddChild,
   onAddSibling,
   onCollapseToggle,
@@ -103,6 +112,7 @@ export const ObjectToolbar = memo(function ObjectToolbar({
   onSelectBranch,
   onDuplicateBranch,
   keyboardInset = 0,
+  cropping = false,
 }: ObjectToolbarProps) {
   const [layerOpen, setLayerOpen] = useState(false);
   const [mindOpen, setMindOpen] = useState(false);
@@ -143,7 +153,7 @@ export const ObjectToolbar = memo(function ObjectToolbar({
     setBox({ left: Math.round(left), top: Math.round(top) });
   }, [selection, paperOffset, keyboardInset]);
 
-  if (selection.kind === "none" || !selection.rect) return null;
+  if (selection.kind === "none" || !selection.rect || cropping) return null;
 
   const { kind } = selection;
   const locked = !!selection.locked;
@@ -444,7 +454,48 @@ export const ObjectToolbar = memo(function ObjectToolbar({
         </>
       );
     }
-    // image / mixed → no style controls
+    if (kind === "image") {
+      return (
+        <>
+          {selection.count === 1 && (
+            <>
+              <button
+                type="button"
+                className={[iconBtn, selection.cropped ? "!text-nd-text" : ""].join(" ")}
+                title="Crop"
+                onClick={onCrop}
+              >
+                <Crop size={15} />
+              </button>
+              <Divider />
+            </>
+          )}
+          <OpacityControl
+            value={selection.opacity ?? 1}
+            onChange={(o, commit) => onStyle({ opacity: o }, commit)}
+          />
+          <Divider />
+          <button
+            type="button"
+            className={iconBtn}
+            title="Flip horizontal"
+            onClick={() => onFlip("h")}
+          >
+            <FlipHorizontal size={15} />
+          </button>
+          <button
+            type="button"
+            className={iconBtn}
+            title="Flip vertical"
+            onClick={() => onFlip("v")}
+          >
+            <FlipVertical size={15} />
+          </button>
+          <Divider />
+        </>
+      );
+    }
+    // mixed → no style controls
     return null;
   };
 

@@ -5,15 +5,15 @@
 // registry will grow into (library, favorites, command palette) in later phases.
 
 import type { Tool } from "../types";
-import type { BrushSpec, ToolCategory, ToolDefinition } from "./types";
+import type { BrushSpec, ToolCategory, ToolDefinition, ToolId } from "./types";
 
-const registry = new Map<Tool, ToolDefinition>();
+const registry = new Map<ToolId, ToolDefinition>();
 
 export function registerTool(def: ToolDefinition): void {
   registry.set(def.id, def);
 }
 
-export function getToolDef(id: Tool): ToolDefinition | undefined {
+export function getToolDef(id: ToolId): ToolDefinition | undefined {
   return registry.get(id);
 }
 
@@ -49,3 +49,6 @@ registerTool({ id: "line", label: "Line", category: "shape" });
 registerTool({ id: "arrow", label: "Arrow", category: "shape" });
 registerTool({ id: "note", label: "Sticky note", category: "write" });
 registerTool({ id: "eraser", label: "Eraser", category: "organize" });
+// Phase 1.6F — Image joins the registry as a one-shot insert action (the picker
+// stays a button; this makes Image a first-class citizen for the 1.6G library).
+registerTool({ id: "image", label: "Insert image", category: "insert", action: "pick-image" });

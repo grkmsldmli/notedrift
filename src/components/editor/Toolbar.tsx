@@ -31,6 +31,7 @@ import {
   Type,
 } from "lucide-react";
 import type { Tool } from "@/lib/types";
+import { getToolDef } from "@/lib/tools/registry";
 import { IconButton } from "../ui/IconButton";
 
 interface ToolbarProps {
@@ -280,7 +281,7 @@ export const Toolbar = memo(function Toolbar({
         />
         <IconButton
           icon={<ImageIcon size={ICON} />}
-          label="Insert image"
+          label={getToolDef("image")?.label ?? "Insert image"}
           onClick={onPickImage}
         />
 

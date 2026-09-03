@@ -14,6 +14,9 @@ import {
   BULLET_PREFIX,
   CANVAS_FONT,
   CHECK_PREFIX,
+  CROP_HANDLE_HIT,
+  CROP_MIN_PX,
+  IMAGE_CASCADE,
   CONNECTOR_STROKE,
   CONNECTOR_WIDTH,
   DASH_ARRAYS,
@@ -45,6 +48,7 @@ import {
 } from "./shapes/registry";
 import { polygonPoints, starPoints } from "./shapes/geometry";
 import { fontKeyOf } from "./fonts";
+import { normalizeImageFile, ImageImportError } from "./image";
 import {
   ANCHORS,
   Connector,
@@ -97,6 +101,8 @@ function dashKeyOf(arr: number[] | null | undefined): DashStyle {
 export interface ControllerCallbacks {
   onState: (state: EditorState) => void;
   onPersist: (doc: CanvasDoc) => void;
+  /** Surface a brief, friendly message (e.g. an image import error). */
+  onNotice?: (message: string) => void;
 }
 
 type PointerInfo = fabric.TPointerEventInfo<fabric.TPointerEvent>;
@@ -142,6 +148,56 @@ function textStyleOf(t: fabric.Textbox): Partial<SelectionInfo> {
     listStyle: listStyleOf(t.text ?? ""),
   };
 }
+
+/** A recoverable stand-in for an image whose data failed to decode on load —
+ *  keeps the exact geometry and the original src (ndBrokenSrc) so nothing is
+ *  silently lost, and the rest of the page still renders. */
+function makeBrokenImagePlaceholder(
+  s: Record<string, unknown>,
+): fabric.Rect {
+  const num = (v: unknown, d: number) => (typeof v === "number" ? v : d);
+  const rect = new fabric.Rect({
+    left: num(s.left, 0),
+    top: num(s.top, 0),
+    originX: (s.originX as fabric.TOriginX) ?? "center",
+    originY: (s.originY as fabric.TOriginY) ?? "center",
+    width: num(s.width, 200),
+    height: num(s.height, 150),
+    scaleX: num(s.scaleX, 1),
+    scaleY: num(s.scaleY, 1),
+    angle: num(s.angle, 0),
+    flipX: Boolean(s.flipX),
+    flipY: Boolean(s.flipY),
+    opacity: num(s.opacity, 1),
+    fill: "rgba(148,163,184,0.12)",
+    stroke: "#94a3b8",
+    strokeWidth: 1.5,
+    strokeDashArray: [8, 6],
+    strokeUniform: true,
+  });
+  const r = rect as fabric.Rect & {
+    ndId?: string;
+    ndBrokenSrc?: unknown;
+    ndLocked?: boolean;
+  };
+  r.ndId = (s.ndId as string) ?? nid();
+  r.ndBrokenSrc = s.src; // preserve the original data for recovery
+  if (s.ndLocked) r.ndLocked = true;
+  return rect;
+}
+
+/** Reviver for loadFromJSON: replace a failed image with a placeholder so one
+ *  bad src never drops data or bricks the page; stays quiet on the console.
+ *  Loosely typed to satisfy Fabric's generic reviver signature. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const brokenImageReviver = (serialized: any, instance: any, reason?: any): any => {
+  if (instance === undefined && reason !== undefined) {
+    const type = String(serialized?.type ?? "").toLowerCase();
+    if (type === "image")
+      return makeBrokenImagePlaceholder(serialized as Record<string, unknown>);
+  }
+  return undefined;
+};
 
 /** Even-odd ray-cast point-in-polygon test (scene coordinates). */
 function pointInPolygon(p: Pt, poly: Pt[]): boolean {
@@ -270,6 +326,24 @@ export class CanvasController {
   // keyboard covers, and the vertical scene-pan we applied to lift the caret.
   private keyboardInset = 0;
   private keyboardPan = 0;
+
+  // Image crop mode — a controller-owned mode (like marquee/anchors). The crop
+  // window is edited in element pixels; the image renders the full picture while
+  // cropping, dimmed outside the window. Never leaves artifacts in the document.
+  private cropState: {
+    img: fabric.FabricImage;
+    elW: number;
+    elH: number;
+    // current crop window (element pixels)
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    // to restore on cancel
+    orig: { cropX: number; cropY: number; width: number; height: number; opacity: number };
+    origCenter: fabric.Point;
+    drag: null | { handle: string; startX: number; startY: number; win: { x: number; y: number; w: number; h: number } };
+  } | null = null;
 
   // Touch / pen gestures (multi-touch is handled at the DOM level; Fabric v6 has
   // no built-in pinch/two-finger pan).
@@ -451,9 +525,26 @@ export class CanvasController {
 
   /* -------------------------------- state --------------------------------- */
 
-  /** Serialize including NoteDrift relationship props (ids, connector links). */
+  /** Serialize including NoteDrift relationship props (ids, connector links).
+   *  While cropping, the target image is transiently expanded to its full
+   *  picture — serialize it in its committed (pre-crop) state so a mid-crop
+   *  autosave or history snapshot can never overwrite the real crop. */
   private serialize(): CanvasDoc {
-    return this.canvas.toObject(NOTEDRIFT_PROPS) as CanvasDoc;
+    const s = this.cropState;
+    if (!s) return this.canvas.toObject(NOTEDRIFT_PROPS) as CanvasDoc;
+    s.img.set({
+      cropX: s.orig.cropX,
+      cropY: s.orig.cropY,
+      width: s.orig.width,
+      height: s.orig.height,
+      dirty: true,
+    });
+    s.img.setPositionByOrigin(s.origCenter, "center", "center");
+    s.img.setCoords();
+    const doc = this.canvas.toObject(NOTEDRIFT_PROPS) as CanvasDoc;
+    // Restore the full-image expansion so cropping continues normally.
+    this.repositionImageForCrop(s.img, 0, 0, s.elW, s.elH);
+    return doc;
   }
 
   private snapshot(): string {
@@ -548,6 +639,15 @@ export class CanvasController {
       if (isInkPath(obj)) return { stroke: obj.fill as string, opacity: obj.opacity ?? 1 };
       return { stroke: obj.stroke as string, strokeWidth: obj.strokeWidth };
     }
+    if (kind === "image") {
+      const img = obj as fabric.FabricImage;
+      return {
+        opacity: obj.opacity ?? 1,
+        flipX: !!img.flipX,
+        flipY: !!img.flipY,
+        cropped: typeof img.hasCrop === "function" ? img.hasCrop() : false,
+      };
+    }
     return {};
   }
 
@@ -627,6 +727,7 @@ export class CanvasController {
       canvasStyle: this.canvasStyle,
       hasSelection: this.canvas.getActiveObjects().length > 0,
       selection: this.buildSelection(),
+      cropping: this.cropState !== null,
     };
   }
 
@@ -1447,6 +1548,8 @@ export class CanvasController {
   /* -------------------------------- tools --------------------------------- */
 
   setTool(tool: Tool): void {
+    // Leaving select for another tool ends any active crop (restoring the image).
+    if (this.cropState && tool !== "select") this.cancelCrop();
     this.tool = tool;
     this.applyToolMode();
     this.emit();
@@ -2198,9 +2301,13 @@ export class CanvasController {
 
   private loadSnapshot(json: string): Promise<void> {
     return this.runExclusive(async () => {
+      this.cropState = null; // any crop-in-progress targets a stale object now
       this.suppress = true;
-      await this.canvas.loadFromJSON(JSON.parse(json));
-      this.suppress = false;
+      try {
+        await this.canvas.loadFromJSON(JSON.parse(json), brokenImageReviver);
+      } finally {
+        this.suppress = false;
+      }
       this.applyToolMode();
       this.updateConnectors();
       this.applyCollapseVisibility();
@@ -2299,27 +2406,430 @@ export class CanvasController {
 
   /* -------------------------------- images -------------------------------- */
 
-  async addImageFile(file: File): Promise<void> {
-    const dataUrl = await readFileAsDataURL(file);
-    await this.addImageFromDataURL(dataUrl);
+  /** Sensible initial on-canvas size (scene px), scaled with zoom so an image
+   *  never fills the screen and small images aren't enlarged. */
+  private defaultImageFit(): number {
+    const z = this.canvas.getZoom() || 1;
+    const vpMin = (Math.min(this.canvas.getWidth(), this.canvas.getHeight()) || 900) / z;
+    return Math.max(120, Math.min(600, vpMin * 0.55));
   }
 
-  async addImageFromDataURL(dataUrl: string, at?: { x: number; y: number }): Promise<void> {
+  /** Add one already-decoded image at a scene point (no history/persist — the
+   *  caller records once, so batches stay a single undo). */
+  private async placeImage(
+    dataUrl: string,
+    at: { x: number; y: number },
+    dims: { width: number; height: number } | undefined,
+    normalized: boolean,
+  ): Promise<fabric.FabricImage> {
     const img = await fabric.FabricImage.fromURL(dataUrl);
-    const maxDim = 520;
-    const scale = Math.min(1, maxDim / Math.max(img.width ?? 1, img.height ?? 1));
+    const natW = dims?.width ?? img.width ?? 1;
+    const natH = dims?.height ?? img.height ?? 1;
+    const scale = Math.min(1, this.defaultImageFit() / Math.max(natW, natH, 1));
     img.scale(scale);
-
-    const center = at ?? this.viewportCenterScene();
-    img.set({ left: center.x, top: center.y, originX: "center", originY: "center" });
+    img.set({ left: at.x, top: at.y, originX: "center", originY: "center" });
+    (img as NdObj).ndId = nid();
+    if (normalized) (img as { ndNormalized?: boolean }).ndNormalized = true;
     img.selectable = this.tool === "select";
     img.evented = this.tool === "select" || this.tool === "eraser";
-
     this.canvas.add(img);
+    return img;
+  }
+
+  /** Insert a single image file (normalized). `at` = drop point; omitted =
+   *  viewport center. */
+  async addImageFile(file: File, at?: { x: number; y: number }): Promise<void> {
+    try {
+      const n = await normalizeImageFile(file);
+      const img = await this.placeImage(
+        n.dataUrl,
+        at ?? this.viewportCenterScene(),
+        { width: n.width, height: n.height },
+        true,
+      );
+      this.setTool("select");
+      this.canvas.setActiveObject(img);
+      this.canvas.requestRenderAll();
+      this.recordHistory();
+      this.schedulePersist();
+    } catch (e) {
+      this.cb.onNotice?.(
+        e instanceof ImageImportError ? e.message : "Couldn't add this image.",
+      );
+    }
+  }
+
+  /** Insert several image files at once — cascaded so they don't stack, and
+   *  recorded as a single undo entry. */
+  async addImageFiles(files: File[], at?: { x: number; y: number }): Promise<void> {
+    const imgs = files.filter((f) => f.type.startsWith("image/"));
+    if (imgs.length === 0) return;
+    const base = at ?? this.viewportCenterScene();
+    const placed: fabric.FabricImage[] = [];
+    for (let i = 0; i < imgs.length; i++) {
+      try {
+        const n = await normalizeImageFile(imgs[i]);
+        placed.push(
+          await this.placeImage(
+            n.dataUrl,
+            { x: base.x + i * IMAGE_CASCADE, y: base.y + i * IMAGE_CASCADE },
+            { width: n.width, height: n.height },
+            true,
+          ),
+        );
+      } catch (e) {
+        this.cb.onNotice?.(
+          e instanceof ImageImportError ? e.message : "Couldn't add an image.",
+        );
+      }
+    }
+    if (placed.length === 0) return;
+    this.setTool("select");
+    this.canvas.discardActiveObject();
+    if (placed.length === 1) this.canvas.setActiveObject(placed[0]);
+    else this.canvas.setActiveObject(new fabric.ActiveSelection(placed, { canvas: this.canvas }));
+    this.canvas.requestRenderAll();
+    this.recordHistory();
+    this.schedulePersist();
+  }
+
+  /** Insert a single image from a data URL (already decoded — programmatic). */
+  async addImageFromDataURL(dataUrl: string, at?: { x: number; y: number }): Promise<void> {
+    const img = await this.placeImage(dataUrl, at ?? this.viewportCenterScene(), undefined, false);
+    this.setTool("select");
     this.canvas.setActiveObject(img);
     this.canvas.requestRenderAll();
     this.recordHistory();
     this.schedulePersist();
+  }
+
+  /** Convert a DOM client point (e.g. a drop event) to a scene point. */
+  clientToScene(clientX: number, clientY: number): { x: number; y: number } {
+    const rect = this.canvas.upperCanvasEl.getBoundingClientRect();
+    const vp = new fabric.Point(clientX - rect.left, clientY - rect.top);
+    const p = fabric.util.transformPoint(
+      vp,
+      fabric.util.invertTransform(this.canvas.viewportTransform),
+    );
+    return { x: p.x, y: p.y };
+  }
+
+  /* --------------------------------- flip --------------------------------- */
+
+  /** Flip the selected image(s) horizontally / vertically (non-destructive —
+   *  a display transform, safe with crop + rotation). One history entry. */
+  flipSelection(axis: "h" | "v"): void {
+    const imgs = this.canvas
+      .getActiveObjects()
+      .filter((o) => (o as { type?: string }).type === "image" && !isLocked(o));
+    if (imgs.length === 0) return;
+    for (const o of imgs) {
+      if (axis === "h") o.set("flipX", !o.flipX);
+      else o.set("flipY", !o.flipY);
+      o.setCoords();
+    }
+    this.canvas.requestRenderAll();
+    this.recordHistory();
+    this.schedulePersist();
+    this.emit();
+  }
+
+  /* --------------------------------- crop --------------------------------- */
+
+  isCropping(): boolean {
+    return this.cropState !== null;
+  }
+
+  private imageElementSize(img: fabric.FabricImage): { w: number; h: number } {
+    const el = img.getElement() as {
+      naturalWidth?: number;
+      naturalHeight?: number;
+      width?: number;
+      height?: number;
+    };
+    return {
+      w: el.naturalWidth || el.width || img.width || 1,
+      h: el.naturalHeight || el.height || img.height || 1,
+    };
+  }
+
+  /** Change an image's crop window (element px) while keeping the new window's
+   *  center pinned in scene space (so the visible pixels don't jump). */
+  private repositionImageForCrop(
+    img: fabric.FabricImage,
+    nx: number,
+    ny: number,
+    nw: number,
+    nh: number,
+  ): void {
+    const cx0 = img.cropX ?? 0;
+    const cy0 = img.cropY ?? 0;
+    const w0 = img.width ?? nw;
+    const h0 = img.height ?? nh;
+    // The new window's center, expressed in the CURRENT local frame (element px).
+    const local = new fabric.Point(nx + nw / 2 - cx0 - w0 / 2, ny + nh / 2 - cy0 - h0 / 2);
+    const scene = fabric.util.transformPoint(local, img.calcTransformMatrix());
+    img.set({ cropX: nx, cropY: ny, width: nw, height: nh, dirty: true });
+    img.setPositionByOrigin(scene, "center", "center");
+    img.setCoords();
+  }
+
+  /** Enter crop mode on the selected single, unlocked image. Shows the full
+   *  image (dimmed outside the window) and a draggable crop rectangle. */
+  startCrop(): void {
+    const a = this.canvas.getActiveObject();
+    if (
+      !a ||
+      (a as { type?: string }).type !== "image" ||
+      isLocked(a) ||
+      this.canvas.getActiveObjects().length !== 1
+    )
+      return;
+    const img = a as fabric.FabricImage;
+    const { w: elW, h: elH } = this.imageElementSize(img);
+    // Too small to crop meaningfully — a crop would clamp to an invalid rect.
+    if (elW < CROP_MIN_PX * 2 || elH < CROP_MIN_PX * 2) {
+      this.cb.onNotice?.("This image is too small to crop.");
+      return;
+    }
+    const cropX0 = img.cropX ?? 0;
+    const cropY0 = img.cropY ?? 0;
+    const w0 = img.width ?? elW;
+    const h0 = img.height ?? elH;
+    this.cropState = {
+      img,
+      elW,
+      elH,
+      x: cropX0,
+      y: cropY0,
+      w: w0,
+      h: h0,
+      orig: { cropX: cropX0, cropY: cropY0, width: w0, height: h0, opacity: img.opacity ?? 1 },
+      origCenter: img.getCenterPoint(),
+      drag: null,
+    };
+    // Show the whole image, pinning the current window's center in place.
+    this.repositionImageForCrop(img, 0, 0, elW, elH);
+    img.set({ hasControls: false, hasBorders: false, evented: false, selectable: false });
+    // Take full ownership of pointer input: stop Fabric's rubber-band and
+    // target-finding so a crop-handle drag can't grab an object underneath.
+    this.canvas.discardActiveObject();
+    this.canvas.selection = false;
+    this.canvas.skipTargetFind = true;
+    this.canvas.requestRenderAll();
+    this.emit();
+  }
+
+  /** Commit the crop window as the image's new crop. One history entry. */
+  commitCrop(): void {
+    const s = this.cropState;
+    if (!s) return;
+    const { img } = s;
+    const nx = Math.round(clamp(s.x, 0, s.elW - CROP_MIN_PX));
+    const ny = Math.round(clamp(s.y, 0, s.elH - CROP_MIN_PX));
+    const nw = Math.round(clamp(s.w, CROP_MIN_PX, s.elW - nx));
+    const nh = Math.round(clamp(s.h, CROP_MIN_PX, s.elH - ny));
+    this.repositionImageForCrop(img, nx, ny, nw, nh);
+    img.set({ hasControls: true, hasBorders: true, evented: true, selectable: true });
+    this.cropState = null;
+    this.restoreAfterCrop(img);
+    this.recordHistory();
+    this.schedulePersist();
+    this.emit();
+  }
+
+  /** Restore normal selection/target-finding and re-select the image after crop. */
+  private restoreAfterCrop(img: fabric.FabricImage): void {
+    this.canvas.selection = this.tool === "select";
+    this.canvas.skipTargetFind = !(this.tool === "select" || this.tool === "eraser");
+    this.canvas.setActiveObject(img);
+  }
+
+  /** Leave crop mode, restoring the original crop. No history. */
+  cancelCrop(): void {
+    const s = this.cropState;
+    if (!s) return;
+    const { img, orig } = s;
+    img.set({
+      cropX: orig.cropX,
+      cropY: orig.cropY,
+      width: orig.width,
+      height: orig.height,
+      hasControls: true,
+      hasBorders: true,
+      evented: true,
+      selectable: true,
+      dirty: true,
+    });
+    img.setPositionByOrigin(s.origCenter, "center", "center");
+    img.setCoords();
+    this.cropState = null;
+    this.restoreAfterCrop(img);
+    this.canvas.requestRenderAll();
+    this.emit();
+  }
+
+  /** Reset the crop window to the full image (still in crop mode — commit to apply). */
+  resetCropRect(): void {
+    const s = this.cropState;
+    if (!s) return;
+    s.x = 0;
+    s.y = 0;
+    s.w = s.elW;
+    s.h = s.elH;
+    this.canvas.requestRenderAll();
+    this.emit();
+  }
+
+  /** Element-pixel point → scene, using the (full-image) crop-mode transform. */
+  private cropElemToScene(ex: number, ey: number): Pt {
+    const s = this.cropState!;
+    return fabric.util.transformPoint(
+      new fabric.Point(ex - s.elW / 2, ey - s.elH / 2),
+      s.img.calcTransformMatrix(),
+    );
+  }
+
+  /** Scene point → element pixels (inverse of cropElemToScene). */
+  private sceneToCropElem(p: Pt): Pt {
+    const s = this.cropState!;
+    const local = fabric.util.transformPoint(
+      new fabric.Point(p.x, p.y),
+      fabric.util.invertTransform(s.img.calcTransformMatrix()),
+    );
+    return { x: local.x + s.elW / 2, y: local.y + s.elH / 2 };
+  }
+
+  /** The 8 crop handles as {name, screen point}. */
+  private cropHandles(): { name: string; p: Pt }[] {
+    const s = this.cropState!;
+    const L = s.x, T = s.y, R = s.x + s.w, B = s.y + s.h;
+    const mx = (L + R) / 2, my = (T + B) / 2;
+    const pts: [string, number, number][] = [
+      ["nw", L, T], ["n", mx, T], ["ne", R, T], ["e", R, my],
+      ["se", R, B], ["s", mx, B], ["sw", L, B], ["w", L, my],
+    ];
+    return pts.map(([name, ex, ey]) => ({ name, p: this.toScreen(this.cropElemToScene(ex, ey)) }));
+  }
+
+  /** The crop handle name under a screen (viewport) point, if any. */
+  private cropHandleAt(vp: Pt): string | null {
+    for (const h of this.cropHandles()) {
+      if (dist(vp, h.p) <= CROP_HANDLE_HIT) return h.name;
+    }
+    return null;
+  }
+
+  /** Begin a crop drag from a screen point (handle or inside = move). */
+  private cropPointerDown(opt: PointerInfo): void {
+    const s = this.cropState!;
+    const vp = this.canvas.getViewportPoint(opt.e);
+    const handle = this.cropHandleAt(vp);
+    const elem = this.sceneToCropElem(this.canvas.getScenePoint(opt.e));
+    const inside =
+      elem.x >= s.x && elem.x <= s.x + s.w && elem.y >= s.y && elem.y <= s.y + s.h;
+    if (handle || inside) {
+      s.drag = {
+        handle: handle ?? "move",
+        startX: elem.x,
+        startY: elem.y,
+        win: { x: s.x, y: s.y, w: s.w, h: s.h },
+      };
+    }
+  }
+
+  /** Update the crop window from the current pointer during a drag. */
+  private cropPointerMove(opt: PointerInfo): void {
+    const s = this.cropState!;
+    const d = s.drag;
+    if (!d) return;
+    const p = this.sceneToCropElem(this.canvas.getScenePoint(opt.e));
+    const dx = p.x - d.startX;
+    const dy = p.y - d.startY;
+    const MIN = CROP_MIN_PX;
+    if (d.handle === "move") {
+      s.x = clamp(d.win.x + dx, 0, s.elW - d.win.w);
+      s.y = clamp(d.win.y + dy, 0, s.elH - d.win.h);
+      s.w = d.win.w;
+      s.h = d.win.h;
+    } else {
+      let L = d.win.x;
+      let T = d.win.y;
+      let R = d.win.x + d.win.w;
+      let B = d.win.y + d.win.h;
+      if (d.handle.includes("w")) L = clamp(d.win.x + dx, 0, R - MIN);
+      if (d.handle.includes("e")) R = clamp(d.win.x + d.win.w + dx, L + MIN, s.elW);
+      if (d.handle.includes("n")) T = clamp(d.win.y + dy, 0, B - MIN);
+      if (d.handle.includes("s")) B = clamp(d.win.y + d.win.h + dy, T + MIN, s.elH);
+      s.x = L;
+      s.y = T;
+      s.w = R - L;
+      s.h = B - T;
+    }
+    this.canvas.requestRenderAll();
+  }
+
+  private drawCropOverlay(ctx: CanvasRenderingContext2D): void {
+    const s = this.cropState!;
+    const W = this.canvas.getWidth();
+    const H = this.canvas.getHeight();
+    const c = ([
+      [s.x, s.y],
+      [s.x + s.w, s.y],
+      [s.x + s.w, s.y + s.h],
+      [s.x, s.y + s.h],
+    ] as [number, number][]).map(([ex, ey]) => this.toScreen(this.cropElemToScene(ex, ey)));
+
+    // Dim everything outside the crop window (even-odd hole).
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, W, H);
+    ctx.moveTo(c[0].x, c[0].y);
+    ctx.lineTo(c[1].x, c[1].y);
+    ctx.lineTo(c[2].x, c[2].y);
+    ctx.lineTo(c[3].x, c[3].y);
+    ctx.closePath();
+    ctx.fillStyle = "rgba(10, 11, 16, 0.55)";
+    ctx.fill("evenodd");
+    ctx.restore();
+
+    // Window outline + rule-of-thirds guides.
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(c[0].x, c[0].y);
+    for (let i = 1; i < 4; i++) ctx.lineTo(c[i].x, c[i].y);
+    ctx.closePath();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = "#ffffff";
+    ctx.stroke();
+    ctx.lineWidth = 0.75;
+    ctx.strokeStyle = "rgba(255,255,255,0.4)";
+    for (let t = 1; t <= 2; t++) {
+      const top = this.toScreen(this.cropElemToScene(s.x + (s.w * t) / 3, s.y));
+      const bot = this.toScreen(this.cropElemToScene(s.x + (s.w * t) / 3, s.y + s.h));
+      const lft = this.toScreen(this.cropElemToScene(s.x, s.y + (s.h * t) / 3));
+      const rgt = this.toScreen(this.cropElemToScene(s.x + s.w, s.y + (s.h * t) / 3));
+      ctx.beginPath();
+      ctx.moveTo(top.x, top.y);
+      ctx.lineTo(bot.x, bot.y);
+      ctx.moveTo(lft.x, lft.y);
+      ctx.lineTo(rgt.x, rgt.y);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    // Handles (touch-sized).
+    ctx.save();
+    for (const h of this.cropHandles()) {
+      ctx.beginPath();
+      ctx.arc(h.p.x, h.p.y, 5.5, 0, Math.PI * 2);
+      ctx.fillStyle = "#ffffff";
+      ctx.fill();
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = "rgba(91, 140, 255, 0.95)";
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   private viewportCenterScene(): { x: number; y: number } {
@@ -2552,14 +3062,18 @@ export class CanvasController {
 
   loadDoc(doc: CanvasDoc | undefined): Promise<void> {
     return this.runExclusive(async () => {
+      this.cropState = null;
       this.suppress = true;
-      if (doc && Object.keys(doc).length > 0) {
-        await this.canvas.loadFromJSON(doc);
-      } else {
-        this.canvas.clear();
+      try {
+        if (doc && Object.keys(doc).length > 0) {
+          await this.canvas.loadFromJSON(doc, brokenImageReviver);
+        } else {
+          this.canvas.clear();
+        }
+      } finally {
+        this.canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
+        this.suppress = false;
       }
-      this.canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
-      this.suppress = false;
       this.applyToolMode();
       this.updateGrid();
       this.afterLoad();
@@ -2571,6 +3085,7 @@ export class CanvasController {
 
   clearPage(): void {
     void this.runExclusive(async () => {
+      this.cropState = null;
       this.suppress = true;
       this.canvas.clear();
       this.canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
@@ -2780,6 +3295,13 @@ export class CanvasController {
   private drawOverlays(): void {
     const ctx = this.overlayCtx();
     if (!ctx) return;
+
+    // Crop mode owns the overlay entirely — dim outside the window, draw a bright
+    // crop rectangle + handles. Nothing else (guides/anchors) draws while cropping.
+    if (this.cropState) {
+      this.drawCropOverlay(ctx);
+      return;
+    }
 
     // Lasso region (temporary — never persisted or exported).
     if (this.lassoing && this.lassoPts.length >= 2) {
@@ -3281,6 +3803,12 @@ export class CanvasController {
       return;
     }
 
+    // Crop mode owns pointer interaction on the cropped image.
+    if (this.cropState) {
+      this.cropPointerDown(opt);
+      return;
+    }
+
     // In any drawing mode Fabric's freeDrawingBrush owns the stroke — never
     // create a shape draft here (mouse:down still fires to us in drawing mode).
     if (isDrawTool(this.tool)) return;
@@ -3385,6 +3913,11 @@ export class CanvasController {
       return;
     }
 
+    if (this.cropState) {
+      if (this.cropState.drag) this.cropPointerMove(opt);
+      return;
+    }
+
     if (this.lassoing) {
       const p = this.canvas.getScenePoint(opt.e);
       const last = this.lassoPts[this.lassoPts.length - 1];
@@ -3427,6 +3960,11 @@ export class CanvasController {
   };
 
   private onMouseUp = (): void => {
+    if (this.cropState) {
+      if (this.cropState.drag) this.cropState.drag = null;
+      return;
+    }
+
     if (this.lassoing) {
       this.finishLasso();
       return;
@@ -3492,13 +4030,3 @@ export class CanvasController {
   };
 }
 
-/* --------------------------------- utils ---------------------------------- */
-
-function readFileAsDataURL(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
-}

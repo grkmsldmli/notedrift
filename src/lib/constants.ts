@@ -159,7 +159,17 @@ export const NOTEDRIFT_PROPS = [
   "ndLocked",
   // Phase 1.6E — text auto-grow (tap) vs fixed-width (drag) mode.
   "ndAutoGrow",
+  // Phase 1.6F — image import normalization marker + broken-image recovery src.
+  "ndNormalized",
+  "ndBrokenSrc",
 ];
+
+/** Minimum crop window in element pixels — keeps the drawn sub-rect valid. */
+export const CROP_MIN_PX = 24;
+/** Screen-space radius of a crop handle's touch target. */
+export const CROP_HANDLE_HIT = 16;
+/** Multi-image insert cascade offset (scene px). */
+export const IMAGE_CASCADE = 26;
 
 /** Line-height presets for text and notes (compact / normal / relaxed). */
 export const LINE_HEIGHTS: { key: string; label: string; value: number }[] = [

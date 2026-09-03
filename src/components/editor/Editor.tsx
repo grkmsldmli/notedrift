@@ -34,6 +34,7 @@ import { TopBar } from "./TopBar";
 import { ZoomControls } from "./ZoomControls";
 import { ToolOptionsBar } from "./ToolOptionsBar";
 import { ObjectToolbar, type LayerOp } from "./ObjectToolbar";
+import { CropBar } from "./CropBar";
 import { NodeQuickAdd } from "./NodeQuickAdd";
 import { Logo } from "./Logo";
 
@@ -45,6 +46,7 @@ const INITIAL_STATE: EditorState = {
   canvasStyle: "dots",
   hasSelection: false,
   selection: { kind: "none", count: 0, rect: null },
+  cropping: false,
 };
 
 const TOOL_KEYS: Record<string, Tool> = {
@@ -90,7 +92,14 @@ export default function Editor() {
   const [paperOffset, setPaperOffset] = useState({ left: 0, top: 0 });
   const [paperSize, setPaperSize] = useState({ width: 0, height: 0 });
   const [keyboardInset, setKeyboardInset] = useState(0);
+  const [notice, setNotice] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
+  const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showNotice = useCallback((message: string) => {
+    setNotice(message);
+    if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    noticeTimer.current = setTimeout(() => setNotice(null), 4000);
+  }, []);
 
   useEffect(() => {
     currentIdRef.current = currentId;
@@ -145,7 +154,7 @@ export default function Editor() {
     const controller = new CanvasController(
       canvasEl,
       paperEl,
-      { onState: setState, onPersist: persistDoc },
+      { onState: setState, onPersist: persistDoc, onNotice: showNotice },
       styleOf(curPage),
       defaults,
     );
@@ -217,6 +226,18 @@ export default function Editor() {
       const el = document.activeElement;
       const typingInField =
         !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA");
+
+      // Crop mode: Enter applies, Escape cancels; swallow other shortcuts.
+      if (c.isCropping()) {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          c.commitCrop();
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          c.cancelCrop();
+        }
+        return;
+      }
 
       if (e.key === "Escape") {
         if (c.isEditing()) c.exitEditing();
@@ -333,17 +354,19 @@ export default function Editor() {
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
       const c = controllerRef.current;
-      if (!c || c.isEditing()) return;
+      if (!c || c.isEditing() || c.isCropping()) return;
       const items = e.clipboardData?.items;
       if (!items) return;
+      const files: File[] = [];
       for (const item of items) {
         if (item.type.startsWith("image/")) {
-          const file = item.getAsFile();
-          if (file) {
-            e.preventDefault();
-            void c.addImageFile(file);
-          }
+          const f = item.getAsFile();
+          if (f) files.push(f);
         }
+      }
+      if (files.length > 0) {
+        e.preventDefault();
+        void c.addImageFiles(files); // viewport-centered
       }
     };
     window.addEventListener("paste", onPaste);
@@ -447,8 +470,8 @@ export default function Editor() {
   );
   const onPickImage = useCallback(() => fileInputRef.current?.click(), []);
   const onFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) void controllerRef.current?.addImageFile(file);
+    const files = e.target.files ? Array.from(e.target.files) : [];
+    if (files.length > 0) void controllerRef.current?.addImageFiles(files);
     e.target.value = "";
   }, []);
 
@@ -577,6 +600,14 @@ export default function Editor() {
       controllerRef.current?.setNoteSize(cardWidth, fontSize),
     [],
   );
+  const onCrop = useCallback(() => controllerRef.current?.startCrop(), []);
+  const onFlip = useCallback(
+    (axis: "h" | "v") => controllerRef.current?.flipSelection(axis),
+    [],
+  );
+  const onCropDone = useCallback(() => controllerRef.current?.commitCrop(), []);
+  const onCropCancel = useCallback(() => controllerRef.current?.cancelCrop(), []);
+  const onCropReset = useCallback(() => controllerRef.current?.resetCropRect(), []);
 
   // Mind-map node actions (shared by the contextual toolbar and touch quick-add).
   const onAddChild = useCallback(() => controllerRef.current?.createChild(), []);
@@ -604,10 +635,14 @@ export default function Editor() {
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     const c = controllerRef.current;
-    if (!c) return;
-    for (const file of Array.from(e.dataTransfer.files)) {
-      if (file.type.startsWith("image/")) void c.addImageFile(file);
-    }
+    if (!c || c.isCropping()) return;
+    const files = Array.from(e.dataTransfer.files).filter((f) =>
+      f.type.startsWith("image/"),
+    );
+    if (files.length === 0) return;
+    // Place at the actual drop location (in scene coords), cascading multiples.
+    const at = c.clientToScene(e.clientX, e.clientY);
+    void c.addImageFiles(files, at);
   }, []);
   const onDragOver = useCallback((e: React.DragEvent) => e.preventDefault(), []);
 
@@ -672,6 +707,9 @@ export default function Editor() {
           onAlign={onAlign}
           onDistribute={onDistribute}
           onNoteSize={onNoteSize}
+          onCrop={onCrop}
+          onFlip={onFlip}
+          cropping={state.cropping}
           onAddChild={onAddChild}
           onAddSibling={onAddSibling}
           onCollapseToggle={onCollapseToggle}
@@ -680,6 +718,16 @@ export default function Editor() {
           onDuplicateBranch={onDuplicateBranch}
           keyboardInset={keyboardInset}
         />
+
+        {state.cropping && (
+          <CropBar onDone={onCropDone} onCancel={onCropCancel} onReset={onCropReset} />
+        )}
+
+        {notice && (
+          <div className="pointer-events-none absolute bottom-6 left-1/2 z-40 -translate-x-1/2 rounded-lg border border-nd-border bg-nd-surface/95 px-3.5 py-2 text-sm text-nd-text shadow-2xl backdrop-blur">
+            {notice}
+          </div>
+        )}
 
         <NodeQuickAdd
           selection={state.selection}
@@ -713,6 +761,7 @@ export default function Editor() {
         ref={fileInputRef}
         type="file"
         accept="image/*"
+        multiple
         hidden
         onChange={onFileChange}
       />

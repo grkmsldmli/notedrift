@@ -9,6 +9,13 @@
 
 import type { Tool } from "../types";
 
+/** Insert actions are one-shot (open a picker / place an object), not draw modes,
+ *  so they aren't part of the `Tool` union but still live in the registry. */
+export type InsertActionId = "image";
+
+/** Any registry entry id — a drawing/selection Tool or an insert action. */
+export type ToolId = Tool | InsertActionId;
+
 /** High-level grouping used later by the tool library / favorites / command bar. */
 export type ToolCategory =
   | "draw"
@@ -26,9 +33,11 @@ export interface BrushSpec {
 }
 
 export interface ToolDefinition {
-  id: Tool;
+  id: ToolId;
   label: string;
   category: ToolCategory;
   /** Present only for freehand drawing tools (Pen today). */
   brush?: BrushSpec;
+  /** A one-shot action (e.g. opening the image picker) rather than a draw mode. */
+  action?: "pick-image";
 }

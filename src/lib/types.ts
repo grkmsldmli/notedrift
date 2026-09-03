@@ -147,6 +147,13 @@ export interface SelectionInfo {
   lineHeight?: number;
   /** Line-prefix list mode of a text/note object. */
   listStyle?: "none" | "bullet" | "check";
+  // Phase 1.6F — image state.
+  /** The image is horizontally flipped. */
+  flipX?: boolean;
+  /** The image is vertically flipped. */
+  flipY?: boolean;
+  /** The image currently has a crop applied. */
+  cropped?: boolean;
 }
 
 /** Persisted preferences for a single drawing instrument. */
@@ -238,6 +245,8 @@ export interface EditorState {
   canvasStyle: CanvasStyle;
   hasSelection: boolean;
   selection: SelectionInfo;
+  /** Phase 1.6F — an image is being cropped (shows the crop bar, hides others). */
+  cropping: boolean;
 }
 
 /** Metadata for a single page, kept in localStorage (small, always-loaded). */
