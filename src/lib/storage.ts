@@ -17,6 +17,7 @@ import type {
   ToolDefaults,
 } from "./types";
 import { DRAW_TOOLS, defaultPrefsFor } from "./brush/materials";
+import { FONT_STACKS } from "./fonts";
 
 const DB_NAME = "notedrift";
 const STORE = "pages";
@@ -188,6 +189,8 @@ function freshToolDefaults(): ToolDefaults {
     lineOpacity: 1,
     textColor: "#20242e",
     textFontSize: 24,
+    textFontFamily: FONT_STACKS.sans,
+    textLineHeight: 1.3,
     noteFill: "#fef3c7",
   };
 }
@@ -208,6 +211,8 @@ const SCALAR_KEYS = [
   "lineOpacity",
   "textColor",
   "textFontSize",
+  "textFontFamily",
+  "textLineHeight",
   "noteFill",
 ] as const;
 

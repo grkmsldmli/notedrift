@@ -7,6 +7,8 @@ import type { CanvasStyle } from "@/lib/types";
 interface ZoomControlsProps {
   zoom: number;
   canvasStyle: CanvasStyle;
+  /** Height (px) the software keyboard covers, so the controls lift above it. */
+  keyboardInset?: number;
   onZoomIn: () => void;
   onZoomOut: () => void;
   onReset: () => void;
@@ -22,6 +24,7 @@ const STYLES: { id: CanvasStyle; label: string; icon: React.ReactNode }[] = [
 export const ZoomControls = memo(function ZoomControls({
   zoom,
   canvasStyle,
+  keyboardInset = 0,
   onZoomIn,
   onZoomOut,
   onReset,
@@ -32,7 +35,10 @@ export const ZoomControls = memo(function ZoomControls({
   const current = STYLES.find((s) => s.id === canvasStyle) ?? STYLES[1];
 
   return (
-    <div className="absolute bottom-5 left-4 z-20 flex items-center gap-1 rounded-xl border border-nd-border bg-nd-surface/95 p-1 shadow-xl backdrop-blur">
+    <div
+      className="absolute left-4 z-20 flex items-center gap-1 rounded-xl border border-nd-border bg-nd-surface/95 p-1 shadow-xl backdrop-blur transition-[bottom]"
+      style={{ bottom: 20 + keyboardInset }}
+    >
       <button
         type="button"
         onClick={onZoomOut}

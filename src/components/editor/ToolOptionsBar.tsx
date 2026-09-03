@@ -13,10 +13,13 @@ import type {
   Tool,
   ToolDefaults,
 } from "@/lib/types";
-import { Divider, Label, Segmented } from "../ui/controls";
+import { Divider, Label, Segmented, SwatchRow } from "../ui/controls";
 import { ColorPopover } from "../ui/ColorPopover";
 import { OpacityControl, WidthControl } from "../ui/BrushControls";
 import { DashPicker, Stepper } from "../ui/ShapeControls";
+import { FontPicker } from "../ui/TextControls";
+import { FONT_STACKS, fontKeyOf } from "@/lib/fonts";
+import { NOTE_COLORS } from "@/lib/constants";
 
 interface ToolOptionsBarProps {
   tool: Tool;
@@ -196,6 +199,41 @@ export const ToolOptionsBar = memo(function ToolOptionsBar({
         <OpacityControl
           value={defaults.lineOpacity}
           onChange={(o, commit) => onSetDefault({ lineOpacity: o }, commit)}
+        />
+      </>
+    );
+  } else if (tool === "text") {
+    content = (
+      <>
+        <Label>Text</Label>
+        <ColorPopover
+          value={defaults.textColor}
+          onChange={(c, commit) => onSetDefault({ textColor: c }, commit)}
+        />
+        <Divider />
+        <FontPicker
+          value={fontKeyOf(defaults.textFontFamily)}
+          onChange={(k) => onSetDefault({ textFontFamily: FONT_STACKS[k] })}
+        />
+        <Divider />
+        <Label>Size</Label>
+        <Stepper
+          value={defaults.textFontSize}
+          min={10}
+          max={160}
+          step={2}
+          onChange={(v) => onSetDefault({ textFontSize: v })}
+        />
+      </>
+    );
+  } else if (tool === "note") {
+    content = (
+      <>
+        <Label>Sticky note</Label>
+        <SwatchRow
+          options={NOTE_COLORS}
+          value={defaults.noteFill}
+          onChange={(v) => onSetDefault({ noteFill: v })}
         />
       </>
     );

@@ -1,5 +1,17 @@
 @import "tailwindcss";
 
+/* Self-hosted handwriting font for the canvas "Handwritten" text style.
+   SIL Open Font License 1.1 — license at /fonts/PatrickHand-OFL-LICENSE.txt.
+   Served from public/, never a runtime Google Fonts / CDN dependency. */
+@font-face {
+  font-family: "Patrick Hand";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/patrick-hand-latin-400-normal.woff2") format("woff2"),
+    url("/fonts/patrick-hand-latin-400-normal.woff") format("woff");
+}
+
 :root {
   --nd-bg: #0a0b10;
   --nd-bg-2: #0d0f16;

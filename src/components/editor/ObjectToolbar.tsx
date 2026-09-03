@@ -2,18 +2,14 @@
 
 import { memo, useLayoutEffect, useRef, useState } from "react";
 import {
-  AlignCenter,
   AlignCenterHorizontal,
   AlignCenterVertical,
   AlignEndHorizontal,
   AlignEndVertical,
   AlignHorizontalDistributeCenter,
-  AlignLeft,
-  AlignRight,
   AlignStartHorizontal,
   AlignStartVertical,
   AlignVerticalDistributeCenter,
-  Bold,
   BoxSelect,
   ChevronsDown,
   ChevronsUp,
@@ -26,7 +22,6 @@ import {
   LayoutGrid,
   Maximize2,
   Minimize2,
-  Minus,
   MoreHorizontal,
   MoveDown,
   MoveRight,
@@ -37,12 +32,19 @@ import {
   Ungroup as UngroupIcon,
   Unlock,
 } from "lucide-react";
-import { FONT_SIZES, NOTE_COLORS, OUTLINE_WIDTHS, PALETTE } from "@/lib/constants";
+import {
+  NOTE_COLORS,
+  NOTE_SIZE_PRESETS,
+  OUTLINE_WIDTHS,
+  PALETTE,
+} from "@/lib/constants";
+import { FONT_STACKS } from "@/lib/fonts";
 import type { SelectionInfo, StylePatch } from "@/lib/types";
 import { AccentRow, Divider, Label, SwatchRow, WidthPicker } from "../ui/controls";
 import { ColorPopover } from "../ui/ColorPopover";
 import { OpacityControl, WidthControl } from "../ui/BrushControls";
 import { ArrowheadControl, DashPicker, Stepper } from "../ui/ShapeControls";
+import { FontPicker, TextFormatButton } from "../ui/TextControls";
 
 export type LayerOp = "front" | "forward" | "backward" | "back";
 export type AlignEdge =
@@ -66,25 +68,15 @@ interface ObjectToolbarProps {
   onUnlock: () => void;
   onAlign: (edge: AlignEdge) => void;
   onDistribute: (axis: "h" | "v") => void;
+  onNoteSize: (cardWidth: number, fontSize: number) => void;
   onAddChild: () => void;
   onAddSibling: () => void;
   onCollapseToggle: () => void;
   onArrange: () => void;
   onSelectBranch: () => void;
   onDuplicateBranch: () => void;
-}
-
-function nearestIndex(size: number): number {
-  let best = 0;
-  let bestDist = Infinity;
-  FONT_SIZES.forEach((s, i) => {
-    const d = Math.abs(s - size);
-    if (d < bestDist) {
-      bestDist = d;
-      best = i;
-    }
-  });
-  return best;
+  /** Height (px) the software keyboard covers, so the bar stays above it. */
+  keyboardInset?: number;
 }
 
 const iconBtn =
@@ -103,12 +95,14 @@ export const ObjectToolbar = memo(function ObjectToolbar({
   onUnlock,
   onAlign,
   onDistribute,
+  onNoteSize,
   onAddChild,
   onAddSibling,
   onCollapseToggle,
   onArrange,
   onSelectBranch,
   onDuplicateBranch,
+  keyboardInset = 0,
 }: ObjectToolbarProps) {
   const [layerOpen, setLayerOpen] = useState(false);
   const [mindOpen, setMindOpen] = useState(false);
@@ -125,7 +119,8 @@ export const ObjectToolbar = memo(function ObjectToolbar({
     if (!el || selection.kind === "none" || !rect) return;
     const container = el.offsetParent as HTMLElement | null;
     const cw = container?.clientWidth ?? window.innerWidth;
-    const ch = container?.clientHeight ?? window.innerHeight;
+    // Subtract the keyboard band so the bar reflows above it while editing.
+    const ch = (container?.clientHeight ?? window.innerHeight) - keyboardInset;
     const tw = el.offsetWidth;
     const th = el.offsetHeight;
 
@@ -143,10 +138,10 @@ export const ObjectToolbar = memo(function ObjectToolbar({
 
     let top = oy - GAP - th; // prefer above
     if (top < MARGIN) top = oy + rect.height + GAP; // else below
-    top = Math.max(MARGIN, Math.min(ch - MARGIN - th, top)); // clamp within canvas
+    top = Math.max(MARGIN, Math.min(ch - MARGIN - th, top)); // clamp within visible band
 
     setBox({ left: Math.round(left), top: Math.round(top) });
-  }, [selection, paperOffset]);
+  }, [selection, paperOffset, keyboardInset]);
 
   if (selection.kind === "none" || !selection.rect) return null;
 
@@ -161,12 +156,6 @@ export const ObjectToolbar = memo(function ObjectToolbar({
     { edge: "vcenter", icon: <AlignCenterHorizontal size={16} />, label: "Align middle" },
     { edge: "bottom", icon: <AlignEndHorizontal size={16} />, label: "Align bottom" },
   ];
-
-  const fontIdx = nearestIndex(selection.fontSize ?? 24);
-  const decFont = () =>
-    onStyle({ fontSize: FONT_SIZES[Math.max(0, fontIdx - 1)] });
-  const incFont = () =>
-    onStyle({ fontSize: FONT_SIZES[Math.min(FONT_SIZES.length - 1, fontIdx + 1)] });
 
   const styleSection = () => {
     // A user group has no single meaningful stroke/fill — show only org controls.
@@ -328,7 +317,7 @@ export const ObjectToolbar = memo(function ObjectToolbar({
       );
     }
     if (kind === "text" && selection.isNode) {
-      // Mind-map node: soft accents + rapid add / collapse controls.
+      // Mind-map node: soft accents + font + rapid add / collapse controls.
       return (
         <>
           <AccentRow
@@ -336,22 +325,31 @@ export const ObjectToolbar = memo(function ObjectToolbar({
             onChange={(v) => onStyle({ nodeAccent: v })}
           />
           <Divider />
-          <button
-            type="button"
-            className={iconBtn}
-            title="Add child  (Tab)"
-            onClick={onAddChild}
-          >
-            <CornerDownRight size={16} />
-          </button>
-          <button
-            type="button"
-            className={iconBtn}
-            title="Add sibling  (Enter)"
-            onClick={onAddSibling}
-          >
-            <Plus size={16} />
-          </button>
+          <FontPicker
+            value={selection.fontFamily}
+            onChange={(k) => onStyle({ fontFamily: FONT_STACKS[k] })}
+          />
+          {selection.count === 1 && (
+            <>
+              <Divider />
+              <button
+                type="button"
+                className={iconBtn}
+                title="Add child  (Tab)"
+                onClick={onAddChild}
+              >
+                <CornerDownRight size={16} />
+              </button>
+              <button
+                type="button"
+                className={iconBtn}
+                title="Add sibling  (Enter)"
+                onClick={onAddSibling}
+              >
+                <Plus size={16} />
+              </button>
+            </>
+          )}
           {selection.hasChildren && (
             <button
               type="button"
@@ -370,54 +368,12 @@ export const ObjectToolbar = memo(function ObjectToolbar({
     if (kind === "text") {
       return (
         <>
-          <SwatchRow
-            options={PALETTE}
-            value={selection.textColor}
-            onChange={(v) => onStyle({ textColor: v })}
+          <ColorPopover
+            value={selection.textColor ?? "#20242e"}
+            onChange={(v, commit) => onStyle({ textColor: v }, commit)}
           />
           <Divider />
-          <button type="button" className={iconBtn} title="Smaller" onClick={decFont}>
-            <Minus size={15} />
-          </button>
-          <span className="w-6 text-center text-xs tabular-nums text-nd-text">
-            {selection.fontSize ?? 24}
-          </span>
-          <button type="button" className={iconBtn} title="Larger" onClick={incFont}>
-            <Plus size={15} />
-          </button>
-          <Divider />
-          <button
-            type="button"
-            title="Bold"
-            aria-pressed={selection.bold}
-            onClick={() => onStyle({ bold: !selection.bold })}
-            className={[
-              iconBtn,
-              selection.bold ? "bg-nd-accent/15 !text-white ring-1 ring-nd-accent/40" : "",
-            ].join(" ")}
-          >
-            <Bold size={15} />
-          </button>
-          {(["left", "center", "right"] as const).map((a) => {
-            const Icon = a === "left" ? AlignLeft : a === "center" ? AlignCenter : AlignRight;
-            return (
-              <button
-                key={a}
-                type="button"
-                title={`Align ${a}`}
-                aria-pressed={selection.textAlign === a}
-                onClick={() => onStyle({ textAlign: a })}
-                className={[
-                  iconBtn,
-                  selection.textAlign === a
-                    ? "bg-nd-accent/15 !text-white ring-1 ring-nd-accent/40"
-                    : "",
-                ].join(" ")}
-              >
-                <Icon size={15} />
-              </button>
-            );
-          })}
+          <TextFormatButton selection={selection} onStyle={(p) => onStyle(p)} />
           <Divider />
         </>
       );
@@ -463,15 +419,27 @@ export const ObjectToolbar = memo(function ObjectToolbar({
             onChange={(v) => onStyle({ noteFill: v })}
           />
           <Divider />
-          <button type="button" className={iconBtn} title="Smaller" onClick={decFont}>
-            <Minus size={15} />
-          </button>
-          <span className="w-6 text-center text-xs tabular-nums text-nd-text">
-            {selection.fontSize ?? 18}
-          </span>
-          <button type="button" className={iconBtn} title="Larger" onClick={incFont}>
-            <Plus size={15} />
-          </button>
+          {/* Card size presets */}
+          <div className="flex items-center gap-0.5">
+            {NOTE_SIZE_PRESETS.map((p) => (
+              <button
+                key={p.key}
+                type="button"
+                className={iconBtn}
+                title={`${p.label === "S" ? "Small" : p.label === "M" ? "Medium" : "Large"} note`}
+                onClick={() => onNoteSize(p.width, p.fontSize)}
+              >
+                <span className="text-xs font-semibold">{p.label}</span>
+              </button>
+            ))}
+          </div>
+          <Divider />
+          <ColorPopover
+            value={selection.textColor ?? "#3a3320"}
+            onChange={(v, commit) => onStyle({ textColor: v }, commit)}
+          />
+          <Divider />
+          <TextFormatButton selection={selection} onStyle={(p) => onStyle(p)} />
           <Divider />
         </>
       );

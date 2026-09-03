@@ -157,6 +157,30 @@ export const NOTEDRIFT_PROPS = [
   "endHead",
   // Phase 1.6D — object lock state.
   "ndLocked",
+  // Phase 1.6E — text auto-grow (tap) vs fixed-width (drag) mode.
+  "ndAutoGrow",
+];
+
+/** Line-height presets for text and notes (compact / normal / relaxed). */
+export const LINE_HEIGHTS: { key: string; label: string; value: number }[] = [
+  { key: "compact", label: "Compact", value: 1.0 },
+  { key: "normal", label: "Normal", value: 1.3 },
+  { key: "relaxed", label: "Relaxed", value: 1.6 },
+];
+
+/** Line-prefix markers used by the lightweight bullet / checklist helpers. */
+export const BULLET_PREFIX = "•  ";
+export const CHECK_PREFIX = "☐  ";
+
+/** Auto-grow (tap) text width bounds — grows to fit content, then wraps. */
+export const AUTO_TEXT_MIN_W = 48;
+export const AUTO_TEXT_MAX_W = 520;
+
+/** Sticky-note size presets (card width in scene px; height follows content). */
+export const NOTE_SIZE_PRESETS: { key: string; label: string; width: number; fontSize: number }[] = [
+  { key: "small", label: "S", width: 170, fontSize: 15 },
+  { key: "medium", label: "M", width: 220, fontSize: 18 },
+  { key: "large", label: "L", width: 300, fontSize: 22 },
 ];
 
 /** Stroke dash arrays (absolute px; strokeUniform keeps them constant on zoom). */

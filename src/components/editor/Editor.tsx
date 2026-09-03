@@ -28,6 +28,7 @@ import type {
   ToolDefaults,
 } from "@/lib/types";
 import { DRAW_TOOLS } from "@/lib/brush/materials";
+import { ensureCanvasFonts } from "@/lib/fonts";
 import { Toolbar } from "./Toolbar";
 import { TopBar } from "./TopBar";
 import { ZoomControls } from "./ZoomControls";
@@ -88,6 +89,7 @@ export default function Editor() {
   const [toolDefaults, setToolDefaults] = useState<ToolDefaults | null>(null);
   const [paperOffset, setPaperOffset] = useState({ left: 0, top: 0 });
   const [paperSize, setPaperSize] = useState({ width: 0, height: 0 });
+  const [keyboardInset, setKeyboardInset] = useState(0);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -149,11 +151,25 @@ export default function Editor() {
     );
     controllerRef.current = controller;
 
-    void loadCanvasDoc(curId).then((doc) => {
+    // Load the handwriting font BEFORE the doc so a saved Patrick-Hand box is
+    // measured with the right metrics (no first-paint reflow); re-measure once
+    // more when fonts settle, as a safety net.
+    void loadCanvasDoc(curId).then(async (doc) => {
+      await ensureCanvasFonts();
       controller.loadDoc(doc);
       controller.setCanvasStyle(styleOf(curPage));
       setReady(true);
+      controllerRef.current?.refreshFonts();
     });
+    // Also re-measure whenever the handwriting font actually finishes loading
+    // (fires even if ensureCanvasFonts timed out), so a box typed during the
+    // load re-fits once the real metrics arrive.
+    if (typeof document !== "undefined" && "fonts" in document) {
+      document.fonts
+        .load('16px "Patrick Hand"')
+        .then(() => controllerRef.current?.refreshFonts())
+        .catch(() => {});
+    }
 
     const measurePaper = () => {
       setPaperOffset({ left: paperEl.offsetLeft, top: paperEl.offsetTop });
@@ -166,8 +182,27 @@ export default function Editor() {
     });
     ro.observe(paperEl);
 
+    // Virtual keyboard (tablet): track how much of the viewport it covers, so we
+    // can lift the caret above it (in the controller) and keep bottom chrome
+    // reachable — WITHOUT resizing the canvas.
+    const vv =
+      typeof window !== "undefined" ? window.visualViewport : null;
+    const onViewport = () => {
+      if (!vv) return;
+      const raw = window.innerHeight - vv.height - vv.offsetTop;
+      const kb = raw > 120 ? Math.round(raw) : 0; // ignore small UI, keyboard is tall
+      document.documentElement.style.setProperty("--nd-kb-inset", `${kb}px`);
+      setKeyboardInset(kb);
+      controllerRef.current?.setKeyboardInset(kb);
+    };
+    vv?.addEventListener("resize", onViewport);
+    vv?.addEventListener("scroll", onViewport);
+
     return () => {
       ro.disconnect();
+      vv?.removeEventListener("resize", onViewport);
+      vv?.removeEventListener("scroll", onViewport);
+      document.documentElement.style.removeProperty("--nd-kb-inset");
       controller.dispose();
       controllerRef.current = null;
     };
@@ -537,6 +572,11 @@ export default function Editor() {
     (axis: "h" | "v") => controllerRef.current?.distributeSelection(axis),
     [],
   );
+  const onNoteSize = useCallback(
+    (cardWidth: number, fontSize: number) =>
+      controllerRef.current?.setNoteSize(cardWidth, fontSize),
+    [],
+  );
 
   // Mind-map node actions (shared by the contextual toolbar and touch quick-add).
   const onAddChild = useCallback(() => controllerRef.current?.createChild(), []);
@@ -631,12 +671,14 @@ export default function Editor() {
           onUnlock={onUnlock}
           onAlign={onAlign}
           onDistribute={onDistribute}
+          onNoteSize={onNoteSize}
           onAddChild={onAddChild}
           onAddSibling={onAddSibling}
           onCollapseToggle={onCollapseToggle}
           onArrange={onArrange}
           onSelectBranch={onSelectBranch}
           onDuplicateBranch={onDuplicateBranch}
+          keyboardInset={keyboardInset}
         />
 
         <NodeQuickAdd
@@ -650,6 +692,7 @@ export default function Editor() {
         <ZoomControls
           zoom={state.zoom}
           canvasStyle={state.canvasStyle}
+          keyboardInset={keyboardInset}
           onZoomIn={onZoomIn}
           onZoomOut={onZoomOut}
           onReset={onReset}

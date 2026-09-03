@@ -9,7 +9,11 @@ import * as fabric from "fabric";
 import {
   ANCHOR_HIT,
   ANCHOR_R,
+  AUTO_TEXT_MAX_W,
+  AUTO_TEXT_MIN_W,
+  BULLET_PREFIX,
   CANVAS_FONT,
+  CHECK_PREFIX,
   CONNECTOR_STROKE,
   CONNECTOR_WIDTH,
   DASH_ARRAYS,
@@ -22,6 +26,7 @@ import {
   MINDMAP_GAP_X,
   MINDMAP_GAP_Y,
   NOTEDRIFT_PROPS,
+  NOTE_PAD,
   type NodeAccent,
 } from "./constants";
 import { History } from "./history";
@@ -39,6 +44,7 @@ import {
   type ShapeStyle,
 } from "./shapes/registry";
 import { polygonPoints, starPoints } from "./shapes/geometry";
+import { fontKeyOf } from "./fonts";
 import {
   ANCHORS,
   Connector,
@@ -104,6 +110,38 @@ interface Guide {
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 const dist = (a: Pt, b: Pt) => Math.hypot(a.x - b.x, a.y - b.y);
+
+/** A text box counts as empty when only whitespace and list markers remain, so
+ *  a box holding just a bullet / checkbox prefix is still garbage-collected. */
+function isEffectivelyEmpty(text: string): boolean {
+  return text.replace(/[•☐☑\s]/g, "") === "";
+}
+
+/** The list mode of a text box: bullet / check when every non-blank line carries
+ *  that marker, else none. */
+function listStyleOf(text: string): "none" | "bullet" | "check" {
+  const lines = text.split("\n").filter((l) => l.trim() !== "");
+  if (lines.length === 0) return "none";
+  if (lines.every((l) => /^\s*•\s+/.test(l))) return "bullet";
+  if (lines.every((l) => /^\s*[☐☑]\s+/.test(l))) return "check";
+  return "none";
+}
+
+/** Whole-object text/note formatting snapshot for the contextual toolbar. */
+function textStyleOf(t: fabric.Textbox): Partial<SelectionInfo> {
+  const weight = t.fontWeight;
+  return {
+    textColor: t.fill as string,
+    fontSize: t.fontSize,
+    fontFamily: fontKeyOf(t.fontFamily),
+    bold: weight === "bold" || weight === 700 || weight === "700",
+    italic: t.fontStyle === "italic",
+    underline: !!t.underline,
+    lineHeight: t.lineHeight,
+    textAlign: t.textAlign,
+    listStyle: listStyleOf(t.text ?? ""),
+  };
+}
 
 /** Even-odd ray-cast point-in-polygon test (scene coordinates). */
 function pointInPolygon(p: Pt, poly: Pt[]): boolean {
@@ -224,6 +262,15 @@ export class CanvasController {
   private lassoing = false;
   private lassoPts: Pt[] = [];
 
+  // Text tool: a pending create — tap makes auto-grow text, drag a fixed-width
+  // box (decided on mouse:up so focus() stays inside the gesture).
+  private textDraft: { start: Pt; cur: Pt } | null = null;
+
+  // Virtual-keyboard handling (tablet): how much of the viewport the software
+  // keyboard covers, and the vertical scene-pan we applied to lift the caret.
+  private keyboardInset = 0;
+  private keyboardPan = 0;
+
   // Touch / pen gestures (multi-touch is handled at the DOM level; Fabric v6 has
   // no built-in pinch/two-finger pan).
   private touchPoints = new Map<number, Pt>();
@@ -315,6 +362,79 @@ export class CanvasController {
     }
   }
 
+  /* --------------------------- virtual keyboard --------------------------- */
+
+  /** React reports how much of the viewport the software keyboard covers. We
+   *  never resize the canvas — only pan the scene (viewportTransform) to lift
+   *  the caret above the keyboard, and restore that pan when it closes. */
+  setKeyboardInset(px: number): void {
+    const next = Math.max(0, Math.round(px));
+    const was = this.keyboardInset;
+    this.keyboardInset = next;
+    // Re-pin the pointer→scene offset after any iOS viewport shift, so
+    // getScenePoint / anchors / lasso stay accurate.
+    this.canvas.calcOffset();
+    if (next > 0) this.ensureCaretVisible();
+    else if (was > 0) this.restoreKeyboardPan();
+  }
+
+  /** Pan the scene up (vpt[5]) so the active editing object sits above the
+   *  keyboard band. Additive to any manual pan, so scene coords stay valid. */
+  private ensureCaretVisible(): void {
+    if (this.keyboardInset <= 0 || !this.isEditing()) return;
+    const active = this.canvas.getActiveObject();
+    if (!active) return;
+    const r = this.screenRectOf(active);
+    const PAD = 28;
+    const visibleBottom = this.canvas.getHeight() - this.keyboardInset;
+    const objBottom = r.top + r.height;
+    const delta = objBottom - (visibleBottom - PAD);
+    if (delta > 1) {
+      const vpt = this.canvas.viewportTransform;
+      vpt[5] -= delta;
+      this.canvas.setViewportTransform(vpt);
+      this.keyboardPan += delta;
+      this.updateGrid();
+      this.emit();
+    }
+  }
+
+  /** Undo exactly our keyboard pan (leaving any manual pan intact). */
+  private restoreKeyboardPan(): void {
+    if (this.keyboardPan === 0) return;
+    const vpt = this.canvas.viewportTransform;
+    vpt[5] += this.keyboardPan;
+    this.keyboardPan = 0;
+    this.canvas.setViewportTransform(vpt);
+    this.updateGrid();
+    this.emit();
+  }
+
+  /** Re-measure text that uses a web font once it has loaded, so a page saved
+   *  with the handwriting font doesn't reflow on first paint. */
+  refreshFonts(): void {
+    let changed = false;
+    const visit = (objs: fabric.FabricObject[]): void => {
+      for (const o of objs) {
+        const t = o as fabric.Textbox & { fontFamily?: string; ndAutoGrow?: boolean };
+        if (typeof t.fontFamily === "string" && /patrick|cursive/i.test(t.fontFamily)) {
+          t.initDimensions?.();
+          // Auto-grow width is font-dependent, so re-fit it too (initDimensions
+          // only re-wraps within the current width).
+          this.fitAutoGrow(t);
+          t.setCoords();
+          changed = true;
+        }
+        if (o instanceof fabric.Group) visit(o.getObjects());
+      }
+    };
+    visit(this.canvas.getObjects());
+    if (changed) {
+      this.updateConnectors();
+      this.canvas.requestRenderAll();
+    }
+  }
+
   dispose(): void {
     this.disposed = true;
     this.detachTouchHandlers();
@@ -362,21 +482,21 @@ export class CanvasController {
     }
     if (kind === "note") {
       const n = obj as fabric.Textbox;
-      return {
-        noteFill: n.backgroundColor as string,
-        fontSize: n.fontSize,
-        textColor: n.fill as string,
-        textAlign: n.textAlign,
-      };
+      return { noteFill: n.backgroundColor as string, ...textStyleOf(n) };
     }
     if (kind === "text") {
       const t = obj as fabric.Textbox;
-      return {
-        textColor: t.fill as string,
-        fontSize: t.fontSize,
-        bold: t.fontWeight === "bold",
-        textAlign: t.textAlign,
-      };
+      // Mind-map nodes share kind "text" but must not surface free-text
+      // formatting (their look is accent-driven).
+      if (isNodeBox(obj)) {
+        return {
+          textColor: t.fill as string,
+          fontSize: t.fontSize,
+          textAlign: t.textAlign,
+          fontFamily: fontKeyOf(t.fontFamily),
+        };
+      }
+      return textStyleOf(t);
     }
     if (kind === "line") {
       const l = obj as NdLine;
@@ -455,7 +575,12 @@ export class CanvasController {
       const kinds = new Set(objs.map(kindOf));
       if (kinds.size === 1) {
         const k = [...kinds][0];
-        return { kind: k, ...multi, ...this.styleOf(objs[0], k) };
+        const info: SelectionInfo = { kind: k, ...multi, ...this.styleOf(objs[0], k) };
+        // A uniform multi-node selection uses the node branch (accent + font,
+        // which apply to all) instead of the free-text controls that no-op on
+        // nodes; add/collapse actions are hidden for multi (they act on one node).
+        if (k === "text" && objs.every(isNodeBox)) info.isNode = true;
+        return info;
       }
       return { kind: "mixed", ...multi };
     }
@@ -1496,31 +1621,107 @@ export class CanvasController {
         obj.setAccent(patch.nodeAccent as NodeAccent);
         continue;
       }
-      if (patch.textColor !== undefined && (k === "text" || k === "note")) {
-        obj.set("fill", patch.textColor);
-      }
+      // Whole-object text formatting: applies to free text and sticky notes.
+      // Mind-map nodes are accent-driven and stay immune to it.
+      const isFreeText = k === "text" && !isNodeBox(obj);
+      const textish = isFreeText || k === "note";
+      let reflow = false;
+      if (patch.textColor !== undefined && textish) obj.set("fill", patch.textColor);
       if (patch.noteFill !== undefined && k === "note") {
         obj.set("backgroundColor", patch.noteFill);
       }
-      if (patch.fontSize !== undefined && (k === "text" || k === "note")) {
+      // Font family is also allowed on mind-map nodes (a handwritten mind map is
+      // a deliberate look) — it doesn't touch the accent-driven color/geometry.
+      if (patch.fontFamily !== undefined && (textish || isNodeBox(obj))) {
+        obj.set("fontFamily", patch.fontFamily);
+        reflow = true;
+      }
+      if (patch.fontSize !== undefined && textish) {
         obj.set("fontSize", patch.fontSize);
-        (obj as fabric.Textbox).initDimensions?.();
+        reflow = true;
       }
-      if (patch.bold !== undefined && k === "text") {
+      if (patch.bold !== undefined && textish) {
         obj.set("fontWeight", patch.bold ? "bold" : "normal");
+        reflow = true;
       }
-      if (patch.textAlign !== undefined && (k === "text" || k === "note")) {
-        obj.set("textAlign", patch.textAlign);
+      if (patch.italic !== undefined && textish) {
+        obj.set("fontStyle", patch.italic ? "italic" : "normal");
+        reflow = true;
+      }
+      if (patch.underline !== undefined && textish) {
+        obj.set("underline", patch.underline);
+      }
+      if (patch.lineHeight !== undefined && textish) {
+        obj.set("lineHeight", patch.lineHeight);
+        reflow = true;
+      }
+      if (patch.textAlign !== undefined && textish) obj.set("textAlign", patch.textAlign);
+      if (patch.listStyle !== undefined && textish) {
+        this.applyListStyle(obj as fabric.Textbox, patch.listStyle);
+        reflow = true;
+      }
+      if (reflow) {
+        const tb = obj as fabric.Textbox;
+        tb.initDimensions?.();
+        tb.setCoords();
+        this.fitAutoGrow(tb);
       }
       obj.set("dirty", true);
     }
 
     this.updateConnectors();
     this.canvas.requestRenderAll();
-    if (commit) {
+    // Never record mid-edit: a format tap while the box is being typed into would
+    // fragment the single edit — text:editing:exited captures the final state.
+    if (commit && !this.isEditing()) {
       this.recordHistory();
       this.schedulePersist();
     }
+  }
+
+  /** Toggle a bullet / checklist line-prefix over every line of a text box.
+   *  Whole-object (no per-character cursor surgery), so it stays reliable. */
+  private applyListStyle(t: fabric.Textbox, style: "none" | "bullet" | "check"): void {
+    const prefix =
+      style === "bullet" ? BULLET_PREFIX : style === "check" ? CHECK_PREFIX : "";
+    const lines = (t.text ?? "").split("\n").map((ln) => {
+      // Strip only the marker and its (≤2) prefix spaces — never the content's
+      // own leading indentation.
+      const bare = ln.replace(/^[•☐☑] {0,2}/, "");
+      return style === "none" ? bare : prefix + bare;
+    });
+    t.set("text", lines.join("\n"));
+  }
+
+  /** Apply a sticky-note size preset (card width + font size). Bakes out any
+   *  prior corner-scale so the padded card, shadow, and border stay crisp, and
+   *  keeps the card centered where it was. One history entry. */
+  setNoteSize(cardWidth: number, fontSize: number): void {
+    const notes = this.canvas
+      .getActiveObjects()
+      .filter((o) => kindOf(o) === "note" && !isLocked(o));
+    if (notes.length === 0) return;
+    // Drop out of the ActiveSelection so each note reports canvas-space bounds
+    // and centerAt's scene delta is applied in its own frame (matches
+    // align/distribute) — otherwise a scaled/rotated selection mis-sizes them.
+    this.canvas.discardActiveObject();
+    for (const n of notes) {
+      const b = sceneBoundsOf(n);
+      (n as fabric.Textbox).set({
+        scaleX: 1,
+        scaleY: 1,
+        width: Math.max(40, cardWidth - NOTE_PAD * 2),
+        fontSize,
+      });
+      (n as fabric.Textbox).initDimensions?.();
+      this.centerAt(n, { x: b.cx, y: b.cy });
+      n.setCoords();
+    }
+    this.reselect(notes);
+    this.updateConnectors();
+    this.canvas.requestRenderAll();
+    this.recordHistory();
+    this.schedulePersist();
   }
 
   /* ------------------------- duplicate / clipboard ------------------------ */
@@ -2017,6 +2218,9 @@ export class CanvasController {
       ? new fabric.Point(at.x, at.y)
       : new fabric.Point(this.canvas.getWidth() / 2, this.canvas.getHeight() / 2);
     this.canvas.zoomToPoint(point, z);
+    // A zoom rescales viewportTransform, invalidating the absolute keyboard-pan
+    // delta — forget it so closing the keyboard doesn't lurch the view.
+    this.keyboardPan = 0;
     this.updateGrid();
     this.updateBrushCursor();
     this.emit();
@@ -2030,6 +2234,7 @@ export class CanvasController {
   }
   resetZoom(): void {
     this.canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
+    this.keyboardPan = 0;
     this.updateGrid();
     this.updateBrushCursor();
     this.emit();
@@ -2128,25 +2333,63 @@ export class CanvasController {
 
   /* ------------------------------ text / note ----------------------------- */
 
-  private createTextAt(x: number, y: number): void {
-    // A Textbox (not point text): it has a real width, so its handles never
-    // collapse into a cramped column, and the side handles widen it (reflowing
-    // the text) — while corners still scale and the box grows in height.
+  /**
+   * Create an editable text box and immediately enter editing (keyboard-ready).
+   * `fixedWidth` (from a Text-tool drag) makes a defined-width box that wraps;
+   * omitting it makes an auto-grow box that hugs its content until it hits the
+   * wrap width. enterEditing()+focus() stay synchronous inside the gesture so
+   * the tablet keyboard opens.
+   */
+  private createTextAt(x: number, y: number, fixedWidth?: number): void {
+    const autoGrow = fixedWidth === undefined;
     const text = new fabric.Textbox("", {
       left: x,
       top: y,
-      width: 200,
+      width: autoGrow ? AUTO_TEXT_MIN_W : Math.max(60, fixedWidth),
       fontSize: this.defaults.textFontSize,
       fill: this.defaults.textColor,
-      fontFamily: CANVAS_FONT,
+      fontFamily: this.defaults.textFontFamily,
+      lineHeight: this.defaults.textLineHeight,
     });
     (text as NdObj).ndId = nid();
+    (text as { ndAutoGrow?: boolean }).ndAutoGrow = autoGrow;
     this.setTool("select");
     this.canvas.add(text);
     this.canvas.setActiveObject(text);
     text.enterEditing();
     text.hiddenTextarea?.focus();
     this.canvas.requestRenderAll();
+  }
+
+  /** Offscreen 2D context for measuring auto-grow text width. */
+  private measureCtx: CanvasRenderingContext2D | null = null;
+  private getMeasureCtx(): CanvasRenderingContext2D | null {
+    if (!this.measureCtx && typeof document !== "undefined") {
+      this.measureCtx = document.createElement("canvas").getContext("2d");
+    }
+    return this.measureCtx;
+  }
+
+  /** Grow (or shrink) an auto-grow text box to fit its content width, up to the
+   *  wrap cap. No-op for fixed-width boxes. */
+  private fitAutoGrow(t: fabric.Textbox): void {
+    if (!(t as { ndAutoGrow?: boolean }).ndAutoGrow) return;
+    const ctx = this.getMeasureCtx();
+    if (!ctx) return;
+    const style = t.fontStyle && t.fontStyle !== "normal" ? t.fontStyle : "normal";
+    const weight = String(t.fontWeight ?? "normal");
+    ctx.font = `${style} ${weight} ${t.fontSize}px ${t.fontFamily}`;
+    let maxW = 0;
+    for (const ln of (t.text ?? "").split("\n")) {
+      maxW = Math.max(maxW, ctx.measureText(ln).width);
+    }
+    const pad = (t.fontSize ?? 16) * 0.7; // breathing room + caret
+    const w = clamp(maxW + pad, AUTO_TEXT_MIN_W, AUTO_TEXT_MAX_W);
+    if (Math.abs((t.width ?? 0) - w) > 0.5) {
+      t.set("width", w);
+      t.initDimensions();
+      t.setCoords();
+    }
   }
 
   /* ------------------------- shape / line drawing ------------------------- */
@@ -2558,6 +2801,21 @@ export class CanvasController {
       ctx.restore();
     }
 
+    // Text-tool drag preview (defining a fixed-width text box).
+    if (this.textDraft) {
+      const { start, cur } = this.textDraft;
+      if (Math.abs(cur.x - start.x) >= 12) {
+        const a = this.toScreen({ x: Math.min(start.x, cur.x), y: Math.min(start.y, cur.y) });
+        const b = this.toScreen({ x: Math.max(start.x, cur.x), y: Math.max(start.y, cur.y) });
+        ctx.save();
+        ctx.setLineDash([5, 4]);
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = "rgba(91, 140, 255, 0.9)";
+        ctx.strokeRect(a.x, a.y, b.x - a.x, Math.max(b.y - a.y, 10));
+        ctx.restore();
+      }
+    }
+
     // Alignment guides
     if (this.activeGuides.length) {
       const W = this.canvas.getWidth();
@@ -2794,6 +3052,8 @@ export class CanvasController {
         MAX_ZOOM,
       );
       this.canvas.zoomToPoint(new fabric.Point(at.x, at.y), zoom);
+      // The pinch rescaled the viewport — drop the stale keyboard-pan delta.
+      this.keyboardPan = 0;
       this.updateGrid();
       this.updateBrushCursor();
       this.emit();
@@ -2878,6 +3138,17 @@ export class CanvasController {
       if (opt.target) this.updateConnectors(this.movedIds(opt.target));
       this.emit();
     });
+    // A Textbox side handle reflows width via the RESIZING action (not scaling),
+    // so mirror the scaling handler or a bound connector detaches mid-drag.
+    this.canvas.on("object:resizing", (opt) => {
+      this.interacting = true;
+      // A deliberate width drag turns an auto-grow box into a fixed-width one,
+      // so the next keystroke's fitAutoGrow doesn't snap the width back.
+      const t = opt.target as (fabric.FabricObject & { ndAutoGrow?: boolean }) | undefined;
+      if (t?.ndAutoGrow) t.ndAutoGrow = false;
+      if (opt.target) this.updateConnectors(this.movedIds(opt.target));
+      this.emit();
+    });
     this.canvas.on("object:rotating", (opt) => {
       this.interacting = true;
       const ev = opt.e as (PointerEvent & MouseEvent) | undefined;
@@ -2907,19 +3178,30 @@ export class CanvasController {
       this.recordHistory();
       this.schedulePersist();
     });
-    this.canvas.on("text:changed", () => {
+    this.canvas.on("text:editing:entered", (opt) => {
+      // Keep the caret above the software keyboard when editing begins.
+      void opt;
+      if (this.keyboardInset > 0) this.ensureCaretVisible();
+    });
+    this.canvas.on("text:changed", (opt) => {
+      const t = (opt as { target?: fabric.FabricObject }).target as
+        | fabric.Textbox
+        | undefined;
+      if (t) this.fitAutoGrow(t);
       this.updateConnectors();
+      if (this.keyboardInset > 0) this.ensureCaretVisible();
       this.schedulePersist();
     });
     this.canvas.on("text:editing:exited", (opt) => {
       // Drop an empty free-text box so it never lingers as a cramped, useless
-      // object. Sticky notes and mind-map nodes are kept even when empty.
+      // object. Sticky notes and mind-map nodes are kept even when empty. A box
+      // holding only a bullet/checklist prefix counts as empty.
       const t = (opt as { target?: fabric.FabricObject }).target ??
         this.canvas.getActiveObject() ?? undefined;
       const type = ((t as { type?: string } | undefined)?.type ?? "").toLowerCase();
       const isFreeText = type === "textbox" || type === "i-text" || type === "itext";
       const txt = (t as fabric.Textbox | undefined)?.text ?? "";
-      if (t && isFreeText && txt.trim() === "") {
+      if (t && isFreeText && isEffectivelyEmpty(txt)) {
         this.canvas.remove(t);
         this.canvas.discardActiveObject();
         this.canvas.requestRenderAll();
@@ -2983,6 +3265,9 @@ export class CanvasController {
   private onDblClick = (opt: PointerInfo): void => {
     if (this.tool !== "select" || opt.target) return;
     const p = this.canvas.getScenePoint(opt.e);
+    // A locked object is non-evented, so opt.target is null over it — don't drop
+    // a stray text box on top of one.
+    if (this.lockedObjectAt(p)) return;
     this.createTextAt(p.x, p.y);
   };
 
@@ -3043,7 +3328,9 @@ export class CanvasController {
     this.cur = { x: p.x, y: p.y };
 
     if (this.tool === "text") {
-      this.createTextAt(p.x, p.y);
+      // Defer creation to mouse:up so a drag can define a fixed width, and so
+      // enterEditing()+focus() run inside the pointerup gesture (tablet keyboard).
+      this.textDraft = { start: { x: p.x, y: p.y }, cur: { x: p.x, y: p.y } };
       return;
     }
 
@@ -3108,6 +3395,13 @@ export class CanvasController {
       return;
     }
 
+    if (this.textDraft) {
+      const p = this.canvas.getScenePoint(opt.e);
+      this.textDraft.cur = { x: p.x, y: p.y };
+      this.canvas.requestRenderAll();
+      return;
+    }
+
     if (this.connectDrag) {
       this.updateConnectDrag(opt);
       return;
@@ -3135,6 +3429,20 @@ export class CanvasController {
   private onMouseUp = (): void => {
     if (this.lassoing) {
       this.finishLasso();
+      return;
+    }
+
+    if (this.textDraft) {
+      const { start, cur } = this.textDraft;
+      this.textDraft = null;
+      const w = Math.abs(cur.x - start.x);
+      const TAP = 12; // scene px — below this it's a tap, not a drag
+      if (w < TAP) {
+        this.createTextAt(start.x, start.y); // tap → auto-grow
+      } else {
+        this.createTextAt(Math.min(start.x, cur.x), Math.min(start.y, cur.y), w);
+      }
+      this.canvas.requestRenderAll();
       return;
     }
 

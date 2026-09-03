@@ -136,6 +136,17 @@ export interface SelectionInfo {
   locked?: boolean;
   /** ≥3 objects selected — distribution is available. */
   canDistribute?: boolean;
+  // Phase 1.6E — whole-object text/note formatting.
+  /** Curated font-family key (sans / serif / mono / hand). */
+  fontFamily?: string;
+  /** Italic (maps to fontStyle). */
+  italic?: boolean;
+  /** Underline. */
+  underline?: boolean;
+  /** Line height (1.0 compact … 1.5 relaxed). */
+  lineHeight?: number;
+  /** Line-prefix list mode of a text/note object. */
+  listStyle?: "none" | "bullet" | "check";
 }
 
 /** Persisted preferences for a single drawing instrument. */
@@ -168,6 +179,10 @@ export interface ToolDefaults {
   lineOpacity: number;
   textColor: string;
   textFontSize: number;
+  /** Curated font-family stack for new text (a FONT_STACKS value). */
+  textFontFamily: string;
+  /** Line height for new text. */
+  textLineHeight: number;
   noteFill: string;
 }
 
@@ -182,6 +197,17 @@ export interface StylePatch {
   bold?: boolean;
   textAlign?: string;
   noteFill?: string;
+  // Phase 1.6E — whole-object text/note formatting.
+  /** Curated font-family stack (a FONT_STACKS value). */
+  fontFamily?: string;
+  /** Italic (maps to fontStyle "italic"/"normal"). */
+  italic?: boolean;
+  /** Underline. */
+  underline?: boolean;
+  /** Line height multiplier. */
+  lineHeight?: number;
+  /** Toggle a line-prefix list mode over the whole text object. */
+  listStyle?: "none" | "bullet" | "check";
   /** Connector arrowhead on/off. */
   hasArrow?: boolean;
   /** Mind-map node soft accent key. */
