@@ -55,7 +55,8 @@ is derived elsewhere and passed into the entitlement layer.
 | Version history _(future)_ | — | ~7 days | long-term / ∞ |
 | Public view sharing _(future)_ | ❌ | limited | ✅ |
 | Private sharing / collab _(future)_ | ❌ | ❌ | ✅ |
-| Standard PNG / single-page PDF | ✅ | ✅ | ✅ |
+| Standard PNG export | ✅ | ✅ | ✅ |
+| Standard single-page PDF _(entitlement; export not built yet)_ | ✅ | ✅ | ✅ |
 | HD/4K/Transparent PNG, SVG, selection, multi-page PDF, custom size _(future)_ | ❌ | ❌ | ✅ |
 | AI allowance _(future)_ | 0 | small | larger |
 | Ads | none | none | none (always) |
@@ -66,8 +67,10 @@ Everything in Phase 1.6 stays Free: Pen · Pencil · Marker · Highlighter · Br
 Technical Pen · Eraser · Shapes · Lines · Arrows · Diagrams · Text · Sticky notes ·
 Images · Crop · Lasso · Group/Ungroup · Align/Distribute · Lock · Mind maps ·
 Tool Library · Hand/navigation · paper backgrounds. Plus **unlimited local
-canvases**, local autosave, no account required, and **Standard PNG + single-page
-PDF** export (a user can always get their own work out).
+canvases**, local autosave, no account required, and **Standard PNG** export
+(shipped today). Standard single-page PDF is a Free entitlement too, but the PDF
+export itself is **not built yet** — it ships in a later phase; a user can always
+get their work out as PNG in the meantime.
 
 _Future_ Free cloud plan: up to **3 cloud canvases** (local stays unlimited),
 ~7-day version history on cloud docs, limited public view sharing, a small AI
@@ -238,10 +241,12 @@ Consider explicit user restore points. Do not implement now.
 
 ## Export entitlement architecture (future)
 
-The current PNG/PDF export stays as the Free **Standard** tier and must **not** be
+Today only **Standard PNG** export ships (`exportPNG` in the controller); the
+Free `standardPDF` entitlement exists but its export is **not built yet**. The
+current PNG export stays as the Free **Standard** tier and must **not** be
 degraded to manufacture an upgrade. A future export menu reads entitlements:
 
-- Free: `standardPNG`, `standardPDF`.
+- Free: `standardPNG` (built), `standardPDF` (entitlement only, export TBD).
 - Pro: `hdPNG`, 4K, `transparentPNG`, `svgExport`, `selectionExport`,
   `multiPagePDF`, `customExportSize`.
 

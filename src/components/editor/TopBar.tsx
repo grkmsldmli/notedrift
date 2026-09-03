@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import type { PageMeta } from "@/lib/types";
 import { IconButton } from "../ui/IconButton";
+import { AccountButton } from "../auth/AccountButton";
 import { Logo } from "./Logo";
 
 interface TopBarProps {
@@ -238,11 +239,15 @@ export const TopBar = memo(function TopBar(props: TopBarProps) {
           onClick={onRedo}
           disabled={!canRedo}
         />
-        <IconButton
-          icon={<Download size={18} />}
-          label="Export PNG"
-          onClick={onExport}
-        />
+        {/* Redundant with the "More" menu's Export — hide on phones so the
+            account control fits without crowding the title (see Phase 1.6H). */}
+        <span className="hidden sm:block">
+          <IconButton
+            icon={<Download size={18} />}
+            label="Export PNG"
+            onClick={onExport}
+          />
+        </span>
 
         <div className="relative">
           <IconButton
@@ -282,6 +287,9 @@ export const TopBar = memo(function TopBar(props: TopBarProps) {
             </>
           )}
         </div>
+
+        {/* Account (top-right). Renders nothing unless auth is configured. */}
+        <AccountButton />
       </div>
     </header>
   );
