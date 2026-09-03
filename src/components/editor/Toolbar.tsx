@@ -143,21 +143,21 @@ export const Toolbar = memo(function Toolbar({
   );
 
   const familyList = (items: typeof DRAW_OPTIONS, onPick: (t: Tool) => void) => (
-    <div className="w-44">
+    <div className="w-40">
       {items.map((o) => (
         <button
           key={o.tool}
           type="button"
           onClick={() => onPick(o.tool)}
           className={[
-            "flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors",
+            "flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left transition-colors",
             tool === o.tool ? "bg-nd-accent/15 text-nd-text" : "hover:bg-white/5",
           ].join(" ")}
         >
           <span className={tool === o.tool ? "text-nd-accent" : "text-nd-muted"}>{o.icon}</span>
           <span className="flex flex-col">
-            <span className="text-sm text-nd-text">{o.label}</span>
-            <span className="text-[10px] text-nd-faint">{o.hint}</span>
+            <span className="text-sm leading-tight text-nd-text">{o.label}</span>
+            <span className="text-[11px] leading-tight text-nd-faint">{o.hint}</span>
           </span>
         </button>
       ))}
@@ -223,12 +223,12 @@ export const Toolbar = memo(function Toolbar({
             {openSlot === "shapes" && (
               <>
                 <div className="fixed inset-0 z-30" onClick={close} />
-                <div className="absolute left-full top-0 z-40 ml-2 w-56 rounded-xl border border-nd-border bg-nd-surface p-2 shadow-2xl">
-                  <div className="mb-1 px-1 text-[10px] font-medium uppercase tracking-wide text-nd-muted">
+                <div className="absolute left-full top-0 z-40 ml-2 w-52 rounded-xl border border-nd-border bg-nd-surface p-1.5 shadow-2xl">
+                  <div className="mb-0.5 px-1 text-[10px] font-medium uppercase tracking-wide text-nd-muted">
                     Basic
                   </div>
                   {shapeGrid(BASIC_SHAPES)}
-                  <div className="mb-1 mt-2 px-1 text-[10px] font-medium uppercase tracking-wide text-nd-muted">
+                  <div className="mb-0.5 mt-1.5 px-1 text-[10px] font-medium uppercase tracking-wide text-nd-muted">
                     Flowchart
                   </div>
                   {shapeGrid(DIAGRAM_SHAPES)}
@@ -329,7 +329,7 @@ export const Toolbar = memo(function Toolbar({
                         close();
                       }}
                       className={[
-                        "flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors",
+                        "flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left transition-colors",
                         eraserMode === o.mode ? "bg-nd-accent/15 text-nd-text" : "hover:bg-white/5",
                       ].join(" ")}
                     >
@@ -337,8 +337,8 @@ export const Toolbar = memo(function Toolbar({
                         {o.icon}
                       </span>
                       <span className="flex flex-col">
-                        <span className="text-sm text-nd-text">{o.label}</span>
-                        <span className="text-[10px] text-nd-faint">{o.hint}</span>
+                        <span className="text-sm leading-tight text-nd-text">{o.label}</span>
+                        <span className="text-[11px] leading-tight text-nd-faint">{o.hint}</span>
                       </span>
                     </button>
                   ))}
@@ -354,7 +354,7 @@ export const Toolbar = memo(function Toolbar({
 
   return (
     <div className="absolute left-4 top-1/2 z-20 flex max-h-[calc(100%-1.25rem)] -translate-y-1/2 flex-col">
-      <div className="nd-rail flex min-h-0 flex-col items-center gap-1 rounded-2xl border border-nd-border bg-nd-surface/95 p-1.5 shadow-xl backdrop-blur">
+      <div className="nd-rail flex min-h-0 flex-col items-center gap-0.5 rounded-2xl border border-nd-border bg-nd-surface/95 p-1 shadow-xl backdrop-blur">
         <IconButton
           icon={<MousePointer2 size={ICON} />}
           label="Select  (V)"

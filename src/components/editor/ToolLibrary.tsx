@@ -66,7 +66,7 @@ export const ToolLibrary = memo(function ToolLibrary({
       {/* Anchored to the button's BOTTOM so it opens upward: the "All tools"
           trigger sits near the base of the vertically-centred rail, and a
           top-anchored popover would run its lower groups off the viewport. */}
-      <div className="absolute bottom-0 left-full z-50 ml-2 w-64 rounded-xl border border-nd-border bg-nd-surface p-2 shadow-2xl">
+      <div className="absolute bottom-0 left-full z-50 ml-2 w-56 rounded-xl border border-nd-border bg-nd-surface p-1.5 shadow-2xl">
         <div className="mb-1.5 px-1 text-[11px] font-semibold uppercase tracking-wide text-nd-muted">
           Tools
         </div>
@@ -87,7 +87,7 @@ export const ToolLibrary = memo(function ToolLibrary({
                   <div
                     key={t}
                     className={[
-                      "group flex items-center gap-2.5 rounded-lg px-2 py-1.5 transition-colors",
+                      "group flex items-center gap-2 rounded-lg px-2 py-1 transition-colors",
                       active ? "bg-nd-accent/15" : "hover:bg-white/5",
                     ].join(" ")}
                   >
