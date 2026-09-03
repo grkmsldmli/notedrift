@@ -113,11 +113,15 @@ async function idbDelete(key: string): Promise<void> {
   });
 }
 
-export async function saveCanvasDoc(pageId: string, doc: CanvasDoc): Promise<void> {
+/** Persist a page's canvas. Returns true on a confirmed write, false if storage
+ *  rejected it (quota exceeded, IndexedDB unavailable) so the caller can warn the
+ *  user instead of silently implying the work is safe. */
+export async function saveCanvasDoc(pageId: string, doc: CanvasDoc): Promise<boolean> {
   try {
     await idbSet(pageId, doc);
+    return true;
   } catch {
-    /* best-effort autosave; ignore storage failures */
+    return false;
   }
 }
 

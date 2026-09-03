@@ -90,6 +90,11 @@ export default function Editor() {
   const controllerRef = useRef<CanvasController | null>(null);
   const currentIdRef = useRef<string | null>(null);
   const pagesRef = useRef<PageMeta[]>([]);
+  // Monotonic token guarding async page loads. Every page operation (switch /
+  // new / delete) bumps it; an in-flight load whose token is stale aborts before
+  // it can render or re-target persistence — this prevents a slow/superseded
+  // load from painting the wrong page and autosaving it into another page's id.
+  const switchTokenRef = useRef(0);
 
   const [state, setState] = useState<EditorState>(INITIAL_STATE);
   const [pages, setPages] = useState<PageMeta[]>([]);
@@ -125,18 +130,34 @@ export default function Editor() {
     pagesRef.current = pages;
   }, [pages]);
 
-  const persistDoc = useCallback((doc: CanvasDoc) => {
-    const id = currentIdRef.current;
-    if (!id) return;
-    void saveCanvasDoc(id, doc);
-    setPages((prev) => {
-      const next = prev.map((p) =>
-        p.id === id ? { ...p, updatedAt: Date.now() } : p,
-      );
-      savePages(next);
-      return next;
-    });
-  }, []);
+  // Warn at most once per run of save failures, so a full disk doesn't spam.
+  const saveFailedRef = useRef(false);
+  const persistDoc = useCallback(
+    (doc: CanvasDoc) => {
+      const id = currentIdRef.current;
+      if (!id) return;
+      void saveCanvasDoc(id, doc).then((ok) => {
+        if (!ok) {
+          if (!saveFailedRef.current) {
+            saveFailedRef.current = true;
+            showNotice(
+              "Couldn't save to this device — storage may be full. Export a copy to keep your work.",
+            );
+          }
+          return; // don't advance the saved-time on a write that didn't land
+        }
+        saveFailedRef.current = false;
+        setPages((prev) => {
+          const next = prev.map((p) =>
+            p.id === id ? { ...p, updatedAt: Date.now() } : p,
+          );
+          savePages(next);
+          return next;
+        });
+      });
+    },
+    [showNotice],
+  );
 
   // One-time editor bootstrap.
   useEffect(() => {
@@ -412,6 +433,7 @@ export default function Editor() {
   const handleNewPage = useCallback(() => {
     const c = controllerRef.current;
     if (!c) return;
+    ++switchTokenRef.current; // supersede any in-flight page load
     c.flush();
     const style = loadPrefs().defaultStyle;
     const meta = newPageMeta(style);
@@ -430,19 +452,30 @@ export default function Editor() {
   const handleSwitchPage = useCallback(async (id: string) => {
     const c = controllerRef.current;
     if (!c || id === currentIdRef.current) return;
+    const token = ++switchTokenRef.current;
+    // Persist the OUTGOING page to its own id — the canvas still shows it and
+    // currentIdRef still points at it.
     c.flush();
-    setCurrentId(id);
-    currentIdRef.current = id;
+    setCurrentId(id); // responsive highlight; the latest switch's setState wins
     setCurrentPageId(id);
     const target = pagesRef.current.find((p) => p.id === id);
     const doc = await loadCanvasDoc(id);
+    if (switchTokenRef.current !== token) return; // superseded by a newer page op
     await c.loadDoc(doc);
+    if (switchTokenRef.current !== token) return; // superseded during the load
+    // Only now that the canvas actually shows the new page do we re-target
+    // autosave at it — so a save can never land the old canvas in the new id.
+    currentIdRef.current = id;
     c.setCanvasStyle(styleOf(target));
   }, []);
 
   const handleDeletePage = useCallback((id: string) => {
     const c = controllerRef.current;
     if (!c) return;
+    const token = ++switchTokenRef.current; // supersede any in-flight page load
+    const deletingCurrent = id === currentIdRef.current;
+    // Don't let a pending autosave resurrect the page we're discarding.
+    if (deletingCurrent) c.cancelPersist();
     void deleteCanvasDoc(id);
     const remaining = pagesRef.current.filter((p) => p.id !== id);
 
@@ -462,13 +495,15 @@ export default function Editor() {
     setPages(remaining);
     savePages(remaining);
 
-    if (id === currentIdRef.current) {
+    if (deletingCurrent) {
       const target = remaining[0];
       setCurrentId(target.id);
-      currentIdRef.current = target.id;
       setCurrentPageId(target.id);
-      void loadCanvasDoc(target.id).then((doc) => {
-        c.loadDoc(doc);
+      void loadCanvasDoc(target.id).then(async (doc) => {
+        if (switchTokenRef.current !== token) return; // superseded
+        await c.loadDoc(doc);
+        if (switchTokenRef.current !== token) return;
+        currentIdRef.current = target.id;
         c.setCanvasStyle(styleOf(target));
       });
     }

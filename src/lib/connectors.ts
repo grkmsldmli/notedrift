@@ -158,6 +158,11 @@ export class Connector extends fabric.Line {
   declare hier: boolean | undefined;
 
   constructor(points: number[] = [0, 0, 0, 0], options: Record<string, unknown> = {}) {
+    // `type` is a read-only class discriminator in Fabric v7; strip it from the
+    // spread so enliven (which passes the serialized `type: "Connector"`) doesn't
+    // log "Setting type has no effect" on every load.
+    const rest = { ...options };
+    delete rest.type;
     super(points as [number, number, number, number], {
       stroke: (options.stroke as string) ?? CONNECTOR_STROKE,
       strokeWidth: (options.strokeWidth as number) ?? CONNECTOR_WIDTH,
@@ -169,7 +174,7 @@ export class Connector extends fabric.Line {
       lockMovementY: true,
       perPixelTargetFind: true,
       objectCaching: false,
-      ...options,
+      ...rest,
     } as LineOptions);
     this.ndRole = "connector";
     this.ndId = (options.ndId as string) ?? nid();
@@ -268,6 +273,9 @@ export class NodeBox extends fabric.Textbox {
 
   constructor(text: string, options: Record<string, unknown> = {}) {
     const accent = accentOf(options.ndAccent);
+    // Strip the read-only `type` discriminator so enliven doesn't warn (see Connector).
+    const rest = { ...options };
+    delete rest.type;
     super(text, {
       width: NODE_W - NODE_PAD * 2,
       minWidth: NODE_MIN_W - NODE_PAD * 2,
@@ -276,7 +284,7 @@ export class NodeBox extends fabric.Textbox {
       fill: (options.fill as string) ?? accent.ink,
       fontFamily: CANVAS_FONT,
       backgroundColor: (options.backgroundColor as string) ?? accent.fill,
-      ...options,
+      ...rest,
     } as TextboxOptions);
     this.ndId = (options.ndId as string) ?? nid();
     this.ndAccent = accentKey(options.ndAccent);

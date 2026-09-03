@@ -87,7 +87,7 @@ export const TopBar = memo(function TopBar(props: TopBarProps) {
       {/* Left: brand + page switcher */}
       <div className="flex min-w-0 items-center gap-2">
         <Logo size={26} />
-        <span className="text-[15px] font-semibold tracking-tight text-nd-text">
+        <span className="hidden text-[15px] font-semibold tracking-tight text-nd-text sm:inline">
           NoteDrift
         </span>
         <span className="ml-1 hidden text-xs text-nd-muted md:inline">
@@ -126,8 +126,10 @@ export const TopBar = memo(function TopBar(props: TopBarProps) {
               title="Switch pages — double-click to rename"
               className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm text-nd-muted transition-colors hover:bg-white/5 hover:text-nd-text"
             >
-              <FileText size={14} />
-              <span className="max-w-[130px] truncate">{currentTitle}</span>
+              <FileText size={14} className="hidden sm:block" />
+              <span className="max-w-[110px] truncate sm:max-w-[130px]">
+                {currentTitle}
+              </span>
               <ChevronDown size={14} />
             </button>
           )}
@@ -212,7 +214,7 @@ export const TopBar = memo(function TopBar(props: TopBarProps) {
       </div>
 
       {/* Right: actions */}
-      <div className="flex items-center gap-1">
+      <div className="flex shrink-0 items-center gap-1">
         <button
           type="button"
           onClick={onNewPage}

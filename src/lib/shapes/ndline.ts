@@ -21,6 +21,9 @@ export class NdLine extends fabric.Line {
   declare endHead: ArrowHead;
 
   constructor(points: number[] = [0, 0, 0, 0], options: Record<string, unknown> = {}) {
+    // Strip the read-only `type` discriminator so enliven doesn't warn (see Connector).
+    const rest = { ...options };
+    delete rest.type;
     super(points as [number, number, number, number], {
       stroke: (options.stroke as string) ?? "#20242e",
       strokeWidth: (options.strokeWidth as number) ?? 4,
@@ -28,7 +31,7 @@ export class NdLine extends fabric.Line {
       strokeLineJoin: "round",
       strokeUniform: true,
       objectCaching: false,
-      ...options,
+      ...rest,
     } as LineOptions);
     this.ndId = (options.ndId as string) ?? nid();
     this.startHead = (options.startHead as ArrowHead) ?? "none";

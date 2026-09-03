@@ -238,6 +238,9 @@ function brushCursor(diameter: number): string {
 
 const PERSIST_IDLE = 500;
 const PERSIST_MAXWAIT = 4000;
+/** Longest edge (px) of an exported PNG. Caps the backing store so a scene whose
+ *  objects are spread far apart on the infinite canvas can't OOM the tab. */
+const EXPORT_MAX_EDGE = 8000;
 const SNAP_SCREEN_PX = 6;
 /** Forgiving anchor/endpoint hit radius for touch & pen (mouse uses ANCHOR_HIT). */
 const ANCHOR_HIT_TOUCH = 26;
@@ -786,6 +789,17 @@ export class CanvasController {
     this.persistPending = false;
     this.lastPersistAt = Date.now();
     this.cb.onPersist(this.serialize());
+  }
+
+  /** Drop any pending autosave WITHOUT writing it. Used when the current page is
+   *  being discarded (deleted), so its unsaved edits aren't resurrected into the
+   *  deleted id by a timer that fires after the delete. */
+  cancelPersist(): void {
+    if (this.persistTimer) {
+      clearTimeout(this.persistTimer);
+      this.persistTimer = null;
+    }
+    this.persistPending = false;
   }
 
   /* -------------------------- relationship model -------------------------- */
@@ -1569,6 +1583,9 @@ export class CanvasController {
     // and commits any in-progress text edit — no stale mode carries over.
     if (this.cropState && tool !== "select") this.cancelCrop();
     if (this.isEditing()) this.exitEditing();
+    // Abandon any half-finished draft/stroke/lasso/guide so a gesture interrupted
+    // by a tool-shortcut keypress can't bleed a phantom object into the new tool.
+    this.resetTransientInteraction();
     this.tool = tool;
     this.applyToolMode();
     this.emit();
@@ -2324,6 +2341,7 @@ export class CanvasController {
     return this.runExclusive(async () => {
       this.cropState = null; // any crop-in-progress targets a stale object now
       this.suppress = true;
+      this.resetTransientInteraction(); // undo/redo mustn't leave a draft/overlay
       try {
         await this.canvas.loadFromJSON(JSON.parse(json), brokenImageReviver);
       } finally {
@@ -3196,10 +3214,40 @@ export class CanvasController {
     if (migrated) this.schedulePersist();
   }
 
+  /** Clear every transient, in-gesture interaction and overlay field. Called
+   *  whenever the object graph is swapped wholesale (loadDoc, undo/redo snapshot,
+   *  clearPage) or a single-finger interaction is aborted by a two-finger gesture,
+   *  so a mid-flight gesture can neither commit a phantom object nor leave an
+   *  overlay (alignment guides, connection anchors, lasso path, shape/line draft)
+   *  painted over objects that no longer exist. Safe to call under suppress. */
+  private resetTransientInteraction(): void {
+    this.freehand.cancel();
+    this.drawing = false;
+    if (this.draft) {
+      this.canvas.remove(this.draft);
+      this.draft = null;
+    }
+    this.draftDef = null;
+    this.isErasing = false;
+    this.erasedAny = false;
+    this.interacting = false;
+    this.activeGuides = [];
+    this.lassoing = false;
+    this.lassoPts = [];
+    this.textDraft = null;
+    this.anchorHost = null;
+    this.hoverTarget = null;
+    this.connectDrag = null;
+    this.pendingConnect = null;
+    this.pendingReassign = null;
+    this.fingerPan = null;
+  }
+
   loadDoc(doc: CanvasDoc | undefined): Promise<void> {
     return this.runExclusive(async () => {
       this.cropState = null;
       this.suppress = true;
+      this.resetTransientInteraction();
       try {
         if (doc && Object.keys(doc).length > 0) {
           await this.canvas.loadFromJSON(doc, brokenImageReviver);
@@ -3223,6 +3271,7 @@ export class CanvasController {
     void this.runExclusive(async () => {
       this.cropState = null;
       this.suppress = true;
+      this.resetTransientInteraction();
       this.canvas.clear();
       this.canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
       this.suppress = false;
@@ -3250,32 +3299,52 @@ export class CanvasController {
     this.activeGuides = [];
     this.anchorHost = null;
 
-    let dataUrl: string;
-
-    if (objects.length === 0) {
-      c.backgroundColor = "#ffffff";
-      c.renderAll();
-      dataUrl = c.toDataURL({ format: "png", multiplier: 2 });
-    } else {
-      const b = this.contentBounds(objects);
-      const pad = 48;
-      const w = Math.ceil(b.width + pad * 2);
-      const h = Math.ceil(b.height + pad * 2);
-      const multiplier = w * 2 > 12000 || h * 2 > 12000 ? 1 : 2;
-
-      c.setDimensions({ width: w, height: h });
-      c.setViewportTransform([1, 0, 0, 1, -b.left + pad, -b.top + pad]);
-      c.backgroundColor = "#ffffff";
-      c.renderAll();
-      dataUrl = c.toDataURL({ format: "png", multiplier });
-
+    let dataUrl: string | null = null;
+    try {
+      if (objects.length === 0) {
+        c.backgroundColor = "#ffffff";
+        c.renderAll();
+        dataUrl = c.toDataURL({ format: "png", multiplier: 2 });
+      } else {
+        const b = this.contentBounds(objects);
+        const pad = 48;
+        const rawW = b.width + pad * 2;
+        const rawH = b.height + pad * 2;
+        // Downscale enormous scenes (objects spread far apart on the infinite
+        // canvas) so we never allocate a multi-gigapixel backing store; keep the
+        // crisp 2x render for normal-sized pages.
+        const scale = Math.min(2, EXPORT_MAX_EDGE / Math.max(rawW, rawH, 1));
+        const w = Math.max(1, Math.ceil(rawW * scale));
+        const h = Math.max(1, Math.ceil(rawH * scale));
+        c.setDimensions({ width: w, height: h });
+        c.setViewportTransform([
+          scale,
+          0,
+          0,
+          scale,
+          (-b.left + pad) * scale,
+          (-b.top + pad) * scale,
+        ]);
+        c.backgroundColor = "#ffffff";
+        c.renderAll();
+        dataUrl = c.toDataURL({ format: "png", multiplier: 1 });
+      }
+    } catch {
+      dataUrl = null; // OOM / canvas-too-large — restored below, reported after
+    } finally {
+      // Always restore the live canvas, even if export threw, so the editor is
+      // never left resized, transformed, or without its grid.
       c.setDimensions({ width: prevW, height: prevH });
       c.setViewportTransform(prevVpt);
+      c.backgroundColor = prevBg;
+      this.updateGrid();
+      c.renderAll();
     }
 
-    c.backgroundColor = prevBg;
-    this.updateGrid();
-    c.renderAll();
+    if (!dataUrl) {
+      this.cb.onNotice?.("Couldn't export this page — it may be too large.");
+      return;
+    }
 
     const a = document.createElement("a");
     a.href = dataUrl;
@@ -3635,16 +3704,11 @@ export class CanvasController {
 
   /** Discard an in-progress single-finger stroke/transform (a finger became a gesture). */
   private abortActiveInteraction(): void {
-    // Discard any in-progress freehand stroke (a finger became a gesture).
-    this.freehand.cancel();
     this.canvas.isDrawingMode = false;
     this.cancelFabricTransform();
-    this.fingerPan = null;
-    if (this.draft) {
-      this.canvas.remove(this.draft);
-      this.draft = null;
-    }
-    this.drawing = false;
+    // Drop freehand/draft/lasso/guides/anchors so a two-finger gesture over an
+    // active drag never leaves a stuck overlay behind.
+    this.resetTransientInteraction();
     this.canvas.requestRenderAll();
   }
 
