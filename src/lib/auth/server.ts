@@ -1,17 +1,18 @@
 // Server-side Supabase client for the OAuth / magic-link callback route.
 // Uses @supabase/ssr's cookie-based server client (the recommended Next.js App
-// Router pattern) so sessions live in secure httpOnly cookies, not client state.
-// Returns null when Supabase isn't configured.
+// Router pattern): session state lives in cookies managed by the SSR
+// integration, not in tokens we hand-store in localStorage. Returns null when
+// Supabase isn't configured.
 
 import { createServerClient } from "@supabase/ssr";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
-import { isSupabaseConfigured, supabaseAnonKey, supabaseUrl } from "./config";
+import { isSupabaseConfigured, supabasePublishableKey, supabaseUrl } from "./config";
 
 export async function createServerSupabase(): Promise<SupabaseClient | null> {
   if (!isSupabaseConfigured()) return null;
   const cookieStore = await cookies();
-  return createServerClient(supabaseUrl()!, supabaseAnonKey()!, {
+  return createServerClient(supabaseUrl()!, supabasePublishableKey()!, {
     cookies: {
       getAll() {
         return cookieStore.getAll();

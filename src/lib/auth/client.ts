@@ -7,7 +7,7 @@
 
 import { createBrowserClient } from "@supabase/ssr";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
-import { isSupabaseConfigured, supabaseAnonKey, supabaseUrl } from "./config";
+import { isSupabaseConfigured, supabasePublishableKey, supabaseUrl } from "./config";
 import type { AuthResult, AuthUser } from "./types";
 
 let cached: SupabaseClient | null = null;
@@ -16,7 +16,7 @@ let cached: SupabaseClient | null = null;
 export function getBrowserSupabase(): SupabaseClient | null {
   if (!isSupabaseConfigured()) return null;
   if (!cached) {
-    cached = createBrowserClient(supabaseUrl()!, supabaseAnonKey()!);
+    cached = createBrowserClient(supabaseUrl()!, supabasePublishableKey()!);
   }
   return cached;
 }
