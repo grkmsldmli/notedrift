@@ -395,6 +395,9 @@ export class CanvasController {
     connectors: Connector[];
   } | null = null;
 
+  // Tear-down hook for the active devicePixelRatio media-query listener.
+  private dprCleanup: (() => void) | null = null;
+
   // Autosave
   private persistTimer: ReturnType<typeof setTimeout> | null = null;
   private persistPending = false;
@@ -431,6 +434,7 @@ export class CanvasController {
     this.configureBrush();
 
     this.resize();
+    this.watchDevicePixelRatio();
     this.setCanvasStyle(style);
     this.wireEvents();
     this.attachTouchHandlers();
@@ -449,10 +453,46 @@ export class CanvasController {
     const w = this.paperEl.clientWidth;
     const h = this.paperEl.clientHeight;
     if (w > 0 && h > 0) {
+      this.syncDevicePixelRatio();
       this.canvas.setDimensions({ width: w, height: h });
       this.updateGrid();
       this.emit();
     }
+  }
+
+  /** Match Fabric's retina backing store to the CURRENT devicePixelRatio. Fabric
+   *  caches config.devicePixelRatio at module load, so a DPR that changes later —
+   *  browser zoom, dragging the window between monitors of different density, or
+   *  a value that was wrong at hydration time — would otherwise leave the canvas
+   *  rendering at a stale (usually lower) resolution: blurry text/ink until a
+   *  reload. Re-sync before every (re)size so the backing store stays crisp. */
+  private syncDevicePixelRatio(): void {
+    if (typeof window === "undefined") return;
+    const dpr = window.devicePixelRatio || 1;
+    if (fabric.config.devicePixelRatio !== dpr) {
+      fabric.config.devicePixelRatio = dpr;
+    }
+  }
+
+  /** Re-render at the right density when the DPR itself changes — which a plain
+   *  ResizeObserver doesn't reliably catch. A media query on the current dppx
+   *  fires once when it stops matching; we resize (re-syncing the backing store)
+   *  and re-arm for the new ratio. */
+  private watchDevicePixelRatio(): void {
+    if (
+      typeof window === "undefined" ||
+      typeof window.matchMedia !== "function"
+    ) {
+      return;
+    }
+    const dpr = window.devicePixelRatio || 1;
+    const mql = window.matchMedia(`(resolution: ${dpr}dppx)`);
+    const onChange = (): void => {
+      this.resize();
+      this.watchDevicePixelRatio(); // re-arm for the new ratio
+    };
+    mql.addEventListener("change", onChange, { once: true });
+    this.dprCleanup = () => mql.removeEventListener("change", onChange);
   }
 
   /* --------------------------- virtual keyboard --------------------------- */
@@ -531,6 +571,8 @@ export class CanvasController {
   dispose(): void {
     this.disposed = true;
     this.detachTouchHandlers();
+    this.dprCleanup?.();
+    this.dprCleanup = null;
     if (typeof window !== "undefined") {
       window.removeEventListener("keydown", this.onModKeyChange);
       window.removeEventListener("keyup", this.onModKeyChange);
