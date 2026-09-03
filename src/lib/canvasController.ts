@@ -247,6 +247,10 @@ const ANCHOR_HIT_TOUCH = 26;
 /** How far outside an object's edge the connection anchors sit, so they don't
  *  collide with Fabric's mid-edge resize handles. */
 const ANCHOR_OFFSET = 14;
+/** Screen-px band just inside an object's edge where hovering reveals its
+ *  connection anchors — "connector intent". Hovering deep in the interior of a
+ *  large object shows nothing (its Fabric controls are enough). */
+const ANCHOR_EDGE_BAND = 22;
 
 const ndId = (o: fabric.FabricObject): string | undefined => (o as NdObj).ndId;
 const ndRole = (o: fabric.FabricObject): string | undefined => (o as NdObj).ndRole;
@@ -937,12 +941,48 @@ export class CanvasController {
   }
 
   private currentAnchorHost(): fabric.FabricObject | null {
-    if (this.anchorHost && isConnectable(this.anchorHost) && !isLocked(this.anchorHost))
-      return this.anchorHost;
-    const a = this.canvas.getActiveObject();
-    if (a && isConnectable(a) && !isLocked(a) && this.canvas.getActiveObjects().length === 1)
-      return a;
+    // Connector anchors are shown ONLY for a live edge-hover (`anchorHost`) —
+    // never merely because an object is selected (selection shows Fabric's own
+    // resize/rotate controls), never while editing text, and never mid-transform.
+    if (this.isEditing() || this.interacting) return null;
+    const h = this.anchorHost;
+    if (h && isConnectable(h) && !isLocked(h) && this.canvas.contains(h)) return h;
     return null;
+  }
+
+  /** Is the pointer within a connectable's "connect zone" — a band just inside
+   *  its edge (connector intent) or out to where its offset anchors sit? Used so
+   *  anchors reveal on edge-hover and stay reachable while the pointer moves onto
+   *  the anchors (which sit just outside the object). */
+  private nearConnectZone(host: fabric.FabricObject, scenePt: Pt): boolean {
+    host.setCoords();
+    const cs = host.getCoords();
+    const xs = cs.map((c) => c.x);
+    const ys = cs.map((c) => c.y);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+    const z = this.canvas.getZoom() || 1;
+    const innerBand = ANCHOR_EDGE_BAND / z;
+    const outerReach = (ANCHOR_OFFSET + ANCHOR_HIT) / z;
+    const inside =
+      scenePt.x >= minX &&
+      scenePt.x <= maxX &&
+      scenePt.y >= minY &&
+      scenePt.y <= maxY;
+    if (inside) {
+      const d = Math.min(
+        scenePt.x - minX,
+        maxX - scenePt.x,
+        scenePt.y - minY,
+        maxY - scenePt.y,
+      );
+      return d <= innerBand;
+    }
+    const cx = Math.max(minX, Math.min(maxX, scenePt.x));
+    const cy = Math.max(minY, Math.min(maxY, scenePt.y));
+    return Math.hypot(scenePt.x - cx, scenePt.y - cy) <= outerReach;
   }
 
   private addConnector(
@@ -3733,6 +3773,8 @@ export class CanvasController {
     });
     el.addEventListener("pointerup", this.onDomPointerUp, { capture: true });
     el.addEventListener("pointercancel", this.onDomPointerUp, { capture: true });
+    // Hide hover anchors the instant the pointer leaves the canvas — no stale circles.
+    el.addEventListener("pointerleave", this.onDomPointerLeave);
   }
 
   private detachTouchHandlers(): void {
@@ -3742,7 +3784,15 @@ export class CanvasController {
     el.removeEventListener("pointermove", this.onDomPointerMove, opts);
     el.removeEventListener("pointerup", this.onDomPointerUp, opts);
     el.removeEventListener("pointercancel", this.onDomPointerUp, opts);
+    el.removeEventListener("pointerleave", this.onDomPointerLeave);
   }
+
+  private onDomPointerLeave = (): void => {
+    if (this.anchorHost) {
+      this.anchorHost = null;
+      this.canvas.requestRenderAll();
+    }
+  };
 
   /** Discard an in-progress single-finger stroke/transform (a finger became a gesture). */
   private abortActiveInteraction(): void {
@@ -3943,6 +3993,11 @@ export class CanvasController {
       this.schedulePersist();
     });
     this.canvas.on("text:editing:entered", (opt) => {
+      // Editing shows zero connector anchors.
+      if (this.anchorHost) {
+        this.anchorHost = null;
+        this.canvas.requestRenderAll();
+      }
       // Keep the caret above the software keyboard when editing begins.
       void opt;
       if (this.keyboardInset > 0) this.ensureCaretVisible();
@@ -4191,10 +4246,27 @@ export class CanvasController {
       return;
     }
 
-    // Idle in select mode: track hovered connectable for its anchors.
-    if (this.tool === "select") {
-      const hovered = opt.target ?? null;
-      const host = hovered && isConnectable(hovered) ? hovered : null;
+    // Idle in select mode: reveal a connectable's 4 anchors only on edge-hover
+    // (connector intent) — never merely from selection, editing, or transforming.
+    if (this.tool === "select" && !this.interacting && !this.isEditing()) {
+      const scenePt = this.canvas.getScenePoint(opt.e);
+      const connectable = (o: fabric.FabricObject | null | undefined) =>
+        !!o && isConnectable(o) && !isLocked(o) && this.canvas.contains(o);
+      let host: fabric.FabricObject | null = null;
+      // Keep the current host while the pointer stays in its connect zone, so the
+      // anchors (drawn just outside the object) remain reachable even when
+      // opt.target goes null between the edge and the anchor.
+      if (connectable(this.anchorHost) && this.nearConnectZone(this.anchorHost!, scenePt)) {
+        host = this.anchorHost;
+      } else {
+        const t = opt.target ?? null;
+        if (connectable(t) && this.nearConnectZone(t!, scenePt)) host = t;
+      }
+      // Don't fight the object's own resize/rotate handle when hovering there.
+      if (host && host === this.canvas.getActiveObject()) {
+        const vp = this.canvas.getViewportPoint(opt.e);
+        if (this.pointerOnControl(host, vp)) host = null;
+      }
       if (host !== this.anchorHost) {
         this.anchorHost = host;
         this.canvas.requestRenderAll();
