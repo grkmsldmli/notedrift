@@ -353,8 +353,8 @@ export const Toolbar = memo(function Toolbar({
   };
 
   return (
-    <div className="absolute left-4 top-1/2 z-20 -translate-y-1/2">
-      <div className="flex flex-col items-center gap-1 rounded-2xl border border-nd-border bg-nd-surface/95 p-1.5 shadow-xl backdrop-blur">
+    <div className="absolute left-4 top-1/2 z-20 flex max-h-[calc(100%-1.25rem)] -translate-y-1/2 flex-col">
+      <div className="nd-rail flex min-h-0 flex-col items-center gap-1 rounded-2xl border border-nd-border bg-nd-surface/95 p-1.5 shadow-xl backdrop-blur">
         <IconButton
           icon={<MousePointer2 size={ICON} />}
           label="Select  (V)"
