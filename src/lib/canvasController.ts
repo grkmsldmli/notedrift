@@ -24,6 +24,12 @@ import {
   GRID_COLOR,
   GRID_LINE_COLOR,
   GRID_SIZE,
+  PAPER_ENG_COLOR,
+  PAPER_GRAPH_MAJOR,
+  PAPER_GRAPH_MINOR,
+  PAPER_GRAPH_MINOR_SIZE,
+  PAPER_RULE_COLOR,
+  PAPER_RULE_ROW,
   MAX_ZOOM,
   MIN_ZOOM,
   MINDMAP_GAP_X,
@@ -71,6 +77,7 @@ import type {
   DrawTool,
   DrawToolPrefs,
   EditorState,
+  EraserMode,
   ObjKind,
   SelectionInfo,
   StylePatch,
@@ -255,6 +262,13 @@ function isNodeBox(o: fabric.FabricObject | null | undefined): o is NodeBox {
   return !!o && ((o as { type?: string }).type ?? "").toLowerCase() === "nodebox";
 }
 
+/** A freehand stroke (current ink OR legacy PencilBrush) — any Path that is not
+ *  a tagged shape-path (cloud/database/document). Used by the stroke eraser. */
+function isFreehandStroke(o: fabric.FabricObject): boolean {
+  const t = ((o as { type?: string }).type ?? "").toLowerCase();
+  return t === "path" && !(o as { ndShape?: string }).ndShape;
+}
+
 /** A freehand ink stroke: a filled Path (fill set, no stroke) from the brush
  *  engine — distinct from a legacy PencilBrush Path (stroke set, no fill). */
 function isInkPath(o: fabric.FabricObject): boolean {
@@ -308,6 +322,8 @@ export class CanvasController {
   private cur = { x: 0, y: 0 };
   private isPanning = false;
   private isErasing = false;
+  private erasedAny = false; // did the current eraser gesture remove anything?
+  private eraserMode: EraserMode = "object";
   private interacting = false;
   private spaceDown = false;
   private lastPan = { x: 0, y: 0 };
@@ -728,6 +744,7 @@ export class CanvasController {
       hasSelection: this.canvas.getActiveObjects().length > 0,
       selection: this.buildSelection(),
       cropping: this.cropState !== null,
+      eraserMode: this.eraserMode,
     };
   }
 
@@ -1548,8 +1565,10 @@ export class CanvasController {
   /* -------------------------------- tools --------------------------------- */
 
   setTool(tool: Tool): void {
-    // Leaving select for another tool ends any active crop (restoring the image).
+    // Leaving select for another tool ends any active crop (restoring the image)
+    // and commits any in-progress text edit — no stale mode carries over.
     if (this.cropState && tool !== "select") this.cancelCrop();
+    if (this.isEditing()) this.exitEditing();
     this.tool = tool;
     this.applyToolMode();
     this.emit();
@@ -1601,7 +1620,9 @@ export class CanvasController {
       case "text":
         return "text";
       case "eraser":
-        return "cell";
+        return brushCursor(26);
+      case "hand":
+        return "grab";
       default:
         return "crosshair";
     }
@@ -2347,31 +2368,146 @@ export class CanvasController {
     this.emit();
   }
 
+  /** Frame the current selection with comfortable padding. */
+  fitSelection(): void {
+    this.fitToObjects(this.canvas.getActiveObjects());
+  }
+
+  /** Frame all visible canvas objects with comfortable padding. */
+  fitContent(): void {
+    const objs = this.canvas.getObjects().filter((o) => o.visible !== false);
+    this.fitToObjects(objs);
+  }
+
+  /** Zoom+pan so the given objects fill the viewport (minus padding). No-op for
+   *  an empty set; clamps to the zoom limits and never jumps to extremes. */
+  private fitToObjects(objs: fabric.FabricObject[]): void {
+    if (objs.length === 0) return;
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const o of objs) {
+      const b = sceneBoundsOf(o);
+      minX = Math.min(minX, b.left);
+      minY = Math.min(minY, b.top);
+      maxX = Math.max(maxX, b.right);
+      maxY = Math.max(maxY, b.bottom);
+    }
+    const w = Math.max(1, maxX - minX);
+    const h = Math.max(1, maxY - minY);
+    const cw = this.canvas.getWidth();
+    const ch = this.canvas.getHeight();
+    const PAD = 64; // screen px
+    const z = clamp(
+      Math.min((cw - PAD * 2) / w, (ch - PAD * 2) / h),
+      MIN_ZOOM,
+      MAX_ZOOM,
+    );
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+    this.canvas.setZoom(z);
+    const vpt = this.canvas.viewportTransform;
+    vpt[4] = cw / 2 - cx * z;
+    vpt[5] = ch / 2 - cy * z;
+    this.canvas.setViewportTransform(vpt);
+    this.keyboardPan = 0;
+    this.updateGrid();
+    this.updateBrushCursor();
+    this.emit();
+  }
+
+  /* --------------------------------- eraser ------------------------------- */
+
+  setEraserMode(mode: EraserMode): void {
+    this.eraserMode = mode;
+    this.emit();
+  }
+
+  getEraserMode(): EraserMode {
+    return this.eraserMode;
+  }
+
+  /** Erase one object under the eraser: skips locked objects; in "stroke" mode
+   *  only removes freehand strokes (never images/shapes/smart connectors); in
+   *  "object" mode removes the whole object and cascades its connectors. */
+  private eraseObject(o: fabric.FabricObject): void {
+    if (isLocked(o)) return;
+    if (this.eraserMode === "stroke" && !isFreehandStroke(o)) return;
+    const ids = this.eraserMode === "object" ? this.allIdsIn(o) : [];
+    this.canvas.remove(o);
+    this.erasedAny = true;
+    if (ids.length) {
+      const idset = new Set(ids);
+      for (const c of this.connectors()) {
+        if (
+          (c.sourceId && idset.has(c.sourceId)) ||
+          (c.targetId && idset.has(c.targetId))
+        ) {
+          this.canvas.remove(c);
+        }
+      }
+    }
+  }
+
   /* --------------------------- canvas appearance -------------------------- */
 
   setCanvasStyle(style: CanvasStyle): void {
     this.canvasStyle = style;
     const el = this.paperEl;
-    if (style === "blank") {
-      el.style.backgroundImage = "none";
-    } else if (style === "dots") {
-      el.style.backgroundImage = `radial-gradient(circle, ${GRID_COLOR} 1.3px, transparent 1.3px)`;
-    } else {
-      el.style.backgroundImage =
+    // Each style is a lightweight CSS gradient (never Fabric objects). `spacings`
+    // holds one base cell size per gradient layer, scaled by zoom in updateGrid.
+    let image = "none";
+    let spacings: number[] = [];
+    if (style === "dots") {
+      image = `radial-gradient(circle, ${GRID_COLOR} 1.3px, transparent 1.3px)`;
+      spacings = [GRID_SIZE];
+    } else if (style === "grid") {
+      image =
         `linear-gradient(to right, ${GRID_LINE_COLOR} 1px, transparent 1px), ` +
         `linear-gradient(to bottom, ${GRID_LINE_COLOR} 1px, transparent 1px)`;
+      spacings = [GRID_SIZE, GRID_SIZE];
+    } else if (style === "lines") {
+      image = `linear-gradient(to bottom, ${PAPER_RULE_COLOR} 1px, transparent 1px)`;
+      spacings = [PAPER_RULE_ROW];
+    } else if (style === "graph") {
+      const m = PAPER_GRAPH_MINOR_SIZE;
+      image =
+        `linear-gradient(to right, ${PAPER_GRAPH_MAJOR} 1px, transparent 1px), ` +
+        `linear-gradient(to bottom, ${PAPER_GRAPH_MAJOR} 1px, transparent 1px), ` +
+        `linear-gradient(to right, ${PAPER_GRAPH_MINOR} 1px, transparent 1px), ` +
+        `linear-gradient(to bottom, ${PAPER_GRAPH_MINOR} 1px, transparent 1px)`;
+      spacings = [m * 5, m * 5, m, m];
+    } else if (style === "engineering") {
+      const m = PAPER_GRAPH_MINOR_SIZE;
+      image =
+        `linear-gradient(to right, ${PAPER_ENG_COLOR} 1.1px, transparent 1.1px), ` +
+        `linear-gradient(to bottom, ${PAPER_ENG_COLOR} 1.1px, transparent 1.1px), ` +
+        `linear-gradient(to right, ${PAPER_ENG_COLOR} 0.5px, transparent 0.5px), ` +
+        `linear-gradient(to bottom, ${PAPER_ENG_COLOR} 0.5px, transparent 0.5px)`;
+      spacings = [m * 5, m * 5, m, m];
     }
+    el.style.backgroundImage = image;
+    this.paperSpacings = spacings;
     this.updateGrid();
     this.emit();
   }
 
+  private paperSpacings: number[] = [GRID_SIZE];
+
   private updateGrid(): void {
-    if (this.canvasStyle === "blank") return;
+    if (this.canvasStyle === "blank" || this.paperSpacings.length === 0) return;
     const vpt = this.canvas.viewportTransform;
     const zoom = this.canvas.getZoom();
-    const size = GRID_SIZE * zoom;
-    this.paperEl.style.backgroundSize = `${size}px ${size}px`;
-    this.paperEl.style.backgroundPosition = `${vpt[4]}px ${vpt[5]}px`;
+    this.paperEl.style.backgroundSize = this.paperSpacings
+      .map((s) => {
+        const px = s * zoom;
+        return `${px}px ${px}px`;
+      })
+      .join(", ");
+    this.paperEl.style.backgroundPosition = this.paperSpacings
+      .map(() => `${vpt[4]}px ${vpt[5]}px`)
+      .join(", ");
   }
 
   /* ------------------------------ selection ------------------------------- */
@@ -3796,7 +3932,7 @@ export class CanvasController {
   private onMouseDown = (opt: PointerInfo): void => {
     const e = opt.e as MouseEvent;
 
-    if (this.spaceDown || e.button === 1) {
+    if (this.spaceDown || this.tool === "hand" || e.button === 1) {
       this.isPanning = true;
       this.lastPan = { x: e.clientX, y: e.clientY };
       this.canvas.setCursor("grabbing");
@@ -3815,7 +3951,8 @@ export class CanvasController {
 
     if (this.tool === "eraser") {
       this.isErasing = true;
-      if (opt.target) this.canvas.remove(opt.target);
+      this.erasedAny = false;
+      if (opt.target) this.eraseObject(opt.target);
       return;
     }
 
@@ -3909,7 +4046,7 @@ export class CanvasController {
 
     if (this.isErasing) {
       const target = this.canvas.findTarget(opt.e)?.target;
-      if (target) this.canvas.remove(target);
+      if (target) this.eraseObject(target);
       return;
     }
 
@@ -3999,8 +4136,14 @@ export class CanvasController {
 
     if (this.isErasing) {
       this.isErasing = false;
-      this.recordHistory();
-      this.schedulePersist();
+      // One continuous gesture = one undo; record only if something was removed.
+      if (this.erasedAny) {
+        this.applyCollapseVisibility();
+        this.canvas.requestRenderAll();
+        this.recordHistory();
+        this.schedulePersist();
+      }
+      this.erasedAny = false;
       return;
     }
 

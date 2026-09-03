@@ -1,17 +1,31 @@
 "use client";
 
 import { memo, useState } from "react";
-import { Check, Grid3x3, Grip, Minus, Plus, Square } from "lucide-react";
+import {
+  Check,
+  Grid2x2,
+  Grid3x3,
+  Grip,
+  Maximize,
+  Minus,
+  Plus,
+  Ruler,
+  ScanSearch,
+  Square,
+} from "lucide-react";
 import type { CanvasStyle } from "@/lib/types";
 
 interface ZoomControlsProps {
   zoom: number;
   canvasStyle: CanvasStyle;
+  hasSelection: boolean;
   /** Height (px) the software keyboard covers, so the controls lift above it. */
   keyboardInset?: number;
   onZoomIn: () => void;
   onZoomOut: () => void;
   onReset: () => void;
+  onFitContent: () => void;
+  onFitSelection: () => void;
   onSetStyle: (style: CanvasStyle) => void;
 }
 
@@ -19,18 +33,25 @@ const STYLES: { id: CanvasStyle; label: string; icon: React.ReactNode }[] = [
   { id: "blank", label: "Blank", icon: <Square size={15} /> },
   { id: "dots", label: "Dots", icon: <Grip size={15} /> },
   { id: "grid", label: "Grid", icon: <Grid3x3 size={15} /> },
+  { id: "lines", label: "Lines", icon: <Minus size={15} /> },
+  { id: "graph", label: "Graph", icon: <Grid2x2 size={15} /> },
+  { id: "engineering", label: "Engineering", icon: <Ruler size={15} /> },
 ];
 
 export const ZoomControls = memo(function ZoomControls({
   zoom,
   canvasStyle,
+  hasSelection,
   keyboardInset = 0,
   onZoomIn,
   onZoomOut,
   onReset,
+  onFitContent,
+  onFitSelection,
   onSetStyle,
 }: ZoomControlsProps) {
   const [open, setOpen] = useState(false);
+  const [zoomMenu, setZoomMenu] = useState(false);
   const pct = Math.round(zoom * 100);
   const current = STYLES.find((s) => s.id === canvasStyle) ?? STYLES[1];
 
@@ -49,14 +70,44 @@ export const ZoomControls = memo(function ZoomControls({
         <Minus size={16} />
       </button>
 
-      <button
-        type="button"
-        onClick={onReset}
-        title="Reset to 100%"
-        className="nd-hit min-w-14 rounded-lg px-2 py-1 text-center text-sm font-medium tabular-nums text-nd-text transition-colors hover:bg-white/5"
-      >
-        {pct}%
-      </button>
+      <div className="relative">
+        <button
+          type="button"
+          onClick={() => setZoomMenu((o) => !o)}
+          title="Zoom & fit"
+          className="nd-hit min-w-14 rounded-lg px-2 py-1 text-center text-sm font-medium tabular-nums text-nd-text transition-colors hover:bg-white/5"
+        >
+          {pct}%
+        </button>
+        {zoomMenu && (
+          <>
+            <div className="fixed inset-0 z-30" onClick={() => setZoomMenu(false)} />
+            <div className="absolute bottom-full left-0 z-40 mb-2 w-44 rounded-xl border border-nd-border bg-nd-surface p-1 shadow-2xl">
+              {(
+                [
+                  { label: "Fit content", icon: <Maximize size={15} />, run: onFitContent, disabled: false },
+                  { label: "Fit selection", icon: <ScanSearch size={15} />, run: onFitSelection, disabled: !hasSelection },
+                  { label: "Zoom to 100%", icon: <span className="text-xs font-semibold">1:1</span>, run: onReset, disabled: false },
+                ] as { label: string; icon: React.ReactNode; run: () => void; disabled: boolean }[]
+              ).map((it) => (
+                <button
+                  key={it.label}
+                  type="button"
+                  disabled={it.disabled}
+                  onClick={() => {
+                    it.run();
+                    setZoomMenu(false);
+                  }}
+                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-nd-text transition-colors hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+                >
+                  <span className="flex w-4 justify-center text-nd-muted">{it.icon}</span>
+                  <span className="flex-1 text-left">{it.label}</span>
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
 
       <button
         type="button"

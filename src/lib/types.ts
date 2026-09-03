@@ -35,6 +35,7 @@ export type Tool =
   | "doublearrow"
   | "note"
   | "lasso"
+  | "hand"
   | "eraser";
 
 /** Arrowhead style for a line end. */
@@ -56,7 +57,42 @@ export type DrawTool =
 export const SHAPE_TOOLS: readonly Tool[] = ["rect", "ellipse", "line"];
 
 /** Background appearance of the canvas paper (persisted per page). */
-export type CanvasStyle = "blank" | "dots" | "grid";
+export type CanvasStyle =
+  | "blank"
+  | "dots"
+  | "grid"
+  | "lines"
+  | "graph"
+  | "engineering";
+
+/** Eraser behaviour (persisted, user-level). */
+export type EraserMode = "object" | "stroke";
+
+/** A pinnable slot on the left tool rail (Select is always shown separately). */
+export type RailSlot =
+  | "draw"
+  | "text"
+  | "shapes"
+  | "line"
+  | "note"
+  | "image"
+  | "eraser"
+  | "lasso"
+  | "hand";
+
+/** The default set of pinned rail slots — a calm, small default rail. */
+export const DEFAULT_RAIL_SLOTS: RailSlot[] = [
+  "draw",
+  "text",
+  "shapes",
+  "note",
+  "image",
+  "eraser",
+  "hand",
+];
+
+/** Hard cap so the rail never becomes a huge strip. */
+export const MAX_RAIL_SLOTS = 9;
 
 /** Freehand drawing stabilization level (persisted per drawing tool). */
 export type PenStabilization = "off" | "low" | "medium" | "high";
@@ -247,6 +283,8 @@ export interface EditorState {
   selection: SelectionInfo;
   /** Phase 1.6F — an image is being cropped (shows the crop bar, hides others). */
   cropping: boolean;
+  /** Phase 1.6G — active eraser behaviour. */
+  eraserMode: EraserMode;
 }
 
 /** Metadata for a single page, kept in localStorage (small, always-loaded). */

@@ -15,6 +15,7 @@ import {
   saveToolDefaults,
   setCurrentPageId,
   uid,
+  type Prefs,
 } from "@/lib/storage";
 import type {
   CanvasDoc,
@@ -22,11 +23,14 @@ import type {
   DrawTool,
   DrawToolPrefs,
   EditorState,
+  EraserMode,
   PageMeta,
+  RailSlot,
   StylePatch,
   Tool,
   ToolDefaults,
 } from "@/lib/types";
+import { DEFAULT_RAIL_SLOTS, MAX_RAIL_SLOTS } from "@/lib/types";
 import { DRAW_TOOLS } from "@/lib/brush/materials";
 import { ensureCanvasFonts } from "@/lib/fonts";
 import { Toolbar } from "./Toolbar";
@@ -47,11 +51,13 @@ const INITIAL_STATE: EditorState = {
   hasSelection: false,
   selection: { kind: "none", count: 0, rect: null },
   cropping: false,
+  eraserMode: "object",
 };
 
 const TOOL_KEYS: Record<string, Tool> = {
   v: "select",
   q: "lasso",
+  h: "hand",
   p: "pen",
   t: "text",
   r: "rect",
@@ -93,7 +99,18 @@ export default function Editor() {
   const [paperSize, setPaperSize] = useState({ width: 0, height: 0 });
   const [keyboardInset, setKeyboardInset] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
+  const [pinnedSlots, setPinnedSlots] = useState<RailSlot[]>(DEFAULT_RAIL_SLOTS);
   const [ready, setReady] = useState(false);
+  const prefsRef = useRef<Prefs>({
+    defaultStyle: "dots",
+    eraserMode: "object",
+    pinnedSlots: DEFAULT_RAIL_SLOTS,
+  });
+  const updatePrefs = useCallback((patch: Partial<Prefs>) => {
+    const next = { ...prefsRef.current, ...patch };
+    prefsRef.current = next;
+    savePrefs(next);
+  }, []);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const showNotice = useCallback((message: string) => {
     setNotice(message);
@@ -130,6 +147,8 @@ export default function Editor() {
     let list = loadPages();
     let curId = getCurrentPageId();
     const prefs = loadPrefs();
+    prefsRef.current = prefs;
+    setPinnedSlots(prefs.pinnedSlots);
     const defaults = loadToolDefaults();
     setToolDefaults(defaults);
 
@@ -159,6 +178,7 @@ export default function Editor() {
       defaults,
     );
     controllerRef.current = controller;
+    controller.setEraserMode(prefs.eraserMode);
 
     // Load the handwriting font BEFORE the doc so a saved Patrick-Hand box is
     // measured with the right metrics (no first-paint reflow); re-measure once
@@ -468,6 +488,29 @@ export default function Editor() {
     (tool: Tool) => controllerRef.current?.setTool(tool),
     [],
   );
+  const onSetEraserMode = useCallback(
+    (mode: EraserMode) => {
+      controllerRef.current?.setEraserMode(mode);
+      updatePrefs({ eraserMode: mode });
+    },
+    [updatePrefs],
+  );
+  const onTogglePin = useCallback(
+    (slot: RailSlot) => {
+      setPinnedSlots((prev) => {
+        const next = prev.includes(slot)
+          ? prev.filter((s) => s !== slot)
+          : [...prev, slot].slice(0, MAX_RAIL_SLOTS);
+        // Never leave the rail empty.
+        const safe = next.length > 0 ? next : prev;
+        updatePrefs({ pinnedSlots: safe });
+        return safe;
+      });
+    },
+    [updatePrefs],
+  );
+  const onFitContent = useCallback(() => controllerRef.current?.fitContent(), []);
+  const onFitSelection = useCallback(() => controllerRef.current?.fitSelection(), []);
   const onPickImage = useCallback(() => fileInputRef.current?.click(), []);
   const onFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files ? Array.from(e.target.files) : [];
@@ -492,13 +535,13 @@ export default function Editor() {
     const id = currentIdRef.current;
     if (!id) return;
     controllerRef.current?.setCanvasStyle(style);
-    savePrefs({ defaultStyle: style });
+    updatePrefs({ defaultStyle: style });
     setPages((prev) => {
       const next = prev.map((p) => (p.id === id ? { ...p, style } : p));
       savePages(next);
       return next;
     });
-  }, []);
+  }, [updatePrefs]);
 
   const applyDefaults = useCallback((patch: Partial<ToolDefaults>, commit = true) => {
     setToolDefaults((prev) => {
@@ -680,8 +723,12 @@ export default function Editor() {
 
         <Toolbar
           tool={state.tool}
+          pinnedSlots={pinnedSlots}
+          eraserMode={state.eraserMode}
           onSelectTool={onSelectTool}
           onPickImage={onPickImage}
+          onSetEraserMode={onSetEraserMode}
+          onTogglePin={onTogglePin}
         />
 
         {toolDefaults && (
@@ -740,10 +787,13 @@ export default function Editor() {
         <ZoomControls
           zoom={state.zoom}
           canvasStyle={state.canvasStyle}
+          hasSelection={state.hasSelection}
           keyboardInset={keyboardInset}
           onZoomIn={onZoomIn}
           onZoomOut={onZoomOut}
           onReset={onReset}
+          onFitContent={onFitContent}
+          onFitSelection={onFitSelection}
           onSetStyle={onSetPageStyle}
         />
 

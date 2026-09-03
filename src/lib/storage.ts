@@ -12,12 +12,20 @@ import type {
   CanvasStyle,
   DrawTool,
   DrawToolPrefs,
+  EraserMode,
   PageMeta,
   PenStabilization,
+  RailSlot,
   ToolDefaults,
 } from "./types";
+import { DEFAULT_RAIL_SLOTS, MAX_RAIL_SLOTS } from "./types";
 import { DRAW_TOOLS, defaultPrefsFor } from "./brush/materials";
 import { FONT_STACKS } from "./fonts";
+
+const RAIL_SLOT_SET = new Set<RailSlot>(DEFAULT_RAIL_SLOTS.concat([
+  "line",
+  "lasso",
+]));
 
 const DB_NAME = "notedrift";
 const STORE = "pages";
@@ -30,9 +38,28 @@ const PREFS_KEY = "notedrift:prefs";
 export interface Prefs {
   /** Canvas style applied to newly created pages. */
   defaultStyle: CanvasStyle;
+  /** Remembered eraser behaviour. */
+  eraserMode: EraserMode;
+  /** Pinned tool-rail slots, in display order. */
+  pinnedSlots: RailSlot[];
 }
 
-const DEFAULT_PREFS: Prefs = { defaultStyle: "dots" };
+const DEFAULT_PREFS: Prefs = {
+  defaultStyle: "dots",
+  eraserMode: "object",
+  pinnedSlots: [...DEFAULT_RAIL_SLOTS],
+};
+
+/** Sanitize a stored pinned-slots list: valid unique slots, capped. */
+function cleanPinnedSlots(raw: unknown): RailSlot[] {
+  if (!Array.isArray(raw)) return [...DEFAULT_RAIL_SLOTS];
+  const seen = new Set<RailSlot>();
+  for (const s of raw) {
+    if (RAIL_SLOT_SET.has(s as RailSlot)) seen.add(s as RailSlot);
+  }
+  const list = [...seen].slice(0, MAX_RAIL_SLOTS);
+  return list.length > 0 ? list : [...DEFAULT_RAIL_SLOTS];
+}
 
 /* ------------------------------- IndexedDB -------------------------------- */
 
@@ -160,7 +187,10 @@ export function setCurrentPageId(id: string): void {
 }
 
 export function loadPrefs(): Prefs {
-  return { ...DEFAULT_PREFS, ...readJSON<Partial<Prefs>>(PREFS_KEY, {}) };
+  const merged = { ...DEFAULT_PREFS, ...readJSON<Partial<Prefs>>(PREFS_KEY, {}) };
+  merged.pinnedSlots = cleanPinnedSlots(merged.pinnedSlots);
+  if (merged.eraserMode !== "stroke") merged.eraserMode = "object";
+  return merged;
 }
 
 export function savePrefs(prefs: Prefs): void {

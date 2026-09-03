@@ -18,6 +18,15 @@ export const CANVAS_FONT =
 export const GRID_COLOR = "#dbe0ec";
 export const GRID_LINE_COLOR = "#e8ebf2";
 
+/** Additional paper-background palette (Phase 1.6G). */
+export const PAPER_RULE_COLOR = "#e2e6ef"; // ruled (lined) paper rows
+export const PAPER_GRAPH_MINOR = "#eef1f7"; // graph paper minor lines
+export const PAPER_GRAPH_MAJOR = "#d7dce8"; // graph paper major lines
+export const PAPER_ENG_COLOR = "rgba(37, 99, 235, 0.11)"; // engineering grid (blue)
+/** Ruled-line row spacing (scene units) and graph-paper minor spacing. */
+export const PAPER_RULE_ROW = 34;
+export const PAPER_GRAPH_MINOR_SIZE = 12;
+
 export const COLORS = {
   /** Default drawing ink — dark, readable on white paper. */
   ink: "#20242e",

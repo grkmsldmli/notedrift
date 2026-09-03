@@ -36,6 +36,10 @@ export interface ToolDefinition {
   id: ToolId;
   label: string;
   category: ToolCategory;
+  /** Lucide icon name — resolved to a component by the Tool Library UI. */
+  icon?: string;
+  /** The pinnable rail slot this tool belongs to (its family). */
+  slot?: string;
   /** Present only for freehand drawing tools (Pen today). */
   brush?: BrushSpec;
   /** A one-shot action (e.g. opening the image picker) rather than a draw mode. */
