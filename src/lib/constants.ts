@@ -155,6 +155,8 @@ export const NOTEDRIFT_PROPS = [
   "ndInner",
   "startHead",
   "endHead",
+  // Phase 1.6D — object lock state.
+  "ndLocked",
 ];
 
 /** Stroke dash arrays (absolute px; strokeUniform keeps them constant on zoom). */

@@ -70,9 +70,13 @@ export function isConnectable(o: fabric.FabricObject): boolean {
 
 export function sceneBoundsOf(o: fabric.FabricObject) {
   o.setCoords();
-  const c = o.aCoords;
-  const xs = [c.tl.x, c.tr.x, c.br.x, c.bl.x];
-  const ys = [c.tl.y, c.tr.y, c.br.y, c.bl.y];
+  // getCoords() returns [tl, tr, br, bl] in the SCENE plane — canvas-space and,
+  // crucially, composed through any parent group's transform (unlike aCoords,
+  // which is group-local for nested objects). This makes connectors track nodes
+  // that live inside a Fabric group.
+  const [tl, tr, br, bl] = o.getCoords();
+  const xs = [tl.x, tr.x, br.x, bl.x];
+  const ys = [tl.y, tr.y, br.y, bl.y];
   const left = Math.min(...xs);
   const right = Math.max(...xs);
   const top = Math.min(...ys);

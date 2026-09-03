@@ -13,6 +13,7 @@ import {
   Hexagon,
   Highlighter,
   Image as ImageIcon,
+  Lasso,
   Minus,
   MousePointer2,
   Paintbrush,
@@ -176,6 +177,12 @@ export const Toolbar = memo(function Toolbar({
           label="Select  (V)"
           active={tool === "select"}
           onClick={() => onSelectTool("select")}
+        />
+        <IconButton
+          icon={<Lasso size={ICON} />}
+          label="Lasso select  (Q)"
+          active={tool === "lasso"}
+          onClick={() => onSelectTool("lasso")}
         />
 
         <Divider />

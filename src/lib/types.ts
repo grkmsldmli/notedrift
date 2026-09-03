@@ -34,6 +34,7 @@ export type Tool =
   | "arrow"
   | "doublearrow"
   | "note"
+  | "lasso"
   | "eraser";
 
 /** Arrowhead style for a line end. */
@@ -122,6 +123,19 @@ export interface SelectionInfo {
   isLine?: boolean;
   startHead?: ArrowHead;
   endHead?: ArrowHead;
+  // Phase 1.6D — multi-selection & organization.
+  /** ≥2 selected objects that can be combined into a Fabric group. */
+  canGroup?: boolean;
+  /** ≥2 movable (non-connector, non-locked) objects — alignment is available. */
+  canAlign?: boolean;
+  /** The single selection is a group that can be broken apart. */
+  canUngroup?: boolean;
+  /** The single selection is a Fabric group. */
+  isGroup?: boolean;
+  /** The selection (or single object) is locked — show Unlock instead of Lock. */
+  locked?: boolean;
+  /** ≥3 objects selected — distribution is available. */
+  canDistribute?: boolean;
 }
 
 /** Persisted preferences for a single drawing instrument. */

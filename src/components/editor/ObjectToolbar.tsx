@@ -3,8 +3,16 @@
 import { memo, useLayoutEffect, useRef, useState } from "react";
 import {
   AlignCenter,
+  AlignCenterHorizontal,
+  AlignCenterVertical,
+  AlignEndHorizontal,
+  AlignEndVertical,
+  AlignHorizontalDistributeCenter,
   AlignLeft,
   AlignRight,
+  AlignStartHorizontal,
+  AlignStartVertical,
+  AlignVerticalDistributeCenter,
   Bold,
   BoxSelect,
   ChevronsDown,
@@ -12,7 +20,10 @@ import {
   Copy,
   CopyPlus,
   CornerDownRight,
+  Group as GroupIcon,
   Layers,
+  Lock,
+  LayoutGrid,
   Maximize2,
   Minimize2,
   Minus,
@@ -23,6 +34,8 @@ import {
   Network,
   Plus,
   Trash2,
+  Ungroup as UngroupIcon,
+  Unlock,
 } from "lucide-react";
 import { FONT_SIZES, NOTE_COLORS, OUTLINE_WIDTHS, PALETTE } from "@/lib/constants";
 import type { SelectionInfo, StylePatch } from "@/lib/types";
@@ -32,6 +45,13 @@ import { OpacityControl, WidthControl } from "../ui/BrushControls";
 import { ArrowheadControl, DashPicker, Stepper } from "../ui/ShapeControls";
 
 export type LayerOp = "front" | "forward" | "backward" | "back";
+export type AlignEdge =
+  | "left"
+  | "hcenter"
+  | "right"
+  | "top"
+  | "vcenter"
+  | "bottom";
 
 interface ObjectToolbarProps {
   selection: SelectionInfo;
@@ -40,6 +60,12 @@ interface ObjectToolbarProps {
   onDuplicate: () => void;
   onDelete: () => void;
   onLayer: (op: LayerOp) => void;
+  onGroup: () => void;
+  onUngroup: () => void;
+  onLock: () => void;
+  onUnlock: () => void;
+  onAlign: (edge: AlignEdge) => void;
+  onDistribute: (axis: "h" | "v") => void;
   onAddChild: () => void;
   onAddSibling: () => void;
   onCollapseToggle: () => void;
@@ -71,6 +97,12 @@ export const ObjectToolbar = memo(function ObjectToolbar({
   onDuplicate,
   onDelete,
   onLayer,
+  onGroup,
+  onUngroup,
+  onLock,
+  onUnlock,
+  onAlign,
+  onDistribute,
   onAddChild,
   onAddSibling,
   onCollapseToggle,
@@ -80,6 +112,7 @@ export const ObjectToolbar = memo(function ObjectToolbar({
 }: ObjectToolbarProps) {
   const [layerOpen, setLayerOpen] = useState(false);
   const [mindOpen, setMindOpen] = useState(false);
+  const [alignOpen, setAlignOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState<{ left: number; top: number } | null>(null);
 
@@ -118,6 +151,16 @@ export const ObjectToolbar = memo(function ObjectToolbar({
   if (selection.kind === "none" || !selection.rect) return null;
 
   const { kind } = selection;
+  const locked = !!selection.locked;
+
+  const alignItems: { edge: AlignEdge; icon: React.ReactNode; label: string }[] = [
+    { edge: "left", icon: <AlignStartVertical size={16} />, label: "Align left" },
+    { edge: "hcenter", icon: <AlignCenterVertical size={16} />, label: "Align center" },
+    { edge: "right", icon: <AlignEndVertical size={16} />, label: "Align right" },
+    { edge: "top", icon: <AlignStartHorizontal size={16} />, label: "Align top" },
+    { edge: "vcenter", icon: <AlignCenterHorizontal size={16} />, label: "Align middle" },
+    { edge: "bottom", icon: <AlignEndHorizontal size={16} />, label: "Align bottom" },
+  ];
 
   const fontIdx = nearestIndex(selection.fontSize ?? 24);
   const decFont = () =>
@@ -126,6 +169,8 @@ export const ObjectToolbar = memo(function ObjectToolbar({
     onStyle({ fontSize: FONT_SIZES[Math.min(FONT_SIZES.length - 1, fontIdx + 1)] });
 
   const styleSection = () => {
+    // A user group has no single meaningful stroke/fill — show only org controls.
+    if (selection.isGroup) return null;
     if (kind === "shape") {
       // Fillable = any vector shape (incl. legacy rect/ellipse); false only for a
       // legacy arrow group. Shape-specific controls still key off shapeId.
@@ -435,6 +480,27 @@ export const ObjectToolbar = memo(function ObjectToolbar({
     return null;
   };
 
+  // A locked object: the only action is to unlock it.
+  if (locked) {
+    return (
+      <div
+        ref={ref}
+        className="pointer-events-auto absolute z-30"
+        style={box ? { left: box.left, top: box.top } : { left: -9999, top: -9999 }}
+      >
+        <div className="flex items-center gap-1 rounded-xl border border-nd-border bg-nd-surface/95 px-1.5 py-1 shadow-2xl backdrop-blur">
+          <span className="flex items-center gap-1.5 px-1.5 text-xs text-nd-muted">
+            <Lock size={13} /> Locked
+          </span>
+          <Divider />
+          <button type="button" className={iconBtn} title="Unlock" onClick={onUnlock}>
+            <Unlock size={15} />
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       ref={ref}
@@ -443,6 +509,93 @@ export const ObjectToolbar = memo(function ObjectToolbar({
     >
       <div className="flex items-center gap-1 rounded-xl border border-nd-border bg-nd-surface/95 px-1.5 py-1 shadow-2xl backdrop-blur">
         {styleSection()}
+
+        {selection.canAlign && (
+          <div className="relative">
+            <button
+              type="button"
+              className={[iconBtn, alignOpen ? "bg-white/10 text-nd-text" : ""].join(" ")}
+              title="Align & distribute"
+              onClick={() => setAlignOpen((o) => !o)}
+            >
+              <LayoutGrid size={15} />
+            </button>
+            {alignOpen && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setAlignOpen(false)} />
+                <div className="absolute left-0 top-full z-50 mt-1 w-40 rounded-lg border border-nd-border bg-nd-surface p-1.5 shadow-2xl">
+                  <div className="px-1 pb-1 text-[11px] font-medium uppercase tracking-wide text-nd-muted">
+                    Align
+                  </div>
+                  <div className="grid grid-cols-3 gap-1">
+                    {alignItems.map((it) => (
+                      <button
+                        key={it.edge}
+                        type="button"
+                        title={it.label}
+                        onClick={() => {
+                          onAlign(it.edge);
+                          setAlignOpen(false);
+                        }}
+                        className="flex h-8 items-center justify-center rounded-md text-nd-muted transition-colors hover:bg-white/5 hover:text-nd-text"
+                      >
+                        {it.icon}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="px-1 pb-1 pt-2 text-[11px] font-medium uppercase tracking-wide text-nd-muted">
+                    Distribute
+                  </div>
+                  <div className="grid grid-cols-2 gap-1">
+                    {(
+                      [
+                        { axis: "h", icon: <AlignHorizontalDistributeCenter size={16} />, label: "Distribute horizontally" },
+                        { axis: "v", icon: <AlignVerticalDistributeCenter size={16} />, label: "Distribute vertically" },
+                      ] as { axis: "h" | "v"; icon: React.ReactNode; label: string }[]
+                    ).map((it) => (
+                      <button
+                        key={it.axis}
+                        type="button"
+                        title={
+                          selection.canDistribute
+                            ? it.label
+                            : "Select 3 or more objects to distribute"
+                        }
+                        disabled={!selection.canDistribute}
+                        onClick={() => {
+                          onDistribute(it.axis);
+                          setAlignOpen(false);
+                        }}
+                        className="flex h-8 items-center justify-center rounded-md text-nd-muted transition-colors hover:bg-white/5 hover:text-nd-text disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent"
+                      >
+                        {it.icon}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {selection.canGroup && (
+          <button type="button" className={iconBtn} title="Group  (Ctrl G)" onClick={onGroup}>
+            <GroupIcon size={15} />
+          </button>
+        )}
+        {selection.canUngroup && (
+          <button
+            type="button"
+            className={iconBtn}
+            title="Ungroup  (Ctrl Shift G)"
+            onClick={onUngroup}
+          >
+            <UngroupIcon size={15} />
+          </button>
+        )}
+        <button type="button" className={iconBtn} title="Lock" onClick={onLock}>
+          <Lock size={15} />
+        </button>
 
         <button type="button" className={iconBtn} title="Duplicate  (Ctrl D)" onClick={onDuplicate}>
           <Copy size={15} />

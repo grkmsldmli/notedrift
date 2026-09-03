@@ -48,6 +48,7 @@ const INITIAL_STATE: EditorState = {
 
 const TOOL_KEYS: Record<string, Tool> = {
   v: "select",
+  q: "lasso",
   p: "pen",
   t: "text",
   r: "rect",
@@ -210,6 +211,10 @@ export default function Editor() {
         } else if (k === "a") {
           e.preventDefault();
           c.selectAllObjects();
+        } else if (k === "g") {
+          e.preventDefault();
+          if (e.shiftKey) c.ungroupSelection();
+          else c.groupSelection();
         } else if (e.key === "=" || e.key === "+") {
           e.preventDefault();
           c.zoomIn();
@@ -513,6 +518,25 @@ export default function Editor() {
     else if (op === "backward") c.sendBackward();
     else c.sendToBack();
   }, []);
+  const onGroup = useCallback(() => controllerRef.current?.groupSelection(), []);
+  const onUngroup = useCallback(
+    () => controllerRef.current?.ungroupSelection(),
+    [],
+  );
+  const onLock = useCallback(() => controllerRef.current?.lockSelection(), []);
+  const onUnlock = useCallback(
+    () => controllerRef.current?.unlockSelection(),
+    [],
+  );
+  const onAlign = useCallback(
+    (edge: "left" | "hcenter" | "right" | "top" | "vcenter" | "bottom") =>
+      controllerRef.current?.alignSelection(edge),
+    [],
+  );
+  const onDistribute = useCallback(
+    (axis: "h" | "v") => controllerRef.current?.distributeSelection(axis),
+    [],
+  );
 
   // Mind-map node actions (shared by the contextual toolbar and touch quick-add).
   const onAddChild = useCallback(() => controllerRef.current?.createChild(), []);
@@ -601,6 +625,12 @@ export default function Editor() {
           onDuplicate={onDuplicate}
           onDelete={onDeleteSel}
           onLayer={onLayer}
+          onGroup={onGroup}
+          onUngroup={onUngroup}
+          onLock={onLock}
+          onUnlock={onUnlock}
+          onAlign={onAlign}
+          onDistribute={onDistribute}
           onAddChild={onAddChild}
           onAddSibling={onAddSibling}
           onCollapseToggle={onCollapseToggle}

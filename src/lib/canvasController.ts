@@ -105,6 +105,22 @@ interface Guide {
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 const dist = (a: Pt, b: Pt) => Math.hypot(a.x - b.x, a.y - b.y);
 
+/** Even-odd ray-cast point-in-polygon test (scene coordinates). */
+function pointInPolygon(p: Pt, poly: Pt[]): boolean {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i].x;
+    const yi = poly[i].y;
+    const xj = poly[j].x;
+    const yj = poly[j].y;
+    const intersect =
+      yi > p.y !== yj > p.y &&
+      p.x < ((xj - xi) * (p.y - yi)) / (yj - yi || 1e-12) + xi;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
 /** A soft circular brush-size cursor (dark + dashed-white rings so it reads on
  *  any background), with the hotspot at its center. */
 function brushCursor(diameter: number): string {
@@ -130,6 +146,15 @@ const ANCHOR_OFFSET = 14;
 
 const ndId = (o: fabric.FabricObject): string | undefined => (o as NdObj).ndId;
 const ndRole = (o: fabric.FabricObject): string | undefined => (o as NdObj).ndRole;
+
+/** True when an object is locked (visible but non-interactive). */
+const isLocked = (o: fabric.FabricObject): boolean =>
+  (o as { ndLocked?: boolean }).ndLocked === true;
+
+/** True when a Fabric group was created by the user's Group action (as opposed
+ *  to a legacy arrow, which is also a fabric group but must never be ungrouped). */
+const isUserGroup = (o: fabric.FabricObject): o is fabric.Group =>
+  o instanceof fabric.Group && ndRole(o) === "group";
 
 /** True when the object is an editable mind-map node (NodeBox). */
 function isNodeBox(o: fabric.FabricObject | null | undefined): o is NodeBox {
@@ -193,6 +218,11 @@ export class CanvasController {
   private spaceDown = false;
   private lastPan = { x: 0, y: 0 };
   private activeGuides: Guide[] = [];
+
+  // Lasso select — a temporary freeform selection region (scene-space points).
+  // Never persisted, never part of history or export.
+  private lassoing = false;
+  private lassoPts: Pt[] = [];
 
   // Touch / pen gestures (multi-touch is handled at the DOM level; Fabric v6 has
   // no built-in pinch/two-finger pan).
@@ -409,12 +439,25 @@ export class CanvasController {
     const rect = this.interacting ? null : this.screenRectOf(active);
 
     if (objs.length > 1) {
+      const groupableCount = objs.filter(
+        (o) => ndRole(o) !== "connector" && !isLocked(o),
+      ).length;
+      const multi = {
+        count: objs.length,
+        rect,
+        canGroup: groupableCount >= 2,
+        canAlign: groupableCount >= 2,
+        // Align/distribute operate on movable objects only — connectors and
+        // locked objects are excluded, so gate on that count, not raw length.
+        canDistribute: groupableCount >= 3,
+        locked: objs.every(isLocked),
+      };
       const kinds = new Set(objs.map(kindOf));
       if (kinds.size === 1) {
         const k = [...kinds][0];
-        return { kind: k, count: objs.length, rect, ...this.styleOf(objs[0], k) };
+        return { kind: k, ...multi, ...this.styleOf(objs[0], k) };
       }
-      return { kind: "mixed", count: objs.length, rect };
+      return { kind: "mixed", ...multi };
     }
 
     const k = kindOf(active);
@@ -424,13 +467,19 @@ export class CanvasController {
       rect,
       ...this.styleOf(active, k),
     };
+    if (isUserGroup(active)) {
+      info.isGroup = true;
+      info.canUngroup = true;
+    }
+    if (isLocked(active)) info.locked = true;
     if (k === "path" && isInkPath(active)) {
       info.isInk = true;
       info.opacity = active.opacity ?? 1;
     }
     // Mind-map extras for a single node (skip during drags — the toolbar is
-    // hidden then anyway, and the traversal is wasted work).
-    if (!this.interacting && isNodeBox(active)) {
+    // hidden then anyway, and the traversal is wasted work; and skip when the
+    // node is locked, so no quick-add / anchors appear on it).
+    if (!this.interacting && isNodeBox(active) && !isLocked(active)) {
       const id = ndId(active);
       if (id) {
         const map = this.objByIdMap();
@@ -498,12 +547,20 @@ export class CanvasController {
 
   /* -------------------------- relationship model -------------------------- */
 
+  /** Map every connectable object by ndId — recursing INTO groups, so a shape
+   *  nested in a Fabric.Group is still resolvable by its connectors (which stay
+   *  top-level relationship objects). */
   private objByIdMap(): Map<string, fabric.FabricObject> {
     const m = new Map<string, fabric.FabricObject>();
-    for (const o of this.canvas.getObjects()) {
-      const id = ndId(o);
-      if (id && ndRole(o) !== "connector") m.set(id, o);
-    }
+    const visit = (objs: fabric.FabricObject[]): void => {
+      for (const o of objs) {
+        if (ndRole(o) === "connector") continue;
+        const id = ndId(o);
+        if (id) m.set(id, o);
+        if (o instanceof fabric.Group) visit(o.getObjects());
+      }
+    };
+    visit(this.canvas.getObjects());
     return m;
   }
 
@@ -532,13 +589,27 @@ export class CanvasController {
   }
 
   private movedIds(target: fabric.FabricObject): Set<string> {
-    const objs =
-      target instanceof fabric.ActiveSelection ? target.getObjects() : [target];
     const ids = new Set<string>();
-    for (const o of objs) {
+    // Recurse into groups: a connector bound to a node nested in a moving group
+    // must still be recomputed as the group drags.
+    const visit = (o: fabric.FabricObject): void => {
+      if (ndRole(o) === "connector") return;
       const id = ndId(o);
       if (id) ids.add(id);
-    }
+      if (o instanceof fabric.Group) o.getObjects().forEach(visit);
+    };
+    if (target instanceof fabric.ActiveSelection) target.getObjects().forEach(visit);
+    else visit(target);
+    return ids;
+  }
+
+  /** All connectable ndIds contained in an object, recursing into groups. */
+  private allIdsIn(o: fabric.FabricObject): string[] {
+    const ids: string[] = [];
+    const id = ndId(o);
+    if (id && ndRole(o) !== "connector") ids.push(id);
+    if (o instanceof fabric.Group)
+      for (const c of o.getObjects()) ids.push(...this.allIdsIn(c));
     return ids;
   }
 
@@ -567,9 +638,11 @@ export class CanvasController {
   }
 
   private currentAnchorHost(): fabric.FabricObject | null {
-    if (this.anchorHost && isConnectable(this.anchorHost)) return this.anchorHost;
+    if (this.anchorHost && isConnectable(this.anchorHost) && !isLocked(this.anchorHost))
+      return this.anchorHost;
     const a = this.canvas.getActiveObject();
-    if (a && isConnectable(a) && this.canvas.getActiveObjects().length === 1) return a;
+    if (a && isConnectable(a) && !isLocked(a) && this.canvas.getActiveObjects().length === 1)
+      return a;
     return null;
   }
 
@@ -1129,7 +1202,15 @@ export class CanvasController {
     const sel = this.toolSelectable();
     const evt = this.toolEvented();
     for (const [id, node] of map) {
+      // Nested group children are managed by their group, not by collapse.
+      if (node.group) continue;
       const vis = !hidden.has(id);
+      // Locked objects keep their own interactivity (always non-interactive);
+      // collapse may still hide/show them but never re-enables selection.
+      if (isLocked(node)) {
+        if (node.visible !== vis) node.set({ visible: vis });
+        continue;
+      }
       if (node.visible !== vis || (node.selectable !== (vis && sel))) {
         node.set({ visible: vis, selectable: vis && sel, evented: vis && evt });
       }
@@ -1311,6 +1392,23 @@ export class CanvasController {
     const selectable = this.tool === "select";
     const evented = this.tool === "select" || this.tool === "eraser";
     c.forEachObject((o) => {
+      // Locked objects are always visible but never interactive (unlock is via
+      // the lock badge / alt-click, which re-enable them explicitly). Re-apply
+      // the full transform locks too — they aren't serialized, so this restores
+      // them after a reload as defense-in-depth.
+      if (isLocked(o)) {
+        o.set({
+          selectable: false,
+          evented: false,
+          lockMovementX: true,
+          lockMovementY: true,
+          lockScalingX: true,
+          lockScalingY: true,
+          lockRotation: true,
+          hasControls: false,
+        });
+        return;
+      }
       // Collapsed (hidden) objects stay non-interactive across tool changes.
       const vis = o.visible !== false;
       o.selectable = selectable && vis;
@@ -1438,7 +1536,9 @@ export class CanvasController {
         connectors: active.filter((o) => ndRole(o) === "connector") as Connector[],
       };
     }
-    const nodeIds = new Set(nodes.map(ndId).filter(Boolean) as string[]);
+    // Include ids nested inside selected groups, so connectors internal to a
+    // group are carried along when the group is duplicated/copied.
+    const nodeIds = new Set(nodes.flatMap((n) => this.allIdsIn(n)));
     const connectors = this.connectors().filter(
       (c) =>
         !!c.sourceId &&
@@ -1465,6 +1565,25 @@ export class CanvasController {
       if (old) idMap.set(old, newId);
       (cl as NdObj).ndId = newId;
       (cl as NdObj).ndRole = ndRole(n);
+      // Duplicating a group: give every nested connectable child a fresh id and
+      // record the mapping, so internal connectors rewire to the copies (never
+      // to the originals) and ids stay globally unique. Recurse into sub-groups
+      // so a group-of-groups remaps at every depth.
+      if (cl instanceof fabric.Group) {
+        const remap = (g: fabric.Group): void => {
+          for (const child of g.getObjects()) {
+            if (ndRole(child) === "connector") continue;
+            const oldChild = ndId(child);
+            if (oldChild) {
+              const newChild = nid();
+              idMap.set(oldChild, newChild);
+              (child as NdObj).ndId = newChild;
+            }
+            if (child instanceof fabric.Group) remap(child);
+          }
+        };
+        remap(cl);
+      }
       cl.set({
         left: (cl.left ?? 0) + dx,
         top: (cl.top ?? 0) + dy,
@@ -1532,7 +1651,10 @@ export class CanvasController {
 
   selectAllObjects(): void {
     this.setTool("select");
-    const objs = this.canvas.getObjects();
+    // Exclude locked objects — they must never enter a selection (a locked
+    // object folded into an ActiveSelection could be dragged with the group,
+    // since Fabric ignores per-child lock flags during a group transform).
+    const objs = this.canvas.getObjects().filter((o) => !isLocked(o));
     if (objs.length === 0) return;
     this.canvas.discardActiveObject();
     if (objs.length === 1) {
@@ -1567,6 +1689,289 @@ export class CanvasController {
   }
   sendToBack(): void {
     this.layerOp((o) => this.canvas.sendObjectToBack(o));
+  }
+
+  /* --------------------------- group / organize --------------------------- */
+
+  /** Combine the current multi-selection into one movable group. Smart
+   *  connectors stay TOP-LEVEL relationship objects (never folded into the
+   *  group); only their endpoint nodes move inside it, and `objByIdMap` resolves
+   *  those nested nodes so the connectors keep tracking. */
+  groupSelection(): void {
+    const active = this.canvas.getActiveObjects();
+    const groupable = active.filter(
+      (o) => ndRole(o) !== "connector" && !isLocked(o),
+    );
+    if (groupable.length < 2) return;
+
+    // Preserve stacking order (getActiveObjects() is selection order, not
+    // z-order) so the group looks identical to the loose objects.
+    const ordered = this.canvas
+      .getObjects()
+      .filter((o) => groupable.includes(o));
+
+    this.canvas.discardActiveObject();
+    // Detach from the canvas first — the objects keep their canvas-space
+    // transforms, and the Group constructor then makes each child relative to
+    // the new group's center without any visible jump.
+    for (const o of ordered) this.canvas.remove(o);
+    const group = new fabric.Group(ordered);
+    (group as NdObj).ndRole = "group";
+    (group as NdObj).ndId = nid();
+    group.set({ selectable: true, evented: true });
+    this.canvas.add(group);
+    this.canvas.setActiveObject(group);
+
+    this.updateConnectors();
+    this.canvas.requestRenderAll();
+    this.recordHistory();
+    this.schedulePersist();
+  }
+
+  /** Break the selected user group back into its members, preserving each
+   *  member's exact visible transform (position, scale, rotation, flip). */
+  ungroupSelection(): void {
+    const active = this.canvas.getActiveObject();
+    if (!active || !isUserGroup(active)) return;
+    const group = active;
+
+    this.canvas.discardActiveObject();
+    // removeAll() applies the group transform back onto every child, so they
+    // land in canvas space exactly where they appeared inside the group.
+    const items = group.removeAll();
+    this.canvas.remove(group);
+    for (const o of items) {
+      o.set({ selectable: true, evented: true });
+      this.canvas.add(o);
+    }
+    if (items.length === 1) {
+      this.canvas.setActiveObject(items[0]);
+    } else if (items.length > 1) {
+      const sel = new fabric.ActiveSelection(items, { canvas: this.canvas });
+      this.canvas.setActiveObject(sel);
+    }
+
+    this.updateConnectors();
+    this.applyCollapseVisibility();
+    this.canvas.requestRenderAll();
+    this.recordHistory();
+    this.schedulePersist();
+  }
+
+  /** Lock the selection: it stays visible but can't be selected, moved, scaled,
+   *  rotated or deleted. Drawing over a locked object still works. */
+  lockSelection(): void {
+    const active = this.canvas.getActiveObjects();
+    const targets = active.filter((o) => !isLocked(o));
+    if (targets.length === 0) return;
+    for (const o of targets) {
+      (o as { ndLocked?: boolean }).ndLocked = true;
+      o.set({
+        selectable: false,
+        evented: false,
+        lockMovementX: true,
+        lockMovementY: true,
+        lockScalingX: true,
+        lockScalingY: true,
+        lockRotation: true,
+        hasControls: false,
+      });
+    }
+    this.canvas.discardActiveObject();
+    this.canvas.requestRenderAll();
+    this.recordHistory();
+    this.schedulePersist();
+  }
+
+  /** Unlock the currently (alt-)selected locked objects. */
+  unlockSelection(): void {
+    const active = this.canvas.getActiveObjects();
+    const targets = active.filter((o) => isLocked(o));
+    if (targets.length === 0) return;
+    for (const o of targets) {
+      (o as { ndLocked?: boolean }).ndLocked = false;
+      o.set({
+        selectable: true,
+        evented: true,
+        lockMovementX: false,
+        lockMovementY: false,
+        lockScalingX: false,
+        lockScalingY: false,
+        lockRotation: false,
+        hasControls: true,
+      });
+    }
+    this.canvas.requestRenderAll();
+    this.recordHistory();
+    this.schedulePersist();
+  }
+
+  /**
+   * Align every selected object to a shared edge or centerline, computed from
+   * the collective scene bounds of the selection. One history entry.
+   */
+  alignSelection(edge: "left" | "hcenter" | "right" | "top" | "vcenter" | "bottom"): void {
+    // Only movable objects participate: connectors follow their nodes, and
+    // locked objects must not be repositioned.
+    const movable = this.canvas
+      .getActiveObjects()
+      .filter((o) => ndRole(o) !== "connector" && !isLocked(o));
+    if (movable.length < 2) return;
+
+    // Drop out of the ActiveSelection so each object reports canvas-space bounds.
+    this.canvas.discardActiveObject();
+    const items = movable.map((o) => ({ o, b: sceneBoundsOf(o) }));
+    const left = Math.min(...items.map((i) => i.b.left));
+    const right = Math.max(...items.map((i) => i.b.right));
+    const top = Math.min(...items.map((i) => i.b.top));
+    const bottom = Math.max(...items.map((i) => i.b.bottom));
+    const cx = (left + right) / 2;
+    const cy = (top + bottom) / 2;
+
+    for (const { o, b } of items) {
+      const w = b.right - b.left;
+      const h = b.bottom - b.top;
+      let nx = b.cx;
+      let ny = b.cy;
+      if (edge === "left") nx = left + w / 2;
+      else if (edge === "right") nx = right - w / 2;
+      else if (edge === "hcenter") nx = cx;
+      else if (edge === "top") ny = top + h / 2;
+      else if (edge === "bottom") ny = bottom - h / 2;
+      else if (edge === "vcenter") ny = cy;
+      this.centerAt(o, { x: nx, y: ny });
+      o.setCoords();
+    }
+
+    this.reselect(movable);
+    this.updateConnectors();
+    this.canvas.requestRenderAll();
+    this.recordHistory();
+    this.schedulePersist();
+  }
+
+  /**
+   * Distribute ≥3 selected objects so the gaps BETWEEN their scene bounds are
+   * equal along one axis. The two extreme objects stay put. One history entry.
+   */
+  distributeSelection(axis: "h" | "v"): void {
+    // Connectors and locked objects are excluded — only real, movable nodes are
+    // spaced (a connector's bounds would otherwise consume a slot in the gaps).
+    const movable = this.canvas
+      .getActiveObjects()
+      .filter((o) => ndRole(o) !== "connector" && !isLocked(o));
+    if (movable.length < 3) return;
+
+    this.canvas.discardActiveObject();
+    const items = movable.map((o) => ({ o, b: sceneBoundsOf(o) }));
+    const horizontal = axis === "h";
+    items.sort((a, z) => (horizontal ? a.b.cx - z.b.cx : a.b.cy - z.b.cy));
+
+    const first = items[0].b;
+    const last = items[items.length - 1].b;
+    const span = horizontal ? last.right - first.left : last.bottom - first.top;
+    const sizes = items.map((i) =>
+      horizontal ? i.b.right - i.b.left : i.b.bottom - i.b.top,
+    );
+    const sumSizes = sizes.reduce((s, v) => s + v, 0);
+    const gap = (span - sumSizes) / (items.length - 1);
+
+    let cursor = horizontal ? first.left : first.top;
+    for (let i = 0; i < items.length; i++) {
+      const { o, b } = items[i];
+      const size = sizes[i];
+      const centerAlong = cursor + size / 2;
+      if (horizontal) this.centerAt(o, { x: centerAlong, y: b.cy });
+      else this.centerAt(o, { x: b.cx, y: centerAlong });
+      o.setCoords();
+      cursor += size + gap;
+    }
+
+    this.reselect(movable);
+    this.updateConnectors();
+    this.canvas.requestRenderAll();
+    this.recordHistory();
+    this.schedulePersist();
+  }
+
+  /** Restore a multi-selection after a batch move (align/distribute). */
+  private reselect(objs: fabric.FabricObject[]): void {
+    if (objs.length === 1) {
+      this.canvas.setActiveObject(objs[0]);
+    } else if (objs.length > 1) {
+      const sel = new fabric.ActiveSelection(objs, { canvas: this.canvas });
+      this.canvas.setActiveObject(sel);
+    }
+  }
+
+  /* -------------------------------- lasso --------------------------------- */
+
+  /** Close the lasso: select every top-level object it captured, then return to
+   *  the select tool. Selection only — no history, no persist, no export. */
+  private finishLasso(): void {
+    const poly = this.lassoPts;
+    this.lassoing = false;
+    this.lassoPts = [];
+
+    const matches: fabric.FabricObject[] = [];
+    if (poly.length >= 3) {
+      for (const o of this.canvas.getObjects()) {
+        if (ndRole(o) === "connector") continue; // connectors follow their nodes
+        if (isLocked(o)) continue;
+        if (o.visible === false) continue;
+        if (this.lassoHits(o, poly)) matches.push(o);
+      }
+    }
+
+    this.setTool("select");
+    this.canvas.discardActiveObject();
+    this.reselect(matches);
+    this.canvas.requestRenderAll();
+    this.emit();
+  }
+
+  /** Lasso hit rule: an object is captured when its scene-space CENTER lies
+   *  inside the lasso polygon, OR at least two of its four scene bounding-box
+   *  corners lie inside it (a meaningful overlap). */
+  private lassoHits(o: fabric.FabricObject, poly: Pt[]): boolean {
+    const b = sceneBoundsOf(o);
+    if (pointInPolygon({ x: b.cx, y: b.cy }, poly)) return true;
+    const corners: Pt[] = [
+      { x: b.left, y: b.top },
+      { x: b.right, y: b.top },
+      { x: b.right, y: b.bottom },
+      { x: b.left, y: b.bottom },
+    ];
+    let inside = 0;
+    for (const c of corners) if (pointInPolygon(c, poly)) inside++;
+    return inside >= 2;
+  }
+
+  /** Topmost locked object whose scene bounds contain a scene point. */
+  private lockedObjectAt(p: Pt): fabric.FabricObject | null {
+    const objs = this.canvas.getObjects();
+    for (let i = objs.length - 1; i >= 0; i--) {
+      const o = objs[i];
+      if (!isLocked(o) || o.visible === false) continue;
+      const b = sceneBoundsOf(o);
+      if (p.x >= b.left && p.x <= b.right && p.y >= b.top && p.y <= b.bottom) return o;
+    }
+    return null;
+  }
+
+  /** Topmost locked object whose padlock badge is under a screen point. This is
+   *  the touch-friendly unlock affordance (the badge is a visible tap target, so
+   *  a locked object can be reselected without a keyboard / alt-click). */
+  private lockBadgeHostAt(vp: Pt): fabric.FabricObject | null {
+    const objs = this.canvas.getObjects();
+    for (let i = objs.length - 1; i >= 0; i--) {
+      const o = objs[i];
+      if (!isLocked(o) || o.visible === false) continue;
+      const b = sceneBoundsOf(o);
+      const badge = this.toScreen({ x: b.left, y: b.top });
+      if (dist(vp, { x: badge.x + 9, y: badge.y + 9 }) <= 16) return o;
+    }
+    return null;
   }
 
   /* ------------------------------ undo/redo ------------------------------- */
@@ -1660,12 +2065,13 @@ export class CanvasController {
   /* ------------------------------ selection ------------------------------- */
 
   deleteSelection(): void {
-    const active = this.canvas.getActiveObjects();
+    // Locked objects are protected from deletion.
+    const active = this.canvas.getActiveObjects().filter((o) => !isLocked(o));
     if (active.length === 0) return;
     const toRemove = new Set<fabric.FabricObject>(active);
-    const selectedIds = new Set(
-      active.map(ndId).filter(Boolean) as string[],
-    );
+    // Include ids nested inside groups so a deleted group takes its connectors.
+    const selectedIds = new Set<string>();
+    for (const o of active) for (const id of this.allIdsIn(o)) selectedIds.add(id);
     // Cascade: remove connectors attached to any deleted node.
     for (const c of this.connectors()) {
       if (
@@ -2106,9 +2512,51 @@ export class CanvasController {
     return false;
   }
 
+  /** A small padlock glyph centered at a screen point. */
+  private drawLockBadge(ctx: CanvasRenderingContext2D, cx: number, cy: number): void {
+    const bodyW = 9;
+    const bodyH = 7;
+    const bx = cx - bodyW / 2;
+    const by = cy - bodyH / 2 + 1.5;
+    // White halo so the badge reads on any background.
+    ctx.beginPath();
+    ctx.arc(cx, cy, 8.5, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(255,255,255,0.9)";
+    ctx.fill();
+    // Shackle.
+    ctx.beginPath();
+    ctx.lineWidth = 1.4;
+    ctx.strokeStyle = "#475569";
+    ctx.arc(cx, by, 2.6, Math.PI, 0);
+    ctx.stroke();
+    // Body.
+    ctx.fillStyle = "#475569";
+    ctx.fillRect(bx, by, bodyW, bodyH);
+  }
+
   private drawOverlays(): void {
     const ctx = this.overlayCtx();
     if (!ctx) return;
+
+    // Lasso region (temporary — never persisted or exported).
+    if (this.lassoing && this.lassoPts.length >= 2) {
+      ctx.save();
+      ctx.beginPath();
+      const p0 = this.toScreen(this.lassoPts[0]);
+      ctx.moveTo(p0.x, p0.y);
+      for (let i = 1; i < this.lassoPts.length; i++) {
+        const sp = this.toScreen(this.lassoPts[i]);
+        ctx.lineTo(sp.x, sp.y);
+      }
+      ctx.closePath();
+      ctx.fillStyle = "rgba(139, 92, 246, 0.10)";
+      ctx.fill();
+      ctx.setLineDash([5, 4]);
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = "rgba(139, 92, 246, 0.9)";
+      ctx.stroke();
+      ctx.restore();
+    }
 
     // Alignment guides
     if (this.activeGuides.length) {
@@ -2184,6 +2632,19 @@ export class CanvasController {
         ctx.fill();
         ctx.fillStyle = "#ffffff";
         ctx.fillText(label, cx, sp.y + 0.5);
+      }
+      ctx.restore();
+    }
+
+    // Lock badges: a small padlock on each locked object so it reads as locked
+    // and hints that alt-click unlocks it. Select mode, when idle.
+    if (this.tool === "select" && !this.interacting) {
+      ctx.save();
+      for (const o of this.canvas.getObjects()) {
+        if (!isLocked(o) || o.visible === false) continue;
+        const b = sceneBoundsOf(o);
+        const sp = this.toScreen({ x: b.left, y: b.top });
+        this.drawLockBadge(ctx, sp.x + 9, sp.y + 9);
       }
       ctx.restore();
     }
@@ -2419,7 +2880,20 @@ export class CanvasController {
     });
     this.canvas.on("object:rotating", (opt) => {
       this.interacting = true;
-      if (opt.target) this.updateConnectors(this.movedIds(opt.target));
+      const ev = opt.e as (PointerEvent & MouseEvent) | undefined;
+      const t = opt.target;
+      if (t) {
+        const a = t.angle ?? 0;
+        const nearest = Math.round(a / 15) * 15;
+        // Hold Shift to snap hard to 15° increments (desktop). Touch/pen has no
+        // Shift key, so snapping is magnetic there — it engages only within a
+        // few degrees of a 15° mark, leaving free rotation everywhere else.
+        const touch = !!ev?.pointerType && ev.pointerType !== "mouse";
+        if (ev?.shiftKey || (touch && Math.abs(a - nearest) <= 4)) {
+          t.set("angle", nearest);
+        }
+      }
+      if (t) this.updateConnectors(this.movedIds(t));
       this.emit();
     });
 
@@ -2532,7 +3006,28 @@ export class CanvasController {
       return;
     }
 
+    if (this.tool === "lasso") {
+      const p = this.canvas.getScenePoint(opt.e);
+      this.lassoing = true;
+      this.lassoPts = [{ x: p.x, y: p.y }];
+      return;
+    }
+
     if (this.tool === "select") {
+      // Select a locked object to unlock it. Locked objects are non-evented, so
+      // Fabric never targets them — hit-test here. Two affordances: tapping the
+      // visible padlock badge (works with mouse OR touch/stylus — the primary
+      // route on a keyboard-less tablet), or alt-clicking anywhere on it.
+      const locked =
+        this.lockBadgeHostAt(this.canvas.getViewportPoint(opt.e)) ||
+        (e.altKey ? this.lockedObjectAt(this.canvas.getScenePoint(opt.e)) : null);
+      if (locked) {
+        this.canvas.discardActiveObject();
+        this.canvas.setActiveObject(locked);
+        this.canvas.requestRenderAll();
+        this.emit();
+        return;
+      }
       if (this.pendingConnect) {
         this.startCreateConnector();
         this.pendingConnect = null;
@@ -2603,6 +3098,16 @@ export class CanvasController {
       return;
     }
 
+    if (this.lassoing) {
+      const p = this.canvas.getScenePoint(opt.e);
+      const last = this.lassoPts[this.lassoPts.length - 1];
+      // Throttle to ~3 screen px between vertices so the path stays light.
+      if (!last || dist(p, last) * this.canvas.getZoom() >= 3)
+        this.lassoPts.push({ x: p.x, y: p.y });
+      this.canvas.requestRenderAll();
+      return;
+    }
+
     if (this.connectDrag) {
       this.updateConnectDrag(opt);
       return;
@@ -2628,6 +3133,11 @@ export class CanvasController {
   };
 
   private onMouseUp = (): void => {
+    if (this.lassoing) {
+      this.finishLasso();
+      return;
+    }
+
     if (this.connectDrag) {
       this.finishConnectDrag();
       return;
