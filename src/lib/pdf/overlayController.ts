@@ -171,6 +171,7 @@ export class PdfOverlayController {
   // transient drawing state
   private penPoints: [number, number][] = [];
   private penning = false;
+  private erasing = false;
   private draft: fabric.Object | null = null;
   private dragStart: { x: number; y: number } | null = null;
 
@@ -367,7 +368,7 @@ export class PdfOverlayController {
     this.configureObject(obj, o);
     const select = this.tool === "select";
     obj.selectable = select;
-    obj.evented = select;
+    obj.evented = select || this.tool === "eraser"; // eraser needs hit-testing
     this.canvas.add(obj);
     // Freehand bakes transforms into its points on modify; capture the baseline
     // matrix so a later move/scale/rotate can be applied to the stored points.
@@ -381,12 +382,15 @@ export class PdfOverlayController {
   private applyToolMode(): void {
     const c = this.canvas;
     const select = this.tool === "select";
+    const eraser = this.tool === "eraser";
     c.forEachObject((o) => {
       o.selectable = select;
-      o.evented = select;
+      // Eraser needs hit-testing (to find the object under the pointer) but not
+      // selection/dragging.
+      o.evented = select || eraser;
     });
-    c.skipTargetFind = !select;
-    c.defaultCursor = select ? "default" : this.tool === "text" ? "text" : "crosshair";
+    c.skipTargetFind = !select && !eraser;
+    c.defaultCursor = select ? "default" : this.tool === "text" ? "text" : eraser ? "cell" : "crosshair";
     c.hoverCursor = select ? "move" : c.defaultCursor;
     if (!select) c.discardActiveObject();
     // Touch: allow one-finger pan (page scroll) in Select mode; capture the
@@ -678,12 +682,17 @@ export class PdfOverlayController {
 
   private onDown(opt: fabric.TPointerEventInfo): void {
     if (this.tool === "select") return;
+    if (this.tool === "eraser") {
+      this.erasing = true;
+      this.eraseTarget(opt.target as NdObject | undefined);
+      return;
+    }
     const p = this.scenePoint(opt.e);
     if (this.tool === "text") {
       this.placeText(p.x, p.y);
       return;
     }
-    if (this.tool === "pen") {
+    if (this.tool === "pen" || this.tool === "brush") {
       this.penning = true;
       this.penPoints = [[p.x, p.y]];
       this.renderPenPreview();
@@ -695,6 +704,10 @@ export class PdfOverlayController {
 
   private onMove(opt: fabric.TPointerEventInfo): void {
     if (this.tool === "select") return;
+    if (this.tool === "eraser") {
+      if (this.erasing) this.eraseTarget(opt.target as NdObject | undefined);
+      return;
+    }
     const p = this.scenePoint(opt.e);
     if (this.penning) {
       const last = this.penPoints[this.penPoints.length - 1];
@@ -717,6 +730,10 @@ export class PdfOverlayController {
   }
 
   private onUp(): void {
+    if (this.erasing) {
+      this.erasing = false;
+      return;
+    }
     if (this.penning) {
       this.penning = false;
       this.finalizePen();
@@ -736,6 +753,15 @@ export class PdfOverlayController {
   }
 
   private lastPointer: { x: number; y: number } | null = null;
+
+  /** Remove a single NoteDrift overlay under the eraser (one undoable action). */
+  private eraseTarget(target: NdObject | undefined): void {
+    if (!target?.ndId || !this.pageId) return;
+    this.canvas.remove(target);
+    this.commitOverlays(removeOverlay(this.doc.overlays, this.pageId, target.ndId));
+    this.canvas.requestRenderAll();
+    this.emitSelection(null);
+  }
 
   private onObjectModified(target: NdObject | undefined): void {
     if (!target?.ndId || !this.pageId) return;
@@ -953,13 +979,23 @@ export class PdfOverlayController {
     this.canvas.requestRenderAll();
   }
 
+  /** Freehand style for the active drawing tool — Pen and Brush share the same
+   *  drawing path but carry independent color / width / opacity. */
+  private penStyle(): { color: string; width: number; opacity: number } {
+    if (this.tool === "brush") {
+      return { color: this.style.brushColor, width: this.style.brushWidth, opacity: this.style.brushOpacity };
+    }
+    return { color: this.style.strokeColor, width: this.style.strokeWidth, opacity: this.style.opacity };
+  }
+
   private renderPenPreview(): void {
     const ctx = this.canvas.contextTop;
     if (!ctx) return;
     this.canvas.clearContext(ctx);
     if (this.penPoints.length < 1) return;
+    const s = this.penStyle();
     const out = getStroke(this.penPoints, {
-      size: Math.max(1, this.style.strokeWidth),
+      size: Math.max(1, s.width),
       thinning: 0,
       smoothing: 0.5,
       streamline: 0.4,
@@ -980,8 +1016,8 @@ export class PdfOverlayController {
       ctx.quadraticCurveTo(x0, y0, (x0 + x1) / 2, (y0 + y1) / 2);
     }
     ctx.closePath();
-    ctx.fillStyle = this.style.strokeColor;
-    ctx.globalAlpha = this.style.opacity;
+    ctx.fillStyle = s.color;
+    ctx.globalAlpha = s.opacity;
     ctx.fill();
     ctx.restore();
   }
@@ -990,18 +1026,20 @@ export class PdfOverlayController {
     const ctx = this.canvas.contextTop;
     if (ctx) this.canvas.clearContext(ctx);
     const points = this.penPoints;
+    const s = this.penStyle();
+    const brush = this.tool === "brush";
     this.penPoints = [];
     if (points.length < 2 || !this.pageId) return;
-    const d = outlinePath(points, this.style.strokeWidth);
+    const d = outlinePath(points, s.width);
     if (!d) return;
     const overlay: PdfOverlay = {
-      id: createOverlayId("pen"),
+      id: createOverlayId(brush ? "brush" : "pen"),
       pageId: this.pageId,
       type: "freehand",
-      opacity: this.style.opacity,
+      opacity: s.opacity,
       points,
-      width: this.style.strokeWidth,
-      color: this.style.strokeColor,
+      width: s.width,
+      color: s.color,
     };
     this.commitOverlays(addOverlay(this.doc.overlays, overlay));
     this.addOverlayObject(overlay);

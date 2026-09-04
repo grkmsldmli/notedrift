@@ -8,6 +8,8 @@ export type PdfTool =
   | "select"
   | "text"
   | "pen"
+  | "brush"
+  | "eraser"
   | "highlight"
   | "rect"
   | "ellipse"
@@ -24,6 +26,10 @@ export interface PdfToolStyle {
   fill: string | null;
   highlightColor: string;
   whiteoutColor: string;
+  // Brush is an opaque paint/cover stroke, kept distinct from Pen.
+  brushColor: string;
+  brushWidth: number;
+  brushOpacity: number;
   fontFamily: FontFamilyKey;
   fontSize: number; // display pts
   bold: boolean;
@@ -38,6 +44,9 @@ export const DEFAULT_TOOL_STYLE: PdfToolStyle = {
   fill: null,
   highlightColor: "#fbe24a",
   whiteoutColor: "#ffffff",
+  brushColor: "#111827",
+  brushWidth: 16,
+  brushOpacity: 1,
   fontFamily: "sans",
   fontSize: 18,
   bold: false,
@@ -60,7 +69,10 @@ export function controlsForTool(tool: PdfTool): ToolControls {
     case "text":
       return { color: true, strokeWidth: false, opacity: false, fill: false, text: true, highlight: false };
     case "pen":
+    case "brush":
       return { color: true, strokeWidth: true, opacity: true, fill: false, text: false, highlight: false };
+    case "eraser":
+      return { color: false, strokeWidth: false, opacity: false, fill: false, text: false, highlight: false };
     case "highlight":
       return { color: false, strokeWidth: false, opacity: true, fill: false, text: false, highlight: true };
     case "rect":

@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   AlignCenter,
   AlignLeft,
@@ -8,6 +9,8 @@ import {
   Bold,
   Italic,
   Minus,
+  Monitor,
+  Pipette,
   Plus,
   Trash2,
 } from "lucide-react";
@@ -18,6 +21,7 @@ import type { ToolControls } from "@/lib/pdf/toolState";
 export interface ContextValues {
   color: string;
   strokeWidth: number;
+  strokeMax?: number; // upper bound for the width stepper (Brush goes higher)
   opacity: number;
   fill: string | null;
   fontFamily: FontFamilyKey;
@@ -44,25 +48,34 @@ export function PdfContextToolbar({
   values,
   onChange,
   onDelete,
+  onEyedropper,
 }: {
   controls: ToolControls;
   values: ContextValues;
   onChange: (patch: ContextPatch) => void;
   onDelete?: () => void;
+  onEyedropper?: (target: "color" | "fill") => void;
 }) {
   return (
+    // Outer shell keeps overflow visible so portaled popovers are never clipped;
+    // the inner strip scrolls horizontally with the scrollbar hidden.
     <div className="pointer-events-none absolute inset-x-0 top-3 z-20 flex justify-center px-3">
-      <div className="nd-scroll pointer-events-auto flex max-w-full items-center gap-1 overflow-x-auto rounded-xl border border-nd-border bg-nd-surface/95 p-1 shadow-xl shadow-black/40 backdrop-blur">
+      <div className="nd-hidescroll pointer-events-auto flex max-w-full items-center gap-1 overflow-x-auto rounded-xl border border-nd-border bg-nd-surface/95 p-1 shadow-xl shadow-black/40 backdrop-blur">
         {(controls.color || controls.highlight) && (
           <ColorControl
             label={controls.highlight ? "Highlight color" : "Color"}
             value={values.color}
             onChange={(c) => onChange({ color: c })}
+            onEyedropper={onEyedropper ? () => onEyedropper("color") : undefined}
           />
         )}
 
         {controls.fill && (
-          <FillControl value={values.fill} onChange={(f) => onChange({ fill: f })} />
+          <FillControl
+            value={values.fill}
+            onChange={(f) => onChange({ fill: f })}
+            onEyedropper={onEyedropper ? () => onEyedropper("fill") : undefined}
+          />
         )}
 
         {controls.strokeWidth && (
@@ -70,7 +83,7 @@ export function PdfContextToolbar({
             label="Width"
             value={values.strokeWidth}
             min={1}
-            max={24}
+            max={values.strokeMax ?? 24}
             step={1}
             onChange={(v) => onChange({ strokeWidth: v })}
           />
@@ -135,46 +148,95 @@ function Divider() {
   return <span className="mx-0.5 h-5 w-px shrink-0 bg-nd-border" />;
 }
 
+/** Portaled popover anchored under a trigger — escapes the strip's horizontal
+ *  overflow so the swatch grid is never clipped. */
 function Popover({
   open,
+  anchorRef,
   onClose,
   children,
 }: {
   open: boolean;
+  anchorRef: React.RefObject<HTMLElement | null>;
   onClose: () => void;
   children: React.ReactNode;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    const place = () => {
+      const a = anchorRef.current;
+      if (a) {
+        const r = a.getBoundingClientRect();
+        setPos({ left: r.left + r.width / 2, top: r.bottom + 6 });
+      }
+    };
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [open, anchorRef]);
+
   useEffect(() => {
     if (!open) return;
     function onDoc(e: MouseEvent) {
-      if (!ref.current?.contains(e.target as Node)) onClose();
+      if (!ref.current?.contains(e.target as Node) && !anchorRef.current?.contains(e.target as Node)) onClose();
     }
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
-  }, [open, onClose]);
-  if (!open) return null;
-  return (
+  }, [open, onClose, anchorRef]);
+
+  if (!open || !pos || typeof document === "undefined") return null;
+  return createPortal(
     <div
       ref={ref}
-      className="absolute left-1/2 top-full z-30 mt-1.5 -translate-x-1/2 rounded-xl border border-nd-border bg-nd-surface p-2 shadow-2xl"
+      role="dialog"
+      style={{ position: "fixed", left: pos.left, top: pos.top, transform: "translateX(-50%)", zIndex: 60 }}
+      className="rounded-xl border border-nd-border bg-nd-surface p-2 shadow-2xl"
     >
       {children}
-    </div>
+    </div>,
+    document.body,
+  );
+}
+
+function EyedropperRow({ onEyedropper }: { onEyedropper?: () => void }) {
+  // This popover only renders client-side after a click, so reading window here
+  // is safe and needs no effect/state.
+  const hasNative = typeof window !== "undefined" && "EyeDropper" in window;
+  if (!onEyedropper) return null;
+  return (
+    <button
+      type="button"
+      onClick={onEyedropper}
+      aria-label="Pick a color from the page"
+      title={hasNative ? "Eyedropper — sample from the page or screen" : "Eyedropper — sample from the page"}
+      className="nd-hit flex items-center gap-1 rounded-md border border-white/15 px-2 py-1 text-[11px] text-nd-muted transition-colors hover:border-nd-accent hover:text-nd-text"
+    >
+      <Pipette size={13} />
+      {hasNative ? <Monitor size={11} className="opacity-60" /> : null}
+    </button>
   );
 }
 
 function SwatchGrid({
   value,
   onPick,
+  onEyedropper,
   extra,
 }: {
   value: string | null;
   onPick: (c: string) => void;
+  onEyedropper?: () => void;
   extra?: React.ReactNode;
 }) {
   return (
-    <div className="w-[168px]">
+    <div className="w-[176px]">
       <div className="grid grid-cols-6 gap-1.5">
         {INK_PALETTE.map((s) => (
           <button
@@ -202,6 +264,7 @@ function SwatchGrid({
             className="h-6 w-8 cursor-pointer rounded border border-white/15 bg-transparent"
           />
         </label>
+        <EyedropperRow onEyedropper={onEyedropper} />
         {extra}
       </div>
     </div>
@@ -212,15 +275,19 @@ function ColorControl({
   label,
   value,
   onChange,
+  onEyedropper,
 }: {
   label: string;
   value: string;
   onChange: (c: string) => void;
+  onEyedropper?: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const btnRef = useRef<HTMLButtonElement>(null);
   return (
     <div className="relative flex shrink-0">
       <button
+        ref={btnRef}
         type="button"
         aria-label={label}
         title={label}
@@ -229,8 +296,12 @@ function ColorControl({
       >
         <span className="h-4 w-4 rounded-full border border-white/25" style={{ backgroundColor: value }} />
       </button>
-      <Popover open={open} onClose={() => setOpen(false)}>
-        <SwatchGrid value={value} onPick={(c) => { onChange(c); setOpen(false); }} />
+      <Popover open={open} anchorRef={btnRef} onClose={() => setOpen(false)}>
+        <SwatchGrid
+          value={value}
+          onPick={(c) => { onChange(c); setOpen(false); }}
+          onEyedropper={onEyedropper ? () => { setOpen(false); onEyedropper(); } : undefined}
+        />
       </Popover>
     </div>
   );
@@ -239,14 +310,18 @@ function ColorControl({
 function FillControl({
   value,
   onChange,
+  onEyedropper,
 }: {
   value: string | null;
   onChange: (f: string | null) => void;
+  onEyedropper?: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const btnRef = useRef<HTMLButtonElement>(null);
   return (
     <div className="relative flex shrink-0">
       <button
+        ref={btnRef}
         type="button"
         aria-label="Fill"
         title="Fill"
@@ -263,10 +338,11 @@ function FillControl({
           }
         />
       </button>
-      <Popover open={open} onClose={() => setOpen(false)}>
+      <Popover open={open} anchorRef={btnRef} onClose={() => setOpen(false)}>
         <SwatchGrid
           value={value}
           onPick={(c) => { onChange(c); setOpen(false); }}
+          onEyedropper={onEyedropper ? () => { setOpen(false); onEyedropper(); } : undefined}
           extra={
             <button
               type="button"

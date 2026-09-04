@@ -36,8 +36,8 @@ import {
   undo,
 } from "./history.ts";
 import { makePageIds, pageIdAt, createSession } from "./session.ts";
-import { applyStylePatch, controlsForTool, selectionOf } from "./toolState.ts";
-import type { PdfTextOverlay } from "./overlays.ts";
+import { applyStylePatch, controlsForTool, DEFAULT_TOOL_STYLE, selectionOf } from "./toolState.ts";
+import type { PdfFreehandOverlay, PdfTextOverlay } from "./overlays.ts";
 
 const LETTER: PageGeometry = { width: 612, height: 792, rotation: 0 };
 
@@ -258,6 +258,24 @@ test("controlsForTool exposes the right controls per tool", () => {
   assert.equal(controlsForTool("rect").fill, true);
   assert.equal(controlsForTool("line").fill, false);
   assert.equal(controlsForTool("select").color, false);
+  // Brush behaves like Pen (colour / width / opacity); Eraser has no settings.
+  const brush = controlsForTool("brush");
+  assert.ok(brush.color && brush.strokeWidth && brush.opacity);
+  const eraser = controlsForTool("eraser");
+  assert.ok(!eraser.color && !eraser.strokeWidth && !eraser.opacity);
+});
+
+test("brush has its own opaque default style, independent of pen", () => {
+  assert.equal(DEFAULT_TOOL_STYLE.brushOpacity, 1);
+  assert.ok(DEFAULT_TOOL_STYLE.brushWidth >= 8);
+  // Editing a brush stroke (a freehand overlay) uses width/color/opacity.
+  const fh = applyStylePatch(
+    { id: "b", pageId: "pg-1", type: "freehand", opacity: 1, points: [[0, 0], [1, 1]], width: 16, color: "#fff" },
+    { color: "#111827", strokeWidth: 40, opacity: 0.5 },
+  ) as PdfFreehandOverlay;
+  assert.equal(fh.color, "#111827");
+  assert.equal(fh.width, 40);
+  assert.equal(fh.opacity, 0.5);
 });
 
 test("page ids are stable and 1-based-indexed", () => {

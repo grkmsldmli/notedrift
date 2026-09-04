@@ -3,7 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import {
   ArrowUpRight,
+  Brush,
   Circle,
+  Eraser,
   Highlighter,
   Image as ImageIcon,
   Minus,
@@ -47,7 +49,7 @@ export function PdfToolRail({
 
   return (
     <div
-      className="nd-scroll pointer-events-auto absolute left-1/2 bottom-[4.5rem] z-20 flex max-w-[calc(100vw-1.5rem)] -translate-x-1/2 flex-row items-center gap-0.5 overflow-x-auto rounded-xl border border-nd-border bg-nd-surface/95 p-1 shadow-xl shadow-black/40 backdrop-blur md:left-3 md:top-1/2 md:bottom-auto md:max-w-none md:-translate-x-0 md:-translate-y-1/2 md:flex-col md:overflow-visible"
+      className="nd-hidescroll pointer-events-auto absolute left-1/2 bottom-[4.5rem] z-20 flex max-w-[calc(100vw-1.5rem)] -translate-x-1/2 flex-row items-center gap-0.5 overflow-x-auto rounded-xl border border-nd-border bg-nd-surface/95 p-1 shadow-xl shadow-black/40 backdrop-blur md:left-3 md:top-1/2 md:bottom-auto md:max-w-none md:-translate-x-0 md:-translate-y-1/2 md:flex-col md:overflow-visible"
       role="toolbar"
       aria-label="PDF tools"
     >
@@ -59,6 +61,12 @@ export function PdfToolRail({
       </ToolButton>
       <ToolButton label="Pen  (P)" isActive={tool === "pen"} onClick={() => onTool("pen")}>
         <Pencil size={17} />
+      </ToolButton>
+      <ToolButton label="Brush — opaque paint / cover  (B)" isActive={tool === "brush"} onClick={() => onTool("brush")}>
+        <Brush size={17} />
+      </ToolButton>
+      <ToolButton label="Eraser — remove your overlays  (E)" isActive={tool === "eraser"} onClick={() => onTool("eraser")}>
+        <Eraser size={17} />
       </ToolButton>
       <ToolButton label="Highlight  (H)" isActive={tool === "highlight"} onClick={() => onTool("highlight")}>
         <Highlighter size={17} />

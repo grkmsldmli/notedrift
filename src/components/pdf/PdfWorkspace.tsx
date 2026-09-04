@@ -64,6 +64,7 @@ export function PdfWorkspace() {
   const [overlayView, setOverlayView] = useState<OverlayView | null>(null);
   const [exporting, setExporting] = useState(false);
   const [sigOpen, setSigOpen] = useState(false);
+  const [eyedropper, setEyedropper] = useState<"color" | "fill" | null>(null);
   const [toast, setToast] = useState<{ kind: "info" | "error"; message: string } | null>(null);
   const [srcRot, setSrcRot] = useState<Record<number, number>>({});
 
@@ -289,6 +290,12 @@ export function PdfWorkspace() {
   const handleToolStyle = useCallback((patch: ContextPatch, forTool: PdfTool) => {
     setToolStyle((s) => {
       const next: PdfToolStyle = { ...s };
+      if (forTool === "brush") {
+        if (patch.color !== undefined) next.brushColor = patch.color;
+        if (patch.strokeWidth !== undefined) next.brushWidth = patch.strokeWidth;
+        if (patch.opacity !== undefined) next.brushOpacity = patch.opacity;
+        return next;
+      }
       if (patch.color !== undefined) {
         if (forTool === "highlight") next.highlightColor = patch.color;
         else if (forTool === "whiteout") next.whiteoutColor = patch.color;
@@ -310,6 +317,54 @@ export function PdfWorkspace() {
     if (selection) controllerRef.current?.updateSelected(patch as Partial<PdfSelection>);
     else handleToolStyle(patch, toolRef.current);
   }, [selection, handleToolStyle]);
+
+  const applySampled = useCallback((hex: string, target: "color" | "fill") => {
+    onContextChange(target === "fill" ? { fill: hex } : { color: hex });
+  }, [onContextChange]);
+
+  /** Read the on-screen pixel colour of the rendered PDF page at a client point.
+   *  Maps client → canvas backing-store pixel (accounts for zoom + DPR; page
+   *  rotation is already baked into the rendered pixels). */
+  const sampleCanvasAt = useCallback((clientX: number, clientY: number): string | null => {
+    const canvas = pageCanvasRef.current;
+    if (!canvas || !canvas.width || !canvas.height) return null;
+    const rect = canvas.getBoundingClientRect();
+    const x = Math.floor(((clientX - rect.left) / rect.width) * canvas.width);
+    const y = Math.floor(((clientY - rect.top) / rect.height) * canvas.height);
+    if (x < 0 || y < 0 || x >= canvas.width || y >= canvas.height) return null;
+    try {
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      if (!ctx) return null;
+      const [r, g, b] = ctx.getImageData(x, y, 1, 1).data;
+      const h = (n: number) => n.toString(16).padStart(2, "0");
+      return `#${h(r)}${h(g)}${h(b)}`;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  // Primary eyedropper: click the rendered page to sample its pixel (works
+  // everywhere; the reliable path).
+  const startEyedropper = useCallback((target: "color" | "fill") => {
+    setEyedropper(target);
+  }, []);
+
+  // Enhancement (§7): the native screen eyedropper, when available — can sample
+  // anywhere, including outside the page. Falls back to nothing if unsupported.
+  const nativeEyedropper = useCallback(() => {
+    const Native = (window as unknown as { EyeDropper?: new () => { open: () => Promise<{ sRGBHex: string }> } }).EyeDropper;
+    const target = eyedropper;
+    if (!Native || !target) return;
+    setEyedropper(null);
+    new Native()
+      .open()
+      .then((r) => applySampled(r.sRGBHex, target))
+      .catch(() => {
+        /* cancelled */
+      });
+  }, [eyedropper, applySampled]);
+
+  const nativeEyedropperAvailable = typeof window !== "undefined" && "EyeDropper" in window;
 
   const placeLoadedImage = useCallback((img: LoadedImage) => {
     controllerRef.current?.placeImage(img.el, img.src, img.format);
@@ -352,8 +407,13 @@ export function PdfWorkspace() {
       const t = e.target as HTMLElement | null;
       const typing = !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable);
       const mod = e.metaKey || e.ctrlKey;
-      if (e.key === "Escape") { controllerRef.current?.flush(); chooseTool("select"); return; }
-      if (typing) return;
+      if (e.key === "Escape") {
+        if (eyedropper) { setEyedropper(null); return; }
+        controllerRef.current?.flush();
+        chooseTool("select");
+        return;
+      }
+      if (typing || eyedropper) return;
       if (mod) {
         const key = e.key.toLowerCase();
         if (key === "z") { e.preventDefault(); if (e.shiftKey) controllerRef.current?.redo(); else controllerRef.current?.undo(); }
@@ -365,6 +425,8 @@ export function PdfWorkspace() {
         case "v": case "V": chooseTool("select"); break;
         case "t": case "T": chooseTool("text"); break;
         case "p": case "P": chooseTool("pen"); break;
+        case "b": case "B": chooseTool("brush"); break;
+        case "e": case "E": chooseTool("eraser"); break;
         case "h": case "H": chooseTool("highlight"); break;
         case "Delete": case "Backspace": e.preventDefault(); controllerRef.current?.deleteSelected(); break;
         case "ArrowRight": case "PageDown": e.preventDefault(); setSession((s) => (s ? nextPage(s) : s)); break;
@@ -377,7 +439,7 @@ export function PdfWorkspace() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [phase, zoomBy, chooseTool]);
+  }, [phase, zoomBy, chooseTool, eyedropper]);
 
   const handleDownload = useCallback(async () => {
     if (exporting) return;
@@ -441,6 +503,7 @@ export function PdfWorkspace() {
     ? {
         color: selection.color ?? "#000000",
         strokeWidth: selection.strokeWidth ?? 3,
+        strokeMax: selection.type === "freehand" ? 80 : 24,
         opacity: selection.opacity ?? 1,
         fill: selection.fill ?? null,
         fontFamily: selection.fontFamily ?? "sans",
@@ -450,9 +513,17 @@ export function PdfWorkspace() {
         align: selection.align ?? "left",
       }
     : {
-        color: tool === "highlight" ? toolStyle.highlightColor : tool === "whiteout" ? toolStyle.whiteoutColor : toolStyle.strokeColor,
-        strokeWidth: toolStyle.strokeWidth,
-        opacity: toolStyle.opacity,
+        color:
+          tool === "brush"
+            ? toolStyle.brushColor
+            : tool === "highlight"
+              ? toolStyle.highlightColor
+              : tool === "whiteout"
+                ? toolStyle.whiteoutColor
+                : toolStyle.strokeColor,
+        strokeWidth: tool === "brush" ? toolStyle.brushWidth : toolStyle.strokeWidth,
+        strokeMax: tool === "brush" ? 80 : 24,
+        opacity: tool === "brush" ? toolStyle.brushOpacity : toolStyle.opacity,
         fill: toolStyle.fill,
         fontFamily: toolStyle.fontFamily,
         fontSize: toolStyle.fontSize,
@@ -553,7 +624,44 @@ export function PdfWorkspace() {
             values={contextValues}
             onChange={onContextChange}
             onDelete={selection ? () => controllerRef.current?.deleteSelected() : undefined}
+            onEyedropper={startEyedropper}
           />
+        )}
+
+        {eyedropper && (
+          <div
+            className="absolute inset-0 z-40 cursor-crosshair"
+            onPointerDown={(e) => {
+              e.preventDefault();
+              const hex = sampleCanvasAt(e.clientX, e.clientY);
+              const target = eyedropper;
+              setEyedropper(null);
+              if (hex && target) applySampled(hex, target);
+            }}
+          >
+            <div className="pointer-events-none absolute inset-x-0 top-3 flex justify-center px-3">
+              <div className="pointer-events-auto flex items-center gap-2 rounded-lg border border-nd-border bg-nd-surface/95 px-3 py-1.5 text-xs text-nd-text shadow-xl backdrop-blur">
+                <span>Click the page to sample a color</span>
+                {nativeEyedropperAvailable && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); nativeEyedropper(); }}
+                    className="rounded-md border border-nd-border px-2 py-0.5 text-[11px] text-nd-muted hover:text-nd-text"
+                  >
+                    Sample anywhere
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); setEyedropper(null); }}
+                  aria-label="Cancel eyedropper"
+                  className="rounded-md px-1.5 py-0.5 text-[11px] text-nd-muted hover:text-nd-text"
+                >
+                  Esc
+                </button>
+              </div>
+            </div>
+          </div>
         )}
 
         {phase === "ready" && session && (
@@ -663,7 +771,7 @@ function Toolbar({
   const pct = Math.round(session.scale * 100);
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-4 z-10 flex justify-center px-3">
-      <div className="nd-scroll pointer-events-auto flex max-w-full items-center gap-0.5 overflow-x-auto rounded-xl border border-nd-border bg-nd-surface/95 p-1 shadow-xl shadow-black/40 backdrop-blur">
+      <div className="nd-hidescroll pointer-events-auto flex max-w-full items-center gap-0.5 overflow-x-auto rounded-xl border border-nd-border bg-nd-surface/95 p-1 shadow-xl shadow-black/40 backdrop-blur">
         <IconBtn label="Previous page" onClick={onPrev} disabled={session.page <= 1}><ChevronLeft size={16} /></IconBtn>
         <span className="whitespace-nowrap px-1.5 text-xs tabular-nums text-nd-muted">{session.page} / {session.numPages}</span>
         <IconBtn label="Next page" onClick={onNext} disabled={session.page >= session.numPages}><ChevronRight size={16} /></IconBtn>
