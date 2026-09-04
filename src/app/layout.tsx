@@ -14,6 +14,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL(
+    process.env.NEXT_PUBLIC_SITE_URL ?? "https://notedrift.com",
+  ),
   title: "NoteDrift — Open. Think. Create.",
   description:
     "A blank space for whatever's on your mind. An instant, local-first infinite canvas — no login, no clutter.",

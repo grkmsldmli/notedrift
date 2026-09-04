@@ -1,6 +1,7 @@
 "use client";
 
 import { memo, useState } from "react";
+import Link from "next/link";
 import {
   ChevronDown,
   Download,
@@ -11,6 +12,7 @@ import {
   Redo2,
   Trash2,
   Undo2,
+  Wrench,
 } from "lucide-react";
 import type { PageMeta } from "@/lib/types";
 import { IconButton } from "../ui/IconButton";
@@ -216,6 +218,15 @@ export const TopBar = memo(function TopBar(props: TopBarProps) {
 
       {/* Right: actions */}
       <div className="flex shrink-0 items-center gap-1">
+        {/* Secondary to New Page; hidden on small screens (available in More). */}
+        <Link
+          href="/tools"
+          className="nd-hit mr-0.5 hidden items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm text-nd-muted transition-colors hover:bg-white/5 hover:text-nd-text md:inline-flex"
+        >
+          <Wrench size={15} />
+          Convert Files
+        </Link>
+
         <button
           type="button"
           onClick={onNewPage}
@@ -283,6 +294,14 @@ export const TopBar = memo(function TopBar(props: TopBarProps) {
                   <Download size={16} className="text-nd-muted" />
                   <span className="flex-1 text-left">Export PNG</span>
                 </button>
+                <Link
+                  href="/tools"
+                  onClick={closeAll}
+                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-nd-text transition-colors hover:bg-white/5 md:hidden"
+                >
+                  <Wrench size={16} className="text-nd-muted" />
+                  <span className="flex-1 text-left">Convert Files</span>
+                </Link>
               </div>
             </>
           )}

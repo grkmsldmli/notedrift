@@ -266,20 +266,45 @@ illustrative until AI ships). Envisioned actions: organize thoughts, turn into a
 mind map, make a flowchart, group ideas, clean up a diagram, summarize a canvas.
 No AI UI now.
 
-## Convert Files — the acquisition / growth layer (future)
+## Convert Files — the acquisition / growth layer (Free Tools Phase 1: shipped)
 
-A separate, **public, no-signup** traffic layer aimed at search acquisition,
-running browser-side where practical:
+A separate, **public, no-signup, browser-side** traffic layer aimed at search
+acquisition, under `/tools`. Flow: search → converter tool → **Download** (or
+**Open NoteDrift**). Every conversion runs entirely in the browser — **no file
+bytes ever leave the device** (no upload to our server, Supabase, analytics, or
+any third-party API).
 
-```
-PNG↔JPG · WebP→JPG/PNG · SVG→PNG · image compress · image resize ·
-PNG/JPG→PDF · PDF→image · favicon
-```
+**Load-bearing policy — these tools are FREE acquisition utilities, not Pro
+features:**
 
-Flow: search → converter tool → **Download** or **"Open in NoteDrift"**. The
-important architectural constraint for 2.0: **future auth must not force `/tools`
-behind a login.** Public tools must remain possible. Do not implement converters
-now, and do not add dead converter UI.
+> **Basic file conversion, image compression, and image resizing are Free
+> acquisition utilities, not Pro features.**
+
+For Free Tools there is **no** signup, login, account requirement, conversion
+credit, daily limit, watermark, reduced-quality tier, or payment gate.
+Anonymous users get the exact same functionality as signed-in users, and
+conversions never consume NoteDrift Pro / cloud entitlements. Free Tools are
+**separate from NoteDrift Pro entitlements** (`plans.ts` is not consulted by any
+converter). NoteDrift monetization stays with the editor's Pro workspace (cloud,
+sync, history, sharing, professional NoteDrift exports, future AI), **never** the
+converters.
+
+**Shipped Phase-1 tools (10), all browser-side:** PNG→JPG · JPG→PNG · WebP→JPG ·
+WebP→PNG · SVG→PNG · Compress Image (JPG/PNG/WebP) · Resize Image · JPG→PDF ·
+PNG→PDF · PNG→ICO (valid multi-size 16/32/48 favicon). SVG is rendered only
+through a sandboxed `<img>` path so embedded scripts never execute.
+
+**Deferred (not shipped):** **PDF→PNG** and **PDF→JPG**. pdfjs (both v4 legacy and
+v6, real worker and main-thread) reliably parses a PDF but **hangs at
+`page.render()`** under the current Next 16 / Turbopack bundling — so shipping
+them would mean shipping broken tools. They're deferred until that rendering path
+is reliable (candidate fixes: a webpack build fallback for those routes, a
+prebuilt worker asset, or a different rasterizer). `images→PDF` uses pdf-lib and
+is unaffected. Also deferred for later phases: Office conversions, OCR,
+video/audio, ZIP tools, and any server-side conversion.
+
+Architectural constraint that still holds: **auth must never force `/tools`
+behind a login** — the routes are public and statically generated.
 
 ## Routing (future intent)
 
