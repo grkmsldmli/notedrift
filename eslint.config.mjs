@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Static assets served verbatim — never lint them (e.g. the self-hosted,
+    // minified pdf.js runtime copied into public/pdfjs/).
+    "public/**",
   ]),
 ]);
 

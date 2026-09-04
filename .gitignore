@@ -40,3 +40,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Generated PDF.js runtime assets (see scripts/copy-pdfjs-assets.mjs)
+/public/pdfjs/

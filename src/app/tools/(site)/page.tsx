@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, FileText } from "lucide-react";
 import {
   CATEGORY_LABELS,
   CATEGORY_ORDER,
@@ -32,6 +32,32 @@ export default function ToolsLanding() {
           device — every conversion runs right here in your browser.
         </p>
       </section>
+
+      <div className="mt-8">
+        <Link
+          href="/tools/edit-pdf"
+          className="group flex items-center gap-4 rounded-2xl border border-nd-accent/40 bg-nd-surface/60 p-5 transition-colors hover:border-nd-accent hover:bg-nd-surface"
+        >
+          <span className="nd-gradient flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-white">
+            <FileText size={20} />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="flex items-center gap-2">
+              <span className="text-sm font-semibold text-nd-text">Edit PDF</span>
+              <span className="rounded-full bg-nd-accent/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-nd-accent">
+                New
+              </span>
+            </span>
+            <span className="mt-0.5 block text-xs text-nd-muted">
+              Open and page through any PDF in your browser — private, instant, no upload.
+            </span>
+          </span>
+          <ArrowRight
+            size={18}
+            className="shrink-0 text-nd-muted transition-transform group-hover:translate-x-0.5 group-hover:text-nd-accent"
+          />
+        </Link>
+      </div>
 
       <div className="mt-12 space-y-10">
         {CATEGORY_ORDER.map((cat) => {

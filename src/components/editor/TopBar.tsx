@@ -219,6 +219,13 @@ export const TopBar = memo(function TopBar(props: TopBarProps) {
       <div className="flex shrink-0 items-center gap-1">
         {/* Secondary to New Page; hidden on small screens (available in More). */}
         <Link
+          href="/tools/edit-pdf"
+          className="nd-hit hidden items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm text-nd-muted transition-colors hover:bg-white/5 hover:text-nd-text lg:inline-flex"
+        >
+          <FileText size={15} />
+          Edit PDF
+        </Link>
+        <Link
           href="/tools"
           className="nd-hit mr-0.5 hidden items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm text-nd-muted transition-colors hover:bg-white/5 hover:text-nd-text md:inline-flex"
         >
@@ -293,6 +300,14 @@ export const TopBar = memo(function TopBar(props: TopBarProps) {
                   <Download size={16} className="text-nd-muted" />
                   <span className="flex-1 text-left">Export PNG</span>
                 </button>
+                <Link
+                  href="/tools/edit-pdf"
+                  onClick={closeAll}
+                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-nd-text transition-colors hover:bg-white/5 lg:hidden"
+                >
+                  <FileText size={16} className="text-nd-muted" />
+                  <span className="flex-1 text-left">Edit PDF</span>
+                </Link>
                 <Link
                   href="/tools"
                   onClick={closeAll}
