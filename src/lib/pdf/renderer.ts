@@ -168,11 +168,11 @@ export class PdfRenderer {
     return doc.numPages;
   }
 
-  /** Unscaled page size in PDF points. */
-  async pageSize(pageNumber: number): Promise<PdfPageSize> {
+  /** Unscaled page size in PDF points (optionally at a rotation override). */
+  async pageSize(pageNumber: number, rotation?: number): Promise<PdfPageSize> {
     const doc = this.requireDoc();
     const page = await doc.getPage(pageNumber);
-    const vp = page.getViewport({ scale: 1 });
+    const vp = page.getViewport({ scale: 1, rotation });
     page.cleanup();
     return { width: vp.width, height: vp.height, rotation: ((vp.rotation % 360) + 360) % 360 };
   }
@@ -186,6 +186,7 @@ export class PdfRenderer {
     pageNumber: number,
     scale: number,
     canvas: HTMLCanvasElement,
+    rotation?: number,
   ): Promise<RenderResult> {
     const doc = this.requireDoc();
     const token = ++this.renderToken;
@@ -198,9 +199,9 @@ export class PdfRenderer {
     }
 
     const dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
-    const base = page.getViewport({ scale: 1 });
+    const base = page.getViewport({ scale: 1, rotation });
     const eff = safeRenderScale(base.width, base.height, scale, dpr);
-    const viewport = page.getViewport({ scale: eff });
+    const viewport = page.getViewport({ scale: eff, rotation });
 
     const cssWidth = Math.max(1, Math.floor(viewport.width));
     const cssHeight = Math.max(1, Math.floor(viewport.height));
@@ -240,14 +241,15 @@ export class PdfRenderer {
     pageNumber: number,
     cssWidth: number,
     canvas: HTMLCanvasElement,
+    rotation?: number,
   ): Promise<boolean> {
     const doc = this.requireDoc();
     const page = await doc.getPage(pageNumber);
-    const base = page.getViewport({ scale: 1 });
+    const base = page.getViewport({ scale: 1, rotation });
     const scale = cssWidth / base.width;
     const dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
     const eff = safeRenderScale(base.width, base.height, scale, dpr);
-    const viewport = page.getViewport({ scale: eff });
+    const viewport = page.getViewport({ scale: eff, rotation });
 
     canvas.width = Math.max(1, Math.floor(viewport.width * dpr));
     canvas.height = Math.max(1, Math.floor(viewport.height * dpr));

@@ -12,7 +12,9 @@ export type OverlayType =
   | "rect"
   | "ellipse"
   | "line"
-  | "arrow";
+  | "arrow"
+  | "image"
+  | "whiteout";
 
 export type FontFamilyKey = "sans" | "serif" | "mono";
 export type TextAlign = "left" | "center" | "right";
@@ -101,6 +103,31 @@ export interface PdfArrowOverlay extends BaseSegment {
   readonly type: "arrow";
 }
 
+/** A raster image / signature image placed by the user. Bytes are a local data
+ *  URL (PNG or JPEG) — never uploaded. */
+export interface PdfImageOverlay extends BaseOverlay {
+  readonly type: "image";
+  readonly cx: number;
+  readonly cy: number;
+  readonly w: number;
+  readonly h: number;
+  readonly angle: number;
+  readonly src: string; // data:image/(png|jpeg);base64,...
+  readonly format: "png" | "jpg";
+}
+
+/** An opaque rectangle placed OVER source content (a cover, NOT secure
+ *  redaction — the underlying content is not removed). */
+export interface PdfWhiteoutOverlay extends BaseOverlay {
+  readonly type: "whiteout";
+  readonly cx: number;
+  readonly cy: number;
+  readonly w: number;
+  readonly h: number;
+  readonly angle: number;
+  readonly color: string;
+}
+
 export type PdfOverlay =
   | PdfTextOverlay
   | PdfFreehandOverlay
@@ -108,7 +135,9 @@ export type PdfOverlay =
   | PdfRectOverlay
   | PdfEllipseOverlay
   | PdfLineOverlay
-  | PdfArrowOverlay;
+  | PdfArrowOverlay
+  | PdfImageOverlay
+  | PdfWhiteoutOverlay;
 
 /* --------------------------------- ids ---------------------------------- */
 

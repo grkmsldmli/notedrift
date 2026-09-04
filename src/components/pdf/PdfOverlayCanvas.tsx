@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import {
   PdfOverlayController,
+  type DocSummary,
   type PdfSelection,
   type PdfTool,
   type PdfToolStyle,
@@ -20,7 +21,7 @@ export function PdfOverlayCanvas({
   tool,
   toolStyle,
   onController,
-  onHistory,
+  onDoc,
   onSelection,
   onToolReset,
 }: {
@@ -30,7 +31,7 @@ export function PdfOverlayCanvas({
   tool: PdfTool;
   toolStyle: PdfToolStyle;
   onController: (c: PdfOverlayController | null) => void;
-  onHistory: (s: { canUndo: boolean; canRedo: boolean; count: number }) => void;
+  onDoc: (s: DocSummary) => void;
   onSelection: (s: PdfSelection | null) => void;
   onToolReset: () => void;
 }) {
@@ -40,16 +41,16 @@ export function PdfOverlayCanvas({
   const prevDisplayRef = useRef<{ width: number; height: number } | null>(null);
 
   // Latest callbacks without re-creating the controller.
-  const cbRef = useRef({ onHistory, onSelection, onToolReset });
+  const cbRef = useRef({ onDoc, onSelection, onToolReset });
   useEffect(() => {
-    cbRef.current = { onHistory, onSelection, onToolReset };
+    cbRef.current = { onDoc, onSelection, onToolReset };
   });
 
   useEffect(() => {
     const el = canvasRef.current;
     if (!el) return;
     const controller = new PdfOverlayController(el, {
-      onHistory: (s) => cbRef.current.onHistory(s),
+      onDoc: (s) => cbRef.current.onDoc(s),
       onSelection: (s) => cbRef.current.onSelection(s),
       onToolReset: () => cbRef.current.onToolReset(),
     });

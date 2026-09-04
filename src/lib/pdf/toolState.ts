@@ -12,7 +12,10 @@ export type PdfTool =
   | "rect"
   | "ellipse"
   | "line"
-  | "arrow";
+  | "arrow"
+  | "image"
+  | "whiteout"
+  | "signature";
 
 export interface PdfToolStyle {
   strokeColor: string;
@@ -20,6 +23,7 @@ export interface PdfToolStyle {
   opacity: number; // 0..1 (pen / shapes)
   fill: string | null;
   highlightColor: string;
+  whiteoutColor: string;
   fontFamily: FontFamilyKey;
   fontSize: number; // display pts
   bold: boolean;
@@ -33,6 +37,7 @@ export const DEFAULT_TOOL_STYLE: PdfToolStyle = {
   opacity: 1,
   fill: null,
   highlightColor: "#fbe24a",
+  whiteoutColor: "#ffffff",
   fontFamily: "sans",
   fontSize: 18,
   bold: false,
@@ -64,6 +69,10 @@ export function controlsForTool(tool: PdfTool): ToolControls {
     case "line":
     case "arrow":
       return { color: true, strokeWidth: true, opacity: true, fill: false, text: false, highlight: false };
+    case "whiteout":
+      return { color: true, strokeWidth: false, opacity: true, fill: false, text: false, highlight: false };
+    case "image":
+      return { color: false, strokeWidth: false, opacity: true, fill: false, text: false, highlight: false };
     default:
       return { color: false, strokeWidth: false, opacity: false, fill: false, text: false, highlight: false };
   }
@@ -108,6 +117,10 @@ export function selectionOf(o: PdfOverlay): PdfSelection {
     case "line":
     case "arrow":
       return { ...base, color: o.stroke, strokeWidth: o.strokeWidth };
+    case "whiteout":
+      return { ...base, color: o.color };
+    case "image":
+      return { ...base };
   }
 }
 
@@ -148,5 +161,9 @@ export function applyStylePatch(o: PdfOverlay, patch: Partial<PdfSelection>): Pd
     case "line":
     case "arrow":
       return { ...o, stroke: patch.color ?? o.stroke, strokeWidth: patch.strokeWidth ?? o.strokeWidth, opacity: patch.opacity ?? o.opacity };
+    case "whiteout":
+      return { ...o, color: patch.color ?? o.color, opacity: patch.opacity ?? o.opacity };
+    case "image":
+      return { ...o, opacity: patch.opacity ?? o.opacity };
   }
 }

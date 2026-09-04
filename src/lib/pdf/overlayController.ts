@@ -34,8 +34,17 @@ import {
   createHistory,
   redo as histRedo,
   undo as histUndo,
-  type OverlayHistory,
+  type History,
 } from "./history.ts";
+import {
+  deletePage,
+  duplicatePage,
+  movePage,
+  rotatePage,
+  type DocState,
+  type PageSlot,
+} from "./document.ts";
+import { reprojectionMatrix, type PageGeometry } from "./coordinates.ts";
 import {
   applyStylePatch,
   DEFAULT_TOOL_STYLE,
@@ -47,13 +56,23 @@ import {
 
 export { DEFAULT_TOOL_STYLE };
 export type { PdfTool, PdfToolStyle, PdfSelection };
+export type { PageSlot } from "./document.ts";
 
 const HIGHLIGHT_OPACITY = 0.4;
 const MAX_DPR = 2;
 const MIN_DRAG = 4; // display pts; smaller drags are treated as clicks (ignored)
 
+const EMPTY_DOC: DocState = { pages: [], overlays: EMPTY_OVERLAY_STATE };
+
+export interface DocSummary {
+  pages: readonly PageSlot[];
+  canUndo: boolean;
+  canRedo: boolean;
+  overlayCount: number;
+}
+
 export interface ControllerCallbacks {
-  onHistory?: (state: { canUndo: boolean; canRedo: boolean; count: number }) => void;
+  onDoc?: (summary: DocSummary) => void;
   onSelection?: (selection: PdfSelection | null) => void;
   /** Fired after an action that should return the UI to the Select tool. */
   onToolReset?: () => void;
@@ -135,8 +154,8 @@ export class PdfOverlayController {
   private canvas: fabric.Canvas;
   private cb: ControllerCallbacks;
 
-  private state: OverlayState = EMPTY_OVERLAY_STATE;
-  private history: OverlayHistory = createHistory(EMPTY_OVERLAY_STATE);
+  private doc: DocState = EMPTY_DOC;
+  private history: History<DocState> = createHistory(EMPTY_DOC);
 
   private pageId: string | null = null;
   private displayW = 1;
@@ -173,19 +192,47 @@ export class PdfOverlayController {
 
   /* ------------------------------ public API ---------------------------- */
 
-  setState(state: OverlayState): void {
-    this.state = state;
-    this.history = createHistory(state);
+  /** Initialize the document (page slots) when a PDF opens. Resets history. */
+  init(pages: readonly PageSlot[], overlays: OverlayState = EMPTY_OVERLAY_STATE): void {
+    this.doc = { pages: pages.slice(), overlays };
+    this.history = createHistory(this.doc);
     if (this.pageId) this.reloadPage();
-    this.emitHistory();
+    this.emitDoc();
   }
 
-  getState(): OverlayState {
-    return this.state;
+  getOverlays(): OverlayState {
+    return this.doc.overlays;
   }
 
-  hasOverlays(): boolean {
-    return totalOverlayCount(this.state) > 0;
+  getPages(): readonly PageSlot[] {
+    return this.doc.pages;
+  }
+
+  hasEdits(): boolean {
+    // any overlays, or any page-structure change from the pristine 1:1 order
+    if (totalOverlayCount(this.doc.overlays) > 0) return true;
+    return this.doc.pages.some((p, i) => p.sourceIndex !== i || p.rotation !== 0)
+      || this.doc.pages.length !== new Set(this.doc.pages.map((p) => p.sourceIndex)).size;
+  }
+
+  /* ---- page operations (undoable) ---- */
+
+  rotateSlot(slotId: string, deltaDeg: number, oldGeom: PageGeometry, newGeom: PageGeometry): void {
+    const m = reprojectionMatrix(oldGeom, newGeom);
+    this.commitDoc(rotatePage(this.doc, slotId, deltaDeg, m));
+    if (slotId === this.pageId) this.reloadPage();
+  }
+
+  removeSlot(slotId: string): void {
+    this.commitDoc(deletePage(this.doc, slotId));
+  }
+
+  duplicateSlot(slotId: string): void {
+    this.commitDoc(duplicatePage(this.doc, slotId));
+  }
+
+  reorderSlots(from: number, to: number): void {
+    this.commitDoc(movePage(this.doc, from, to));
   }
 
   setPage(pageId: string, display: { width: number; height: number }, scale: number): void {
@@ -231,10 +278,10 @@ export class PdfOverlayController {
   updateSelected(patch: Partial<PdfSelection>): void {
     const active = this.canvas.getActiveObject() as NdObject | null;
     if (!active?.ndId || !this.pageId) return;
-    const prev = overlaysForPage(this.state, this.pageId).find((o) => o.id === active.ndId);
+    const prev = overlaysForPage(this.doc.overlays, this.pageId).find((o) => o.id === active.ndId);
     if (!prev) return;
     const next = applyStylePatch(prev, patch);
-    this.commitState(updateOverlay(this.state, next));
+    this.commitOverlays(updateOverlay(this.doc.overlays, next));
     this.reloadPage();
     this.selectById(next.id);
   }
@@ -244,7 +291,7 @@ export class PdfOverlayController {
     if (!active?.ndId || !this.pageId) return;
     this.canvas.discardActiveObject();
     this.canvas.remove(active); // O(1) — no full page rebuild
-    this.commitState(removeOverlay(this.state, this.pageId, active.ndId));
+    this.commitOverlays(removeOverlay(this.doc.overlays, this.pageId, active.ndId));
     this.canvas.requestRenderAll();
     this.emitSelection(null);
   }
@@ -252,18 +299,18 @@ export class PdfOverlayController {
   undo(): void {
     if (!canUndo(this.history)) return;
     this.history = histUndo(this.history);
-    this.state = this.history.present;
+    this.doc = this.history.present;
     this.reloadPage();
-    this.emitHistory();
+    this.emitDoc();
     this.emitSelection(null);
   }
 
   redo(): void {
     if (!canRedo(this.history)) return;
     this.history = histRedo(this.history);
-    this.state = this.history.present;
+    this.doc = this.history.present;
     this.reloadPage();
-    this.emitHistory();
+    this.emitDoc();
     this.emitSelection(null);
   }
 
@@ -304,7 +351,7 @@ export class PdfOverlayController {
     this.suppressSelection = true;
     this.canvas.discardActiveObject();
     this.canvas.remove(...this.canvas.getObjects());
-    for (const o of overlaysForPage(this.state, this.pageId)) this.addOverlayObject(o);
+    for (const o of overlaysForPage(this.doc.overlays, this.pageId)) this.addOverlayObject(o);
     this.canvas.requestRenderAll();
     this.suppressSelection = false;
     this.applyToolMode();
@@ -451,7 +498,58 @@ export class PdfOverlayController {
           opacity: o.opacity,
           objectCaching: false,
         });
+      case "whiteout":
+        return new fabric.Rect({
+          left: o.cx,
+          top: o.cy,
+          originX: "center",
+          originY: "center",
+          width: o.w,
+          height: o.h,
+          angle: o.angle,
+          fill: o.color,
+          strokeWidth: 0,
+          opacity: o.opacity,
+          objectCaching: false,
+        });
+      case "image": {
+        const el = this.imageCache.get(o.src);
+        if (!el) {
+          this.loadImage(o.src);
+          return null; // rebuilt once the image element has loaded
+        }
+        const nw = el.naturalWidth || el.width || 1;
+        const nh = el.naturalHeight || el.height || 1;
+        const img = new fabric.FabricImage(el, {
+          left: o.cx,
+          top: o.cy,
+          originX: "center",
+          originY: "center",
+          angle: o.angle,
+          opacity: o.opacity,
+          objectCaching: false,
+        });
+        img.scaleX = o.w / nw;
+        img.scaleY = o.h / nh;
+        return img;
+      }
     }
+  }
+
+  private imageCache = new Map<string, HTMLImageElement>();
+  private loadingImages = new Set<string>();
+
+  private loadImage(src: string): void {
+    if (this.loadingImages.has(src) || this.imageCache.has(src)) return;
+    this.loadingImages.add(src);
+    const el = new Image();
+    el.onload = () => {
+      this.loadingImages.delete(src);
+      this.imageCache.set(src, el);
+      if (!this.disposed) this.reloadPage();
+    };
+    el.onerror = () => this.loadingImages.delete(src);
+    el.src = src;
   }
 
   private configureObject(obj: fabric.Object, o: PdfOverlay): void {
@@ -541,6 +639,16 @@ export class PdfOverlayController {
         const p2 = fabric.util.transformPoint(new fabric.Point(rel.x2, rel.y2), m);
         return { ...prev, x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y };
       }
+      case "whiteout":
+      case "image":
+        return {
+          ...prev,
+          cx: obj.left ?? prev.cx,
+          cy: obj.top ?? prev.cy,
+          w: Math.abs((obj.width ?? prev.w) * (obj.scaleX || 1)),
+          h: Math.abs((obj.height ?? prev.h) * (obj.scaleY || 1)),
+          angle: obj.angle ?? 0,
+        };
     }
   }
 
@@ -629,13 +737,13 @@ export class PdfOverlayController {
 
   private onObjectModified(target: NdObject | undefined): void {
     if (!target?.ndId || !this.pageId) return;
-    const prev = overlaysForPage(this.state, this.pageId).find((o) => o.id === target.ndId);
+    const prev = overlaysForPage(this.doc.overlays, this.pageId).find((o) => o.id === target.ndId);
     if (!prev) return;
     const next =
       prev.type === "freehand"
         ? this.bakeFreehand(target, prev)
         : this.readObject(target, prev);
-    this.commitState(updateOverlay(this.state, next));
+    this.commitOverlays(updateOverlay(this.doc.overlays, next));
     // Freehand is rebuilt so its baseline matrix resets; keep it selected.
     if (prev.type === "freehand") {
       this.reloadPage();
@@ -668,18 +776,18 @@ export class PdfOverlayController {
   private onTextEditExit(target: NdObject | undefined): void {
     if (!target?.ndId || !this.pageId) return;
     const t = target as fabric.Textbox;
-    const prev = overlaysForPage(this.state, this.pageId).find((o) => o.id === target.ndId);
+    const prev = overlaysForPage(this.doc.overlays, this.pageId).find((o) => o.id === target.ndId);
     if (!prev || prev.type !== "text") return;
     const text = (t.text ?? "").replace(/\s+$/g, "");
     if (!text.trim()) {
       // empty text box → discard it
-      this.commitState(removeOverlay(this.state, this.pageId, prev.id));
+      this.commitOverlays(removeOverlay(this.doc.overlays, this.pageId, prev.id));
       this.reloadPage();
       this.emitSelection(null);
       return;
     }
     const next = this.readObject(target, prev);
-    this.commitState(updateOverlay(this.state, next));
+    this.commitOverlays(updateOverlay(this.doc.overlays, next));
   }
 
   private onSelectionChanged(): void {
@@ -711,7 +819,7 @@ export class PdfOverlayController {
       align: this.style.align,
       color: this.style.strokeColor,
     };
-    this.commitState(addOverlay(this.state, overlay));
+    this.commitOverlays(addOverlay(this.doc.overlays, overlay));
     this.tool = "select";
     const obj = this.addOverlayObject(overlay) as fabric.Textbox | null;
     this.applyToolMode();
@@ -720,6 +828,41 @@ export class PdfOverlayController {
       this.canvas.setActiveObject(obj);
       obj.enterEditing();
       this.canvas.requestRenderAll();
+    }
+  }
+
+  /** Place an image (or signature image) centered on the current page. The
+   *  caller passes the already-loaded element so it's cached and shown at once. */
+  placeImage(el: HTMLImageElement, src: string, format: "png" | "jpg"): void {
+    if (!this.pageId) return;
+    this.imageCache.set(src, el);
+    const nw = el.naturalWidth || el.width || 1;
+    const nh = el.naturalHeight || el.height || 1;
+    const ratio = Math.min((this.displayW * 0.5) / nw, (this.displayH * 0.5) / nh, 1);
+    const w = Math.max(24, nw * ratio);
+    const h = Math.max(24, nh * ratio);
+    const overlay: PdfOverlay = {
+      id: createOverlayId("img"),
+      pageId: this.pageId,
+      type: "image",
+      opacity: 1,
+      cx: this.displayW / 2,
+      cy: this.displayH / 2,
+      w,
+      h,
+      angle: 0,
+      src,
+      format,
+    };
+    this.commitOverlays(addOverlay(this.doc.overlays, overlay));
+    this.tool = "select";
+    const obj = this.addOverlayObject(overlay);
+    this.applyToolMode();
+    this.cb.onToolReset?.();
+    if (obj) {
+      this.canvas.setActiveObject(obj);
+      this.canvas.requestRenderAll();
+      this.emitSelectionFor(obj as NdObject);
     }
   }
 
@@ -750,6 +893,12 @@ export class PdfOverlayController {
       });
       (r as fabric.Object & { globalCompositeOperation?: string }).globalCompositeOperation = "multiply";
       return r;
+    }
+    if (this.tool === "whiteout") {
+      return new fabric.Rect({
+        left: cx, top: cy, originX: "center", originY: "center",
+        width: w, height: h, fill: s.whiteoutColor, strokeWidth: 0, opacity: 1,
+      });
     }
     if (this.tool === "ellipse") {
       return new fabric.Ellipse({
@@ -789,13 +938,15 @@ export class PdfOverlayController {
       const h = dy;
       if (this.tool === "highlight") {
         overlay = { id, pageId: this.pageId, type: "highlight", opacity: HIGHLIGHT_OPACITY, cx, cy, w, h, color: s.highlightColor };
+      } else if (this.tool === "whiteout") {
+        overlay = { id, pageId: this.pageId, type: "whiteout", opacity: 1, cx, cy, w, h, angle: 0, color: s.whiteoutColor };
       } else if (this.tool === "ellipse") {
         overlay = { id, pageId: this.pageId, type: "ellipse", opacity: s.opacity, cx, cy, w, h, angle: 0, stroke: s.strokeColor, strokeWidth: s.strokeWidth, fill: s.fill };
       } else {
         overlay = { id, pageId: this.pageId, type: "rect", opacity: s.opacity, cx, cy, w, h, angle: 0, radius: 0, stroke: s.strokeColor, strokeWidth: s.strokeWidth, fill: s.fill };
       }
     }
-    this.commitState(addOverlay(this.state, overlay));
+    this.commitOverlays(addOverlay(this.doc.overlays, overlay));
     this.addOverlayObject(overlay);
     this.canvas.requestRenderAll();
   }
@@ -850,7 +1001,7 @@ export class PdfOverlayController {
       width: this.style.strokeWidth,
       color: this.style.strokeColor,
     };
-    this.commitState(addOverlay(this.state, overlay));
+    this.commitOverlays(addOverlay(this.doc.overlays, overlay));
     this.addOverlayObject(overlay);
     this.canvas.requestRenderAll();
   }
@@ -883,17 +1034,23 @@ export class PdfOverlayController {
     }
   }
 
-  private commitState(next: OverlayState): void {
-    this.state = next;
-    this.history = commit(this.history, next);
-    this.emitHistory();
+  private commitOverlays(overlays: OverlayState): void {
+    this.commitDoc({ pages: this.doc.pages, overlays });
   }
 
-  private emitHistory(): void {
-    this.cb.onHistory?.({
+  private commitDoc(next: DocState): void {
+    if (next === this.doc) return;
+    this.doc = next;
+    this.history = commit(this.history, next);
+    this.emitDoc();
+  }
+
+  private emitDoc(): void {
+    this.cb.onDoc?.({
+      pages: this.doc.pages,
       canUndo: canUndo(this.history),
       canRedo: canRedo(this.history),
-      count: totalOverlayCount(this.state),
+      overlayCount: totalOverlayCount(this.doc.overlays),
     });
   }
 
@@ -902,7 +1059,7 @@ export class PdfOverlayController {
       this.emitSelection(null);
       return;
     }
-    const o = overlaysForPage(this.state, this.pageId).find((x) => x.id === obj.ndId);
+    const o = overlaysForPage(this.doc.overlays, this.pageId).find((x) => x.id === obj.ndId);
     this.emitSelection(o ? selectionOf(o) : null);
   }
 

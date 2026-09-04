@@ -11,12 +11,14 @@ import {
   rgb,
   StandardFonts,
   type PDFFont,
+  type PDFImage,
   type PDFPage,
 } from "pdf-lib";
 import fontkit from "@pdf-lib/fontkit";
 import { getStroke } from "perfect-freehand";
 import { displayToPdf, type PageGeometry, type Pt } from "./coordinates.ts";
 import { overlaysForPage, type OverlayState, type PdfOverlay } from "./overlays.ts";
+import type { PageSlot } from "./document.ts";
 import {
   arrowHead,
   boxCorners,
@@ -25,6 +27,7 @@ import {
   isWinAnsiText,
   liberationFile,
   pdfColor,
+  rotateDisplay,
   standardFontKey,
   toSvgPoint,
 } from "./exportGeometry.ts";
@@ -88,6 +91,26 @@ class ExportCtx {
     }
     return this.libCov;
   }
+
+  private imgs = new Map<string, PDFImage>();
+  async image(src: string, format: "png" | "jpg"): Promise<PDFImage> {
+    let im = this.imgs.get(src);
+    if (!im) {
+      const bytes = dataUrlToBytes(src);
+      im = format === "png" ? await this.doc.embedPng(bytes) : await this.doc.embedJpg(bytes);
+      this.imgs.set(src, im);
+    }
+    return im;
+  }
+}
+
+function dataUrlToBytes(dataUrl: string): Uint8Array {
+  const comma = dataUrl.indexOf(",");
+  const b64 = dataUrl.slice(comma + 1);
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
 }
 
 async function fetchFont(file: string): Promise<Uint8Array> {
@@ -99,25 +122,47 @@ async function fetchFont(file: string): Promise<Uint8Array> {
 export async function exportEditedPdf(opts: {
   originalBytes: Uint8Array;
   overlays: OverlayState;
-  pageIds: readonly string[];
+  pages: readonly PageSlot[];
   filename: string;
 }): Promise<ExportResult> {
-  const doc = await PDFDocument.load(opts.originalBytes, {
+  const src = await PDFDocument.load(opts.originalBytes, {
     updateMetadata: false,
     ignoreEncryption: true,
   });
+  const slots = opts.pages;
+  const srcCount = src.getPageCount();
+  // Fast path: unchanged page structure → edit the original in place, preserving
+  // ALL source content/annotations/forms. Page ops (reorder/rotate/delete/
+  // duplicate) → rebuild via copyPages and apply the new structure.
+  const pristine =
+    slots.length === srcCount && slots.every((s, i) => s.sourceIndex === i && s.rotation === 0);
+
+  let doc: PDFDocument;
+  let pageList: PDFPage[];
+  if (pristine) {
+    doc = src;
+    pageList = doc.getPages();
+  } else {
+    doc = await PDFDocument.create();
+    const copied = await doc.copyPages(src, slots.map((s) => s.sourceIndex));
+    pageList = [];
+    for (let i = 0; i < slots.length; i++) {
+      const page = copied[i];
+      doc.addPage(page);
+      page.setRotation(degrees((page.getRotation().angle + slots[i].rotation) % 360));
+      pageList.push(page);
+    }
+  }
   doc.registerFontkit(fontkit);
-  const pages = doc.getPages();
   const ctx = new ExportCtx(doc);
   let unsupportedText = false;
 
-  for (let i = 0; i < pages.length; i++) {
-    const pageId = opts.pageIds[i];
-    if (!pageId) continue;
-    const list = overlaysForPage(opts.overlays, pageId);
+  for (let i = 0; i < slots.length; i++) {
+    const slot = slots[i];
+    const list = overlaysForPage(opts.overlays, slot.id);
     if (list.length === 0) continue;
 
-    const page = pages[i];
+    const page = pageList[i];
     const crop = page.getCropBox();
     const geom: PageGeometry = {
       width: crop.width,
@@ -235,6 +280,29 @@ async function drawOverlay(
       const { tip, left, right } = arrowHead(o.x1, o.y1, o.x2, o.y2, o.strokeWidth);
       const head = [tip, left, right].map(toSvg);
       page.drawSvgPath(closedPath(head), { x: 0, y: 0, color: rgbOf(o.stroke), opacity: o.opacity });
+      return false;
+    }
+    case "whiteout": {
+      const pts = boxCorners(o.cx, o.cy, o.w, o.h, o.angle).map(toSvg);
+      page.drawSvgPath(closedPath(pts), { x: 0, y: 0, color: rgbOf(o.color), opacity: o.opacity });
+      return false;
+    }
+    case "image": {
+      const img = await ctx.image(o.src, o.format);
+      // Anchor at the image's display bottom-left; derive the PDF rotation from
+      // the mapped bottom edge so page rotation + overlay angle both apply.
+      const c = { x: o.cx, y: o.cy };
+      const bl = toPdf(rotateDisplay({ x: o.cx - o.w / 2, y: o.cy + o.h / 2 }, c, o.angle));
+      const br = toPdf(rotateDisplay({ x: o.cx + o.w / 2, y: o.cy + o.h / 2 }, c, o.angle));
+      const rot = (Math.atan2(br.y - bl.y, br.x - bl.x) * 180) / Math.PI;
+      page.drawImage(img, {
+        x: bl.x,
+        y: bl.y,
+        width: o.w,
+        height: o.h,
+        rotate: degrees(rot),
+        opacity: o.opacity,
+      });
       return false;
     }
     case "text":

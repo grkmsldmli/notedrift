@@ -5,9 +5,12 @@ import {
   ArrowUpRight,
   Circle,
   Highlighter,
+  Image as ImageIcon,
   Minus,
   MousePointer2,
   Pencil,
+  RectangleHorizontal,
+  Signature,
   Square,
   Type,
 } from "lucide-react";
@@ -89,6 +92,18 @@ export function PdfToolRail({
 
       <ToolButton label="Arrow" isActive={tool === "arrow"} onClick={() => onTool("arrow")}>
         <ArrowUpRight size={17} />
+      </ToolButton>
+
+      <span className="mx-0.5 my-0.5 h-px w-5 bg-nd-border md:h-5 md:w-px" />
+
+      <ToolButton label="Image" isActive={false} onClick={() => onTool("image")}>
+        <ImageIcon size={17} />
+      </ToolButton>
+      <ToolButton label="Whiteout / Cover" isActive={tool === "whiteout"} onClick={() => onTool("whiteout")}>
+        <RectangleHorizontal size={17} />
+      </ToolButton>
+      <ToolButton label="Signature" isActive={false} onClick={() => onTool("signature")}>
+        <Signature size={17} />
       </ToolButton>
     </div>
   );

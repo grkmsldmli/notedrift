@@ -1,46 +1,44 @@
-// Undo/redo for PDF overlay edits — dedicated to this editor, never the main
-// canvas history. Stores lightweight OverlayState snapshots (unchanged pages
-// keep reference identity, so a snapshot is a small map, never PDF bytes or page
-// bitmaps). Bounded so browser memory can't grow without limit.
+// Bounded snapshot undo/redo. Generic over the snapshotted state so it can hold
+// the overlay model in tests and the full document state (page slots + overlays)
+// in the editor. Snapshots share references for unchanged parts, so a snapshot
+// is a small object — never PDF bytes or page bitmaps.
 
-import type { OverlayState } from "./overlays.ts";
-
-export interface OverlayHistory {
-  readonly past: readonly OverlayState[];
-  readonly present: OverlayState;
-  readonly future: readonly OverlayState[];
+export interface History<T> {
+  readonly past: readonly T[];
+  readonly present: T;
+  readonly future: readonly T[];
 }
 
 export const MAX_HISTORY = 120;
 
-export function createHistory(present: OverlayState): OverlayHistory {
+export function createHistory<T>(present: T): History<T> {
   return { past: [], present, future: [] };
 }
 
-/** Record a new state as the present, clearing the redo stack. A no-op change
- *  (same reference) is ignored so it doesn't pollute the undo stack. */
-export function commit(h: OverlayHistory, next: OverlayState): OverlayHistory {
+/** Record a new state as the present, clearing redo. A no-op (same reference) is
+ *  ignored so it doesn't pollute the undo stack. */
+export function commit<T>(h: History<T>, next: T): History<T> {
   if (next === h.present) return h;
   const past = [...h.past, h.present];
   const trimmed = past.length > MAX_HISTORY ? past.slice(past.length - MAX_HISTORY) : past;
   return { past: trimmed, present: next, future: [] };
 }
 
-export function canUndo(h: OverlayHistory): boolean {
+export function canUndo<T>(h: History<T>): boolean {
   return h.past.length > 0;
 }
 
-export function canRedo(h: OverlayHistory): boolean {
+export function canRedo<T>(h: History<T>): boolean {
   return h.future.length > 0;
 }
 
-export function undo(h: OverlayHistory): OverlayHistory {
+export function undo<T>(h: History<T>): History<T> {
   if (!h.past.length) return h;
   const present = h.past[h.past.length - 1];
   return { past: h.past.slice(0, -1), present, future: [h.present, ...h.future] };
 }
 
-export function redo(h: OverlayHistory): OverlayHistory {
+export function redo<T>(h: History<T>): History<T> {
   if (!h.future.length) return h;
   const present = h.future[0];
   return { past: [...h.past, h.present], present, future: h.future.slice(1) };
