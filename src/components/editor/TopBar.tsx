@@ -17,7 +17,7 @@ import {
 import type { PageMeta } from "@/lib/types";
 import { IconButton } from "../ui/IconButton";
 import { AccountButton } from "../auth/AccountButton";
-import { Logo } from "./Logo";
+import { NavArrows, BrandHome } from "@/components/nav/HeaderNav";
 
 interface TopBarProps {
   pages: PageMeta[];
@@ -87,12 +87,11 @@ export const TopBar = memo(function TopBar(props: TopBarProps) {
 
   return (
     <header className="relative z-30 flex h-14 shrink-0 items-center justify-between gap-3 border-b border-nd-border bg-nd-bg px-3 sm:px-4">
-      {/* Left: brand + page switcher */}
+      {/* Left: nav + brand + page switcher */}
       <div className="flex min-w-0 items-center gap-2">
-        <Logo size={26} />
-        <span className="hidden text-[15px] font-semibold tracking-tight text-nd-text sm:inline">
-          NoteDrift
-        </span>
+        {/* Back/forward: hidden on phones so the tight 375px header can't overflow. */}
+        <NavArrows className="hidden sm:flex" />
+        <BrandHome size={26} wordmarkClassName="hidden sm:inline" />
         <span className="ml-1 hidden text-xs text-nd-muted md:inline">
           Open. <span className="nd-gradient-text font-semibold">Think.</span>{" "}
           Create.
@@ -133,7 +132,7 @@ export const TopBar = memo(function TopBar(props: TopBarProps) {
               <span className="max-w-[110px] truncate sm:max-w-[130px]">
                 {currentTitle}
               </span>
-              <ChevronDown size={14} />
+              <ChevronDown size={14} className="hidden sm:block" />
             </button>
           )}
 
