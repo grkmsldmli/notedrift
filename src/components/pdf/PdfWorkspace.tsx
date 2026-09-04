@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   ChevronLeft,
   ChevronRight,
+  Download,
   FileUp,
   Loader2,
   Minus,
@@ -60,12 +61,15 @@ export function PdfWorkspace() {
   const [selection, setSelection] = useState<PdfSelection | null>(null);
   const [edit, setEdit] = useState<EditState>({ canUndo: false, canRedo: false, count: 0 });
   const [overlayView, setOverlayView] = useState<OverlayView | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [toast, setToast] = useState<{ kind: "info" | "error"; message: string } | null>(null);
 
   const rendererRef = useRef<PdfRenderer | null>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const pageWrapRef = useRef<HTMLDivElement>(null);
   const pageCanvasRef = useRef<HTMLCanvasElement>(null);
   const controllerRef = useRef<PdfOverlayController | null>(null);
+  const originalBytesRef = useRef<Uint8Array | null>(null);
   const pageSizeCacheRef = useRef<Map<number, PdfPageSize>>(new Map());
   const sessionRef = useRef<PdfDocumentSession | null>(null);
   const toolRef = useRef<PdfTool>("select");
@@ -105,6 +109,8 @@ export function PdfWorkspace() {
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
       const byteLength = bytes.byteLength;
+      // Keep an independent copy for export — pdf.js may detach the buffer.
+      originalBytesRef.current = bytes.slice();
       const numPages = await nextRenderer.open(bytes);
       const first = await nextRenderer.pageSize(1);
       pageSizeCacheRef.current.set(1, first);
@@ -131,6 +137,7 @@ export function PdfWorkspace() {
     }
     await rendererRef.current?.destroy();
     rendererRef.current = null;
+    originalBytesRef.current = null;
     setRenderer(null);
     pageSizeCacheRef.current = new Map();
     setSession(null);
@@ -297,6 +304,49 @@ export function PdfWorkspace() {
     if (t !== "select") setSelection(null);
   }, []);
 
+  // Auto-dismiss toast.
+  useEffect(() => {
+    if (!toast) return;
+    const id = window.setTimeout(() => setToast(null), 5000);
+    return () => window.clearTimeout(id);
+  }, [toast]);
+
+  const handleDownload = useCallback(async () => {
+    if (exporting) return; // guard against double export
+    const controller = controllerRef.current;
+    const original = originalBytesRef.current;
+    const s = sessionRef.current;
+    if (!controller || !original || !s) return;
+    setExporting(true);
+    setToast(null);
+    controller.flush(); // commit any in-progress text edit first
+    try {
+      const { exportEditedPdf } = await import("@/lib/pdf/export");
+      const result = await exportEditedPdf({
+        originalBytes: original,
+        overlays: controller.getState(),
+        pageIds: s.pageIds,
+        filename: s.filename,
+      });
+      const blob = new Blob([result.bytes as BlobPart], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = result.filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 4000);
+      if (result.unsupportedText) {
+        setToast({ kind: "info", message: "Some characters weren't in the export fonts and were omitted." });
+      }
+    } catch {
+      setToast({ kind: "error", message: "Couldn't prepare the PDF. Please try again." });
+    } finally {
+      setExporting(false);
+    }
+  }, [exporting]);
+
   // Keyboard: page nav (P1) + editing shortcuts (P2), never while typing.
   useEffect(() => {
     if (phase !== "ready") return;
@@ -445,6 +495,8 @@ export function PdfWorkspace() {
       <Header
         session={session}
         edit={edit}
+        exporting={exporting}
+        onDownload={handleDownload}
         onClose={closeDoc}
         onUndo={() => controllerRef.current?.undo()}
         onRedo={() => controllerRef.current?.redo()}
@@ -524,6 +576,23 @@ export function PdfWorkspace() {
             onFitWidth={() => applyFit("width")}
           />
         )}
+
+        {toast && (
+          <div
+            role="status"
+            className="pointer-events-none absolute inset-x-0 bottom-16 z-30 flex justify-center px-3"
+          >
+            <div
+              className={`pointer-events-auto max-w-sm rounded-lg border px-3.5 py-2 text-xs shadow-xl backdrop-blur ${
+                toast.kind === "error"
+                  ? "border-red-500/30 bg-red-500/15 text-red-200"
+                  : "border-nd-border bg-nd-surface/95 text-nd-text"
+              }`}
+            >
+              {toast.message}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -534,12 +603,16 @@ export function PdfWorkspace() {
 function Header({
   session,
   edit,
+  exporting,
+  onDownload,
   onClose,
   onUndo,
   onRedo,
 }: {
   session: PdfDocumentSession | null;
   edit: EditState;
+  exporting: boolean;
+  onDownload: () => void;
   onClose: () => void;
   onUndo: () => void;
   onRedo: () => void;
@@ -548,14 +621,14 @@ function Header({
     <header className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-nd-border bg-nd-bg/95 px-3 backdrop-blur sm:px-4">
       <div className="flex min-w-0 items-center gap-1.5">
         <NavArrows />
-        <BrandHome wordmarkClassName="hidden md:inline" />
+        <BrandHome wordmarkClassName="hidden lg:inline" />
         {session && (
           <>
             <span className="mx-1 hidden h-5 w-px shrink-0 bg-nd-border sm:block" />
             <span className="min-w-0 truncate text-sm text-nd-text" title={session.filename}>
               {session.filename}
             </span>
-            <span className="hidden shrink-0 text-xs text-nd-muted sm:inline">
+            <span className="hidden shrink-0 text-xs text-nd-muted md:inline">
               · {session.numPages} page{session.numPages === 1 ? "" : "s"}
             </span>
           </>
@@ -573,10 +646,21 @@ function Header({
           <button
             type="button"
             onClick={onClose}
+            aria-label="Open another PDF"
             className="nd-hit inline-flex items-center gap-1.5 rounded-lg border border-nd-border px-2.5 py-1.5 text-xs text-nd-text transition-colors hover:bg-white/5"
           >
             <FileUp size={14} />
-            <span className="hidden sm:inline">Open another</span>
+            <span className="hidden lg:inline">Open another</span>
+          </button>
+          <button
+            type="button"
+            onClick={onDownload}
+            disabled={exporting}
+            aria-label="Download edited PDF"
+            className="nd-hit nd-gradient inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:opacity-90 disabled:opacity-60"
+          >
+            {exporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+            <span className="hidden sm:inline">{exporting ? "Preparing…" : "Download PDF"}</span>
           </button>
         </div>
       )}

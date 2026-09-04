@@ -43,3 +43,6 @@ next-env.d.ts
 
 # Generated PDF.js runtime assets (see scripts/copy-pdfjs-assets.mjs)
 /public/pdfjs/
+
+# temporary PDF test fixtures (regenerated during dev testing)
+/public/__test/

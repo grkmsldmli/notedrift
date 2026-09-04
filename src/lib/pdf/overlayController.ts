@@ -67,7 +67,11 @@ const FONT_STACK: Record<FontFamilyKey, string> = {
 
 const ACCENT = "#5b8cff";
 
-type NdObject = fabric.Object & { ndId?: string; ndType?: PdfOverlay["type"] };
+type NdObject = fabric.Object & {
+  ndId?: string;
+  ndType?: PdfOverlay["type"];
+  ndBaseMatrix?: number[];
+};
 
 function syncDpr(): void {
   if (typeof window !== "undefined") {
@@ -316,6 +320,12 @@ export class PdfOverlayController {
     obj.selectable = select;
     obj.evented = select;
     this.canvas.add(obj);
+    // Freehand bakes transforms into its points on modify; capture the baseline
+    // matrix so a later move/scale/rotate can be applied to the stored points.
+    if (o.type === "freehand") {
+      obj.setCoords();
+      (obj as NdObject).ndBaseMatrix = obj.calcTransformMatrix();
+    }
     return obj;
   }
 
@@ -362,12 +372,9 @@ export class PdfOverlayController {
       case "freehand": {
         const d = outlinePath(o.points, o.width);
         if (!d) return null;
+        // No transform: the path is built from absolute display points, so it
+        // renders exactly where it was drawn.
         return new fabric.Path(d, {
-          left: o.left,
-          top: o.top,
-          scaleX: o.scaleX,
-          scaleY: o.scaleY,
-          angle: o.angle,
           fill: o.color,
           strokeWidth: 0,
           opacity: o.opacity,
@@ -494,14 +501,7 @@ export class PdfOverlayController {
         };
       }
       case "freehand":
-        return {
-          ...prev,
-          left: obj.left ?? prev.left,
-          top: obj.top ?? prev.top,
-          scaleX: obj.scaleX || 1,
-          scaleY: obj.scaleY || 1,
-          angle: obj.angle ?? 0,
-        };
+        return prev; // handled by bakeFreehand
       case "highlight":
         return {
           ...prev,
@@ -631,9 +631,33 @@ export class PdfOverlayController {
     if (!target?.ndId || !this.pageId) return;
     const prev = overlaysForPage(this.state, this.pageId).find((o) => o.id === target.ndId);
     if (!prev) return;
-    const next = this.readObject(target, prev);
+    const next =
+      prev.type === "freehand"
+        ? this.bakeFreehand(target, prev)
+        : this.readObject(target, prev);
     this.commitState(updateOverlay(this.state, next));
-    this.emitSelectionFor(target);
+    // Freehand is rebuilt so its baseline matrix resets; keep it selected.
+    if (prev.type === "freehand") {
+      this.reloadPage();
+      this.selectById(next.id);
+    } else {
+      this.emitSelectionFor(target);
+    }
+  }
+
+  /** Bake a freehand object's move/scale/rotate delta into its stored points so
+   *  the model always holds absolute display geometry (identity transform). */
+  private bakeFreehand(obj: NdObject, prev: PdfOverlay): PdfOverlay {
+    if (prev.type !== "freehand") return prev;
+    const base = obj.ndBaseMatrix;
+    const now = obj.calcTransformMatrix();
+    if (!base) return prev;
+    const delta = fabric.util.multiplyTransformMatrices(now, fabric.util.invertTransform(base as fabric.TMat2D));
+    const points = prev.points.map((p) => {
+      const q = fabric.util.transformPoint(new fabric.Point(p[0], p[1]), delta);
+      return [q.x, q.y] as [number, number];
+    });
+    return { ...prev, points };
   }
 
   private onTextChanged(target: NdObject | undefined): void {
@@ -817,8 +841,6 @@ export class PdfOverlayController {
     if (points.length < 2 || !this.pageId) return;
     const d = outlinePath(points, this.style.strokeWidth);
     if (!d) return;
-    // A freshly built path's left/top is its bbox origin — the identity placement.
-    const probe = new fabric.Path(d);
     const overlay: PdfOverlay = {
       id: createOverlayId("pen"),
       pageId: this.pageId,
@@ -827,11 +849,6 @@ export class PdfOverlayController {
       points,
       width: this.style.strokeWidth,
       color: this.style.strokeColor,
-      left: probe.left ?? 0,
-      top: probe.top ?? 0,
-      scaleX: 1,
-      scaleY: 1,
-      angle: 0,
     };
     this.commitState(addOverlay(this.state, overlay));
     this.addOverlayObject(overlay);

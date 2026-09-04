@@ -46,17 +46,13 @@ export interface PdfTextOverlay extends BaseOverlay {
 
 export interface PdfFreehandOverlay extends BaseOverlay {
   readonly type: "freehand";
-  /** Raw input samples in display space (kept for faithful vector re-export). */
+  /** Absolute display-space samples. Move/scale/rotate is baked straight into
+   *  these points (never a separate transform), so the outline is always the
+   *  current geometry — width changes regenerate the stroke around the same
+   *  points (no drift), and export needs no transform reconstruction. */
   readonly points: readonly (readonly [number, number])[];
   readonly width: number; // display pts
   readonly color: string;
-  /** Display-space placement transform (identity at creation; move/scale/rotate
-   *  update it without touching `points`). */
-  readonly left: number;
-  readonly top: number;
-  readonly scaleX: number;
-  readonly scaleY: number;
-  readonly angle: number;
 }
 
 export interface PdfHighlightOverlay extends BaseOverlay {
