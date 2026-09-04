@@ -119,8 +119,11 @@ export function reprojectOverlay(o: PdfOverlay, m: Matrix, angleDelta: number): 
       return { ...o, x: p.x, y: p.y, angle: o.angle + angleDelta };
     }
     case "highlight": {
+      // Highlight has no angle field, so a 90/270 rotation must swap w/h to keep
+      // it aligned to the content.
       const c = map(m, o.cx, o.cy);
-      return { ...o, cx: c.x, cy: c.y };
+      const swap = (((Math.round(angleDelta / 90) % 2) + 2) % 2) === 1;
+      return { ...o, cx: c.x, cy: c.y, w: swap ? o.h : o.w, h: swap ? o.w : o.h };
     }
     case "rect":
     case "ellipse":

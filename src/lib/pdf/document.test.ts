@@ -103,6 +103,18 @@ test("movePage reorders slots without touching overlays", () => {
   assert.equal(movePage(doc, 0, 0), doc); // no-op
 });
 
+test("reprojectOverlay swaps a highlight's w/h on a 90° rotation", () => {
+  const m = reprojectionMatrix(LETTER, { ...LETTER, rotation: 90 });
+  const hl = { id: "h", pageId: "pg-1", type: "highlight" as const, opacity: 0.4, cx: 100, cy: 100, w: 200, h: 20, color: "#ff0" };
+  const r = reprojectOverlay(hl, m, 90) as typeof hl;
+  assert.equal(r.w, 20);
+  assert.equal(r.h, 200);
+  // 180° keeps w/h
+  const r180 = reprojectOverlay(hl, reprojectionMatrix(LETTER, { ...LETTER, rotation: 180 }), 180) as typeof hl;
+  assert.equal(r180.w, 200);
+  assert.equal(r180.h, 20);
+});
+
 test("reprojectOverlay with identity is a no-op except angle delta", () => {
   const r = reprojectOverlay(rect("r", "pg-1", 10, 20), IDENTITY, 0) as PdfRectOverlay;
   assert.deepEqual({ cx: r.cx, cy: r.cy, angle: r.angle }, { cx: 10, cy: 20, angle: 0 });

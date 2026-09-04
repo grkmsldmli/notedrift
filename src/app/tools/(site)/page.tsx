@@ -49,7 +49,7 @@ export default function ToolsLanding() {
               </span>
             </span>
             <span className="mt-0.5 block text-xs text-nd-muted">
-              Open and page through any PDF in your browser — private, instant, no upload.
+              Add text, highlight, draw, sign, add images, and arrange pages — free, right in your browser.
             </span>
           </span>
           <ArrowRight

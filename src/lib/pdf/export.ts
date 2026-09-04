@@ -97,7 +97,13 @@ class ExportCtx {
     let im = this.imgs.get(src);
     if (!im) {
       const bytes = dataUrlToBytes(src);
-      im = format === "png" ? await this.doc.embedPng(bytes) : await this.doc.embedJpg(bytes);
+      // Sniff the real format from magic bytes — the declared format comes from a
+      // (possibly wrong) MIME/extension, and embedding with the wrong decoder
+      // would throw and abort the whole export.
+      const isPng = bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47;
+      const isJpg = bytes[0] === 0xff && bytes[1] === 0xd8;
+      const usePng = isPng || (!isJpg && format === "png");
+      im = usePng ? await this.doc.embedPng(bytes) : await this.doc.embedJpg(bytes);
       this.imgs.set(src, im);
     }
     return im;
@@ -181,7 +187,11 @@ export async function exportEditedPdf(opts: {
     };
 
     for (const o of list) {
-      if (await drawOverlay(page, geom, o, ctx, toPdf, toSvg)) unsupportedText = true;
+      try {
+        if (await drawOverlay(page, geom, o, ctx, toPdf, toSvg)) unsupportedText = true;
+      } catch {
+        // A single malformed overlay must not abort the whole export; skip it.
+      }
     }
   }
 
@@ -340,7 +350,7 @@ async function drawTextOverlay(
   ctx: ExportCtx,
   toPdf: (p: Pt) => Pt,
 ): Promise<boolean> {
-  const rawLines = o.text.split("\n");
+  const rawLines = o.text.replace(/\t/g, "    ").split("\n");
   let font: PDFFont;
   let lines = rawLines;
   let unsupported = false;
@@ -365,23 +375,30 @@ async function drawTextOverlay(
   const color = rgbOf(o.color);
   const ascent = font.heightAtSize(size, { descender: false });
   const lineHeight = size * 1.16; // Fabric Textbox default
+  const origin = { x: o.x, y: o.y };
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (!line) continue;
     const lineWidth = font.widthOfTextAtSize(line, size);
-    let xDisp = o.x;
-    if (o.align === "center") xDisp = o.x + (o.width - lineWidth) / 2;
-    else if (o.align === "right") xDisp = o.x + (o.width - lineWidth);
-    const baseline = toPdf({ x: xDisp, y: o.y + ascent + i * lineHeight });
+    let xOff = 0;
+    if (o.align === "center") xOff = (o.width - lineWidth) / 2;
+    else if (o.align === "right") xOff = o.width - lineWidth;
+    const baseY = o.y + ascent + i * lineHeight;
+    // Apply the text's own angle about its origin, then map through the page
+    // transform; deriving the PDF rotation from the mapped baseline direction
+    // makes glyphs orient correctly on rotated pages too.
+    const start = toPdf(rotateDisplay({ x: o.x + xOff, y: baseY }, origin, o.angle));
+    const along = toPdf(rotateDisplay({ x: o.x + xOff + 10, y: baseY }, origin, o.angle));
+    const rot = (Math.atan2(along.y - start.y, along.x - start.x) * 180) / Math.PI;
     page.drawText(line, {
-      x: baseline.x,
-      y: baseline.y,
+      x: start.x,
+      y: start.y,
       size,
       font,
       color,
       opacity: o.opacity,
-      rotate: degrees(-o.angle),
+      rotate: degrees(rot),
     });
   }
   return unsupported;

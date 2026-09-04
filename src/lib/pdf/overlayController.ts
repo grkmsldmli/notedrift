@@ -327,6 +327,8 @@ export class PdfOverlayController {
   dispose(): void {
     this.disposed = true;
     this.cancelDrawing();
+    this.imageCache.clear();
+    this.loadingImages.clear();
     try {
       void this.canvas.dispose();
     } catch {

@@ -1,17 +1,58 @@
 import type { Metadata } from "next";
 import { PdfWorkspace } from "@/components/pdf/PdfWorkspace";
 
-// NOINDEX for now: this is the P1 viewer shell. It gets indexed once the actual
-// editing capability ships (a later phase), so search results never point at a
-// half-built feature.
+const DESCRIPTION =
+  "Add text, highlight, draw, sign, add images, and rotate, reorder or delete PDF pages — directly in your browser. Free, no signup, and your files never leave your device.";
+
 export const metadata: Metadata = {
-  title: "Edit PDF — NoteDrift",
-  description:
-    "Open and page through any PDF right in your browser. Private and instant — nothing is uploaded.",
-  robots: { index: false, follow: false },
+  title: "Edit PDF Online — Free & Private | NoteDrift",
+  description: DESCRIPTION,
   alternates: { canonical: "/tools/edit-pdf" },
+  openGraph: {
+    title: "Edit PDF Online — Free & Private",
+    description: DESCRIPTION,
+    type: "website",
+    url: "/tools/edit-pdf",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Edit PDF Online — Free & Private | NoteDrift",
+    description: DESCRIPTION,
+  },
+};
+
+const JSON_LD = {
+  "@context": "https://schema.org",
+  "@type": "WebApplication",
+  name: "NoteDrift PDF Editor",
+  url: "https://notedrift.com/tools/edit-pdf",
+  applicationCategory: "BusinessApplication",
+  operatingSystem: "Web browser",
+  browserRequirements: "Requires a modern web browser",
+  offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+  description: DESCRIPTION,
+  featureList: [
+    "Add text to a PDF",
+    "Highlight",
+    "Draw with a pen",
+    "Rectangles, ellipses, lines and arrows",
+    "Add images",
+    "Whiteout / cover content",
+    "Add a signature",
+    "Rotate, reorder, duplicate and delete pages",
+    "Download the edited PDF",
+  ],
 };
 
 export default function EditPdfPage() {
-  return <PdfWorkspace />;
+  return (
+    <>
+      <script
+        type="application/ld+json"
+        // eslint-disable-next-line react/no-danger
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(JSON_LD) }}
+      />
+      <PdfWorkspace />
+    </>
+  );
 }

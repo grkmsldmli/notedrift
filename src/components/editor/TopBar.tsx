@@ -223,7 +223,7 @@ export const TopBar = memo(function TopBar(props: TopBarProps) {
           className="nd-hit hidden items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm text-nd-muted transition-colors hover:bg-white/5 hover:text-nd-text lg:inline-flex"
         >
           <FileText size={15} />
-          Edit PDF
+          Edit PDF Files
         </Link>
         <Link
           href="/tools"
@@ -306,7 +306,7 @@ export const TopBar = memo(function TopBar(props: TopBarProps) {
                   className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-nd-text transition-colors hover:bg-white/5 lg:hidden"
                 >
                   <FileText size={16} className="text-nd-muted" />
-                  <span className="flex-1 text-left">Edit PDF</span>
+                  <span className="flex-1 text-left">Edit PDF Files</span>
                 </Link>
                 <Link
                   href="/tools"

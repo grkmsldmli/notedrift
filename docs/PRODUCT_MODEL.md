@@ -306,6 +306,51 @@ video/audio, ZIP tools, and any server-side conversion.
 Architectural constraint that still holds: **auth must never force `/tools`
 behind a login** — the routes are public and statically generated.
 
+## PDF Editor (`/tools/edit-pdf`) — shipped V1
+
+A free, browser-side PDF editor. **Anonymous = full access.** No signup, no
+watermark, no credits, no daily limit, no Pro lock. **PDF bytes never leave the
+device** — rendering (self-hosted pdf.js), editing (Fabric.js overlays) and
+export (pdf-lib) all run in the browser; the only network call while editing is a
+same-origin fetch of a bundled font. `plans.ts` is never consulted.
+
+**Shipped tools:** Select · Add Text · Pen · Highlight · Rectangle · Ellipse ·
+Line · Arrow · Image · Whiteout/Cover · Signature (draw / type / upload).
+**Page operations:** rotate, reorder (drag), duplicate, delete — undoable.
+**Document:** thumbnails, page navigation, zoom, Fit Page / Fit Width, pan.
+**Output:** **Download edited PDF** — the original PDF's text, vectors and images
+are preserved (never whole-page rasterized) and the user's edits are drawn on top
+as real vector content and real text. Added text exports as selectable PDF text
+(StandardFonts for Latin/WinAnsi, Liberation Sans for Latin-extended, Greek and
+Cyrillic; characters no bundled font covers are omitted, and that is surfaced).
+
+**Explicit limitations (V1) — documented honestly:**
+
+- **Whiteout is a cover, not secure redaction.** It places an opaque rectangle
+  over content; the underlying source content is not removed. It is never called
+  "redaction" or "permanent removal".
+- **The source PDF's existing text cannot be directly edited.** The Text tool
+  *adds* new text; it does not rewrite the original document's text.
+- **No OCR.** Scanned/image PDFs are not made searchable.
+- **No cloud save / no sync.** Editing is **ephemeral** — reloading or opening
+  another PDF discards edits (a confirmation warns first). Nothing is uploaded.
+- **Signature is a visual signature**, not a certified/legal digital signature.
+- **Forms/annotations:** unchanged page order edits the original in place and
+  preserves forms; page operations (reorder/rotate/delete/duplicate) rebuild
+  pages via `copyPages`, which may not preserve interactive AcroForm fields.
+- Safety bounds (not monetization): 100 MB, 500 pages, 4000px render edge, DPR 2.
+
+The route is not behind auth and — like `/tools` — is public and indexable
+(NOINDEX was removed only once the full editor shipped).
+
+### Future PDF routes (documented intent only — NOT built)
+
+Task-focused SEO landing pages are a later growth opportunity, to be built with
+real, non-thin content when V1 is proven: `/tools/sign-pdf`,
+`/tools/annotate-pdf`, `/tools/highlight-pdf`, `/tools/fill-pdf`,
+`/tools/rotate-pdf`, `/tools/delete-pdf-pages`, `/tools/reorder-pdf-pages`,
+`/tools/merge-pdf`, `/tools/split-pdf`. No thin/placeholder routes are added now.
+
 ## Routing (future intent)
 
 ```

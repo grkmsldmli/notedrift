@@ -19,7 +19,7 @@ import type { PdfTool } from "@/lib/pdf/overlayController";
 const SHAPE_TOOLS: PdfTool[] = ["rect", "ellipse", "line"];
 
 const BTN =
-  "nd-hit flex h-9 w-9 items-center justify-center rounded-lg transition-colors";
+  "nd-hit flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors";
 const active = "bg-nd-accent/20 text-nd-accent";
 const idle = "text-nd-muted hover:bg-white/5 hover:text-nd-text";
 
@@ -47,7 +47,7 @@ export function PdfToolRail({
 
   return (
     <div
-      className="pointer-events-auto absolute left-1/2 bottom-[4.5rem] z-20 flex -translate-x-1/2 flex-row items-center gap-0.5 rounded-xl border border-nd-border bg-nd-surface/95 p-1 shadow-xl shadow-black/40 backdrop-blur md:left-3 md:top-1/2 md:bottom-auto md:-translate-x-0 md:-translate-y-1/2 md:flex-col"
+      className="nd-scroll pointer-events-auto absolute left-1/2 bottom-[4.5rem] z-20 flex max-w-[calc(100vw-1.5rem)] -translate-x-1/2 flex-row items-center gap-0.5 overflow-x-auto rounded-xl border border-nd-border bg-nd-surface/95 p-1 shadow-xl shadow-black/40 backdrop-blur md:left-3 md:top-1/2 md:bottom-auto md:max-w-none md:-translate-x-0 md:-translate-y-1/2 md:flex-col md:overflow-visible"
       role="toolbar"
       aria-label="PDF tools"
     >
@@ -64,7 +64,7 @@ export function PdfToolRail({
         <Highlighter size={17} />
       </ToolButton>
 
-      <div ref={shapeRef} className="relative flex">
+      <div ref={shapeRef} className="relative flex shrink-0">
         <button
           type="button"
           aria-label="Shapes"
@@ -94,7 +94,7 @@ export function PdfToolRail({
         <ArrowUpRight size={17} />
       </ToolButton>
 
-      <span className="mx-0.5 my-0.5 h-px w-5 bg-nd-border md:h-5 md:w-px" />
+      <span className="mx-0.5 my-0.5 h-px w-5 shrink-0 bg-nd-border md:h-5 md:w-px" />
 
       <ToolButton label="Image" isActive={false} onClick={() => onTool("image")}>
         <ImageIcon size={17} />
