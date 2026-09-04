@@ -7,15 +7,21 @@
 export type FitMode = "none" | "page" | "width";
 
 export interface PdfPageSize {
-  /** Unscaled page dimensions in PDF points (1pt = 1/72"). */
+  /** On-screen (display, rotation-applied) page dimensions in PDF points. */
   readonly width: number;
   readonly height: number;
+  /** Page rotation, normalized to 0 | 90 | 180 | 270. */
+  readonly rotation: number;
 }
 
 export interface PdfDocumentSession {
   readonly filename: string;
   readonly byteLength: number;
   readonly numPages: number;
+  /** Stable per-page identifiers (index i → page i+1). Overlays key off these
+   *  rather than the visual page index, so a future page-reorder can't scramble
+   *  which edits belong to which page. */
+  readonly pageIds: readonly string[];
   /** Current 1-based page. */
   readonly page: number;
   /** Current zoom (CSS px per PDF point). */
@@ -23,19 +29,32 @@ export interface PdfDocumentSession {
   readonly fitMode: FitMode;
 }
 
+/** Deterministic, session-stable page ids. */
+export function makePageIds(numPages: number): string[] {
+  return Array.from({ length: Math.max(1, numPages) }, (_, i) => `pg-${i + 1}`);
+}
+
 export function createSession(init: {
   filename: string;
   byteLength: number;
   numPages: number;
 }): PdfDocumentSession {
+  const numPages = Math.max(1, init.numPages);
   return {
     filename: init.filename,
     byteLength: init.byteLength,
-    numPages: Math.max(1, init.numPages),
+    numPages,
+    pageIds: makePageIds(numPages),
     page: 1,
     scale: 1,
     fitMode: "page",
   };
+}
+
+/** The stable id for a 1-based page number. */
+export function pageIdAt(session: PdfDocumentSession, pageNumber: number): string {
+  const idx = clampPage(pageNumber, session.numPages) - 1;
+  return session.pageIds[idx] ?? `pg-${idx + 1}`;
 }
 
 /** Clamp a requested page into [1, numPages]. */

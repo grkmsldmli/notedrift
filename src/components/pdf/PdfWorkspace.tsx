@@ -9,10 +9,19 @@ import {
   Loader2,
   Minus,
   Plus,
+  Redo2,
+  Undo2,
 } from "lucide-react";
 import { BrandHome, NavArrows } from "@/components/nav/HeaderNav";
 import { PdfDropzone } from "./PdfDropzone";
 import { PdfThumbnailRail } from "./PdfThumbnailRail";
+import { PdfToolRail } from "./PdfToolRail";
+import { PdfOverlayCanvas } from "./PdfOverlayCanvas";
+import {
+  PdfContextToolbar,
+  type ContextPatch,
+  type ContextValues,
+} from "./PdfContextToolbar";
 import { PdfRenderer, type PdfErrorCode } from "@/lib/pdf/renderer";
 import { checkPdfFile } from "@/lib/pdf/limits";
 import { clampZoom, fitPageScale, fitWidthScale } from "@/lib/pdf/geometry";
@@ -20,13 +29,22 @@ import {
   createSession,
   goToPage,
   nextPage,
+  pageIdAt,
   prevPage,
   setScale as setScaleValue,
   type PdfDocumentSession,
+  type PdfPageSize,
 } from "@/lib/pdf/session";
+import {
+  DEFAULT_TOOL_STYLE,
+  type PdfOverlayController,
+} from "@/lib/pdf/overlayController";
+import { controlsForTool, type PdfSelection, type PdfTool, type PdfToolStyle } from "@/lib/pdf/toolState";
 
 type Phase = "empty" | "loading" | "ready" | "error";
 type PdfError = { code: PdfErrorCode; message: string };
+type OverlayView = { pageId: string; display: { width: number; height: number }; scale: number };
+type EditState = { canUndo: boolean; canRedo: boolean; count: number };
 
 export function PdfWorkspace() {
   const [phase, setPhase] = useState<Phase>("empty");
@@ -34,23 +52,29 @@ export function PdfWorkspace() {
   const [error, setError] = useState<PdfError | null>(null);
   const [grabbing, setGrabbing] = useState(false);
   const [renderNonce, setRenderNonce] = useState(0);
-  // The renderer lives in state (not just a ref) so the render path can read it
-  // without touching a ref during render; rendererRef mirrors it for effects.
   const [renderer, setRenderer] = useState<PdfRenderer | null>(null);
+
+  // editing layer
+  const [tool, setTool] = useState<PdfTool>("select");
+  const [toolStyle, setToolStyle] = useState<PdfToolStyle>(DEFAULT_TOOL_STYLE);
+  const [selection, setSelection] = useState<PdfSelection | null>(null);
+  const [edit, setEdit] = useState<EditState>({ canUndo: false, canRedo: false, count: 0 });
+  const [overlayView, setOverlayView] = useState<OverlayView | null>(null);
 
   const rendererRef = useRef<PdfRenderer | null>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
+  const pageWrapRef = useRef<HTMLDivElement>(null);
   const pageCanvasRef = useRef<HTMLCanvasElement>(null);
-  const pageSizeCacheRef = useRef<Map<number, { width: number; height: number }>>(new Map());
+  const controllerRef = useRef<PdfOverlayController | null>(null);
+  const pageSizeCacheRef = useRef<Map<number, PdfPageSize>>(new Map());
   const sessionRef = useRef<PdfDocumentSession | null>(null);
+  const toolRef = useRef<PdfTool>("select");
   const renderPendingRef = useRef(false);
   const panRef = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
 
-  useEffect(() => {
-    sessionRef.current = session;
-  }, [session]);
+  useEffect(() => { sessionRef.current = session; }, [session]);
+  useEffect(() => { toolRef.current = tool; }, [tool]);
 
-  // Discard the renderer (and its worker) when leaving the page.
   useEffect(() => {
     return () => {
       void rendererRef.current?.destroy();
@@ -68,6 +92,9 @@ export function PdfWorkspace() {
     setPhase("loading");
     setError(null);
     setSession(null);
+    setSelection(null);
+    setOverlayView(null);
+    setTool("select");
 
     await rendererRef.current?.destroy();
     pageSizeCacheRef.current = new Map();
@@ -98,23 +125,28 @@ export function PdfWorkspace() {
   }, []);
 
   const closeDoc = useCallback(async () => {
+    if (controllerRef.current?.hasOverlays()) {
+      const ok = window.confirm("Opening another PDF will discard your current edits. Continue?");
+      if (!ok) return;
+    }
     await rendererRef.current?.destroy();
     rendererRef.current = null;
     setRenderer(null);
     pageSizeCacheRef.current = new Map();
     setSession(null);
     setError(null);
+    setSelection(null);
+    setOverlayView(null);
+    setTool("select");
     setPhase("empty");
   }, []);
 
-  // The specific session fields the render/fit effects depend on. Deriving them
-  // keeps the effect dependency lists honest without re-running on unrelated
-  // session changes.
   const curPage = session?.page ?? null;
   const curScale = session?.scale ?? null;
   const curFit = session?.fitMode ?? null;
 
-  // Render the current page whenever the page, zoom, or a visibility nudge changes.
+  // Render the background page, then publish the overlay view using the ACTUAL
+  // rendered size (so the overlay matches even when the render-scale is capped).
   useEffect(() => {
     if (phase !== "ready" || curPage == null || curScale == null) return;
     let cancelled = false;
@@ -125,9 +157,25 @@ export function PdfWorkspace() {
       if (!canvas || !r) return;
       try {
         const res = await r.renderPage(curPage, curScale, canvas);
-        if (!cancelled && res.ok) renderPendingRef.current = false;
+        if (cancelled || !res.ok) return;
+        renderPendingRef.current = false;
+        let size = pageSizeCacheRef.current.get(curPage);
+        if (!size) {
+          size = await r.pageSize(curPage);
+          if (cancelled) return;
+          pageSizeCacheRef.current.set(curPage, size);
+        }
+        const eff = size.width ? res.cssWidth / size.width : curScale;
+        const s = sessionRef.current;
+        if (s) {
+          setOverlayView({
+            pageId: pageIdAt(s, curPage),
+            display: { width: size.width, height: size.height },
+            scale: eff,
+          });
+        }
       } catch {
-        /* transient — a newer render or a page change superseded this */
+        /* transient — superseded by a newer render */
       }
     })();
     return () => {
@@ -135,8 +183,7 @@ export function PdfWorkspace() {
     };
   }, [phase, curPage, curScale, renderNonce]);
 
-  // Cache the current page's size and, if a fit mode is active, re-fit for it
-  // (pages within a PDF can differ in size).
+  // Cache size + keep fit modes correct across pages of differing sizes.
   useEffect(() => {
     if (phase !== "ready" || curPage == null) return;
     let cancelled = false;
@@ -169,7 +216,6 @@ export function PdfWorkspace() {
     };
   }, [phase, curPage, curFit]);
 
-  // Re-fit on any viewport resize (window resize, thumbnail rail mounting, etc.).
   useEffect(() => {
     const vp = viewportRef.current;
     if (!vp || typeof ResizeObserver === "undefined") return;
@@ -188,9 +234,6 @@ export function PdfWorkspace() {
     return () => ro.disconnect();
   }, []);
 
-  // Re-render if the tab was hidden mid-render (browsers pause rAF in background
-  // tabs, which can leave a render un-finished). Local to this feature — no
-  // global rAF patching.
   useEffect(() => {
     function onVisible() {
       if (document.visibilityState === "visible" && renderPendingRef.current) {
@@ -218,14 +261,98 @@ export function PdfWorkspace() {
     setSession(setScaleValue(s, scale, mode));
   }, []);
 
-  // Keyboard navigation — bare keys only, never hijacking browser shortcuts.
+  // Keep tool default style in sync (highlight uses its own color slot).
+  const handleToolStyle = useCallback((patch: ContextPatch, forTool: PdfTool) => {
+    setToolStyle((s) => {
+      const next: PdfToolStyle = { ...s };
+      if (patch.color !== undefined) {
+        if (forTool === "highlight") next.highlightColor = patch.color;
+        else next.strokeColor = patch.color;
+      }
+      if (patch.strokeWidth !== undefined) next.strokeWidth = patch.strokeWidth;
+      if (patch.opacity !== undefined) next.opacity = patch.opacity;
+      if (patch.fill !== undefined) next.fill = patch.fill;
+      if (patch.fontFamily) next.fontFamily = patch.fontFamily;
+      if (patch.fontSize) next.fontSize = patch.fontSize;
+      if (patch.bold !== undefined) next.bold = patch.bold;
+      if (patch.italic !== undefined) next.italic = patch.italic;
+      if (patch.align) next.align = patch.align;
+      return next;
+    });
+  }, []);
+
+  const onContextChange = useCallback(
+    (patch: ContextPatch) => {
+      if (selection) {
+        controllerRef.current?.updateSelected(patch as Partial<PdfSelection>);
+      } else {
+        handleToolStyle(patch, toolRef.current);
+      }
+    },
+    [selection, handleToolStyle],
+  );
+
+  const chooseTool = useCallback((t: PdfTool) => {
+    setTool(t);
+    if (t !== "select") setSelection(null);
+  }, []);
+
+  // Keyboard: page nav (P1) + editing shortcuts (P2), never while typing.
   useEffect(() => {
     if (phase !== "ready") return;
     function onKey(e: KeyboardEvent) {
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
       const t = e.target as HTMLElement | null;
-      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      const typing = !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable);
+      const mod = e.metaKey || e.ctrlKey;
+
+      // Escape always finishes an in-progress text edit / drawing (even while
+      // typing) and returns to Select.
+      if (e.key === "Escape") {
+        controllerRef.current?.flush();
+        chooseTool("select");
+        return;
+      }
+
+      // While typing into the text editor (or any field), keep ALL shortcuts —
+      // including Ctrl+Z/Y — out of the way so the native editor handles them.
+      if (typing) return;
+
+      if (mod) {
+        const key = e.key.toLowerCase();
+        if (key === "z") {
+          e.preventDefault();
+          if (e.shiftKey) controllerRef.current?.redo();
+          else controllerRef.current?.undo();
+        } else if (key === "y") {
+          e.preventDefault();
+          controllerRef.current?.redo();
+        }
+        return;
+      }
+      if (e.altKey) return;
+
       switch (e.key) {
+        case "v":
+        case "V":
+          chooseTool("select");
+          break;
+        case "t":
+        case "T":
+          chooseTool("text");
+          break;
+        case "p":
+        case "P":
+          chooseTool("pen");
+          break;
+        case "h":
+        case "H":
+          chooseTool("highlight");
+          break;
+        case "Delete":
+        case "Backspace":
+          e.preventDefault();
+          controllerRef.current?.deleteSelected();
+          break;
         case "ArrowRight":
         case "PageDown":
           e.preventDefault();
@@ -258,11 +385,12 @@ export function PdfWorkspace() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [phase, zoomBy]);
+  }, [phase, zoomBy, chooseTool]);
 
-  // Grab-to-pan the page area.
+  // Grab-to-pan only on the dark margin — never on the page (Fabric owns that).
   function onPointerDown(e: React.PointerEvent<HTMLDivElement>) {
     if (e.button !== 0 || phase !== "ready") return;
+    if (pageWrapRef.current?.contains(e.target as Node)) return;
     const vp = viewportRef.current;
     if (!vp) return;
     panRef.current = { x: e.clientX, y: e.clientY, left: vp.scrollLeft, top: vp.scrollTop };
@@ -283,14 +411,49 @@ export function PdfWorkspace() {
     setGrabbing(false);
   }
 
+  const docKey = session ? `${session.filename}:${session.byteLength}` : "doc";
+  const showContext = phase === "ready" && (selection !== null || tool !== "select");
+  const contextValues: ContextValues = selection
+    ? {
+        color: selection.color ?? "#000000",
+        strokeWidth: selection.strokeWidth ?? 3,
+        opacity: selection.opacity ?? 1,
+        fill: selection.fill ?? null,
+        fontFamily: selection.fontFamily ?? "sans",
+        fontSize: selection.fontSize ?? 18,
+        bold: selection.bold ?? false,
+        italic: selection.italic ?? false,
+        align: selection.align ?? "left",
+      }
+    : {
+        color: tool === "highlight" ? toolStyle.highlightColor : toolStyle.strokeColor,
+        strokeWidth: toolStyle.strokeWidth,
+        opacity: toolStyle.opacity,
+        fill: toolStyle.fill,
+        fontFamily: toolStyle.fontFamily,
+        fontSize: toolStyle.fontSize,
+        bold: toolStyle.bold,
+        italic: toolStyle.italic,
+        align: toolStyle.align,
+      };
+  const contextControls = controlsForTool(
+    selection ? (selection.type === "freehand" ? "pen" : (selection.type as PdfTool)) : tool,
+  );
+
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-nd-bg text-nd-text">
-      <Header session={session} onClose={closeDoc} />
+      <Header
+        session={session}
+        edit={edit}
+        onClose={closeDoc}
+        onUndo={() => controllerRef.current?.undo()}
+        onRedo={() => controllerRef.current?.redo()}
+      />
 
       <div className="relative flex min-h-0 flex-1">
         {phase === "ready" && session && renderer && (
           <PdfThumbnailRail
-            key={`${session.filename}:${session.byteLength}`}
+            key={`thumbs:${docKey}`}
             renderer={renderer}
             numPages={session.numPages}
             currentPage={session.page}
@@ -305,7 +468,7 @@ export function PdfWorkspace() {
           onPointerUp={endPan}
           onPointerCancel={endPan}
           className={`nd-scroll relative flex-1 overflow-auto ${
-            phase === "ready" ? (grabbing ? "cursor-grabbing" : "cursor-grab") : ""
+            phase === "ready" && tool === "select" ? (grabbing ? "cursor-grabbing" : "cursor-grab") : ""
           }`}
         >
           {phase === "empty" && <PdfDropzone onFile={openFile} />}
@@ -313,13 +476,42 @@ export function PdfWorkspace() {
           {phase === "error" && error && <ErrorState error={error} onRetry={closeDoc} />}
           {phase === "ready" && (
             <div className="flex min-h-full w-max min-w-full items-center justify-center p-6">
-              <canvas
-                ref={pageCanvasRef}
-                className="block rounded-[2px] bg-white shadow-2xl shadow-black/50"
-              />
+              <div ref={pageWrapRef} className="relative">
+                <canvas
+                  ref={pageCanvasRef}
+                  className="block rounded-[2px] bg-white shadow-2xl shadow-black/50"
+                />
+                {overlayView && (
+                  <div className="absolute inset-0">
+                    <PdfOverlayCanvas
+                      key={`overlay:${docKey}`}
+                      pageId={overlayView.pageId}
+                      display={overlayView.display}
+                      scale={overlayView.scale}
+                      tool={tool}
+                      toolStyle={toolStyle}
+                      onController={(c) => { controllerRef.current = c; }}
+                      onHistory={setEdit}
+                      onSelection={setSelection}
+                      onToolReset={() => setTool("select")}
+                    />
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>
+
+        {phase === "ready" && session && <PdfToolRail tool={tool} onTool={chooseTool} />}
+
+        {showContext && (
+          <PdfContextToolbar
+            controls={contextControls}
+            values={contextValues}
+            onChange={onContextChange}
+            onDelete={selection ? () => controllerRef.current?.deleteSelected() : undefined}
+          />
+        )}
 
         {phase === "ready" && session && (
           <Toolbar
@@ -341,10 +533,16 @@ export function PdfWorkspace() {
 
 function Header({
   session,
+  edit,
   onClose,
+  onUndo,
+  onRedo,
 }: {
   session: PdfDocumentSession | null;
+  edit: EditState;
   onClose: () => void;
+  onUndo: () => void;
+  onRedo: () => void;
 }) {
   return (
     <header className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-nd-border bg-nd-bg/95 px-3 backdrop-blur sm:px-4">
@@ -364,16 +562,50 @@ function Header({
         )}
       </div>
       {session && (
-        <button
-          type="button"
-          onClick={onClose}
-          className="nd-hit inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-nd-border px-2.5 py-1.5 text-xs text-nd-text transition-colors hover:bg-white/5"
-        >
-          <FileUp size={14} />
-          <span className="hidden sm:inline">Open another</span>
-        </button>
+        <div className="flex shrink-0 items-center gap-1">
+          <HeaderIcon label="Undo  (Ctrl Z)" onClick={onUndo} disabled={!edit.canUndo}>
+            <Undo2 size={16} />
+          </HeaderIcon>
+          <HeaderIcon label="Redo  (Ctrl Shift Z)" onClick={onRedo} disabled={!edit.canRedo}>
+            <Redo2 size={16} />
+          </HeaderIcon>
+          <span className="mx-0.5 h-6 w-px bg-nd-border" />
+          <button
+            type="button"
+            onClick={onClose}
+            className="nd-hit inline-flex items-center gap-1.5 rounded-lg border border-nd-border px-2.5 py-1.5 text-xs text-nd-text transition-colors hover:bg-white/5"
+          >
+            <FileUp size={14} />
+            <span className="hidden sm:inline">Open another</span>
+          </button>
+        </div>
       )}
     </header>
+  );
+}
+
+function HeaderIcon({
+  label,
+  onClick,
+  disabled,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      disabled={disabled}
+      className="nd-hit flex h-8 w-8 items-center justify-center rounded-lg text-nd-muted transition-colors hover:bg-white/5 hover:text-nd-text disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-nd-muted"
+    >
+      {children}
+    </button>
   );
 }
 

@@ -20,6 +20,7 @@ import type { PdfPageSize } from "./session.ts";
 interface PdfViewport {
   readonly width: number;
   readonly height: number;
+  readonly rotation: number;
 }
 interface PdfRenderTask {
   readonly promise: Promise<void>;
@@ -173,7 +174,7 @@ export class PdfRenderer {
     const page = await doc.getPage(pageNumber);
     const vp = page.getViewport({ scale: 1 });
     page.cleanup();
-    return { width: vp.width, height: vp.height };
+    return { width: vp.width, height: vp.height, rotation: ((vp.rotation % 360) + 360) % 360 };
   }
 
   /**
