@@ -15,6 +15,7 @@ import { getStripe } from "@/lib/billing/stripe";
 import { getAdminSupabase } from "@/lib/billing/admin";
 import { missingBillingConfig } from "@/lib/billing/config";
 import { approvedInterval } from "@/lib/billing/prices";
+import { parseHttpDateSeconds } from "@/lib/billing/ordering";
 import { reconcileSubscription } from "@/lib/billing/reconcile";
 
 /** Typed outcomes the client's activation flow understands. */
@@ -26,6 +27,7 @@ type Status =
   | "invalid" // bad request / not sandbox / wrong mode
   | "forbidden" // belongs to another user
   | "not_found" // no such session/subscription
+  | "error" // server/persistence failure — retry (never a false Pro claim)
   | "unauthorized"
   | "unconfigured";
 
@@ -80,9 +82,13 @@ export async function POST(request: Request): Promise<Response> {
   if (mapping?.stripe_customer_id && customerId && mapping.stripe_customer_id !== customerId) {
     return json("forbidden", 403);
   }
-  // Ensure the mapping exists (checkout normally created it; be resilient).
+  // Ensure the mapping exists (checkout normally created it; be resilient). This is
+  // a best-effort convenience for the portal — it does NOT gate Pro entitlement,
+  // so a failure here doesn't deny a paid user; we inspect it but continue.
   if (!mapping?.stripe_customer_id && customerId) {
-    await admin.from("billing_customers").upsert({ user_id: user.id, stripe_customer_id: customerId }, { onConflict: "user_id" });
+    await admin
+      .from("billing_customers")
+      .upsert({ user_id: user.id, stripe_customer_id: customerId }, { onConflict: "user_id" });
   }
 
   const subRef = session.subscription;
@@ -102,6 +108,13 @@ export async function POST(request: Request): Promise<Response> {
   if (!active) return json("not_active");
   if (!interval) return json("unknown_price"); // active but not an approved Pro price → no Pro
 
-  await reconcileSubscription(sub, user.id, Math.floor(Date.now() / 1000));
+  // Ordering timestamp on STRIPE's clock (the retrieve response Date header) — NOT
+  // the local server clock — so a later real cancellation webhook can never be
+  // rejected as stale by app-server clock skew. Fail safe (retry) if unavailable.
+  const orderingTs = parseHttpDateSeconds(sub.lastResponse?.headers?.["date"]);
+  if (orderingTs == null) return json("error", 500);
+
+  const result = await reconcileSubscription(sub, user.id, orderingTs);
+  if (result === "error") return json("error", 500); // persistence failed — never claim Pro
   return json("pro");
 }

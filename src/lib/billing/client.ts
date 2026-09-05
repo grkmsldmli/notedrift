@@ -63,6 +63,7 @@ export type ConfirmStatus =
   | "invalid"
   | "forbidden"
   | "not_found"
+  | "error"
   | "unauthorized"
   | "unconfigured"
   | "network";
