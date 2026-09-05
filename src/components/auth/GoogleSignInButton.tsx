@@ -75,14 +75,19 @@ export function GoogleSignInButton({
           },
         });
 
+        // Match the email field width (dialog inner width), capped to Google's
+        // supported max of 400. GIS's minimum supported width is 200.
         const width = Math.min(Math.max(containerRef.current.clientWidth || 320, 200), 400);
         gis.renderButton(containerRef.current, {
           type: "standard",
-          theme: "filled_black",
+          // GIS supports only outline | filled_blue | filled_black; "outline" is
+          // the neutral outlined button that sits cleanly on the dark dialog
+          // (filled_black looked muddy against it).
+          theme: "outline",
           size: "large",
           text: "continue_with",
           shape: "rectangular",
-          logo_alignment: "center",
+          logo_alignment: "left",
           width,
         });
         if (!cancelled) setState("ready");
