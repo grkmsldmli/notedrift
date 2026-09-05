@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { LogOut, Sparkles, CreditCard, UserRound } from "lucide-react";
+import { CreditCard, Loader2, LogOut, Sparkles, UserRound } from "lucide-react";
 import { PLAN_LABELS } from "@/lib/plans";
 import { useAuth } from "./AuthProvider";
 import { SignInDialog } from "./SignInDialog";
@@ -18,7 +18,7 @@ import { openBillingPortal } from "@/lib/billing/client";
  * "Upgrade to Pro"; Pro users get "Manage billing" (Stripe-hosted portal).
  */
 export function AccountButton() {
-  const { configured, status, user, plan, billing, signOut } = useAuth();
+  const { configured, status, user, plan, billing, billingActivation, signOut } = useAuth();
   const [dialog, setDialog] = useState(false);
   const [upgrade, setUpgrade] = useState(false);
   const [menu, setMenu] = useState(false);
@@ -70,6 +70,9 @@ export function AccountButton() {
   }
 
   const isPro = plan === "pro";
+  // While a just-completed Checkout is being confirmed, never offer "Upgrade to
+  // Pro" (would invite a duplicate purchase) — show an activating state instead.
+  const activating = billingActivation === "activating" || billingActivation === "processing";
   const initial = (user.name || user.email || "?").trim().charAt(0).toUpperCase();
 
   async function manageBilling() {
@@ -128,6 +131,10 @@ export function AccountButton() {
                 <span className="nd-gradient inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-semibold text-white">
                   <Sparkles size={11} /> Pro
                 </span>
+              ) : activating ? (
+                <span className="inline-flex items-center gap-1 rounded-md bg-nd-accent/10 px-1.5 py-0.5 text-[11px] font-medium text-nd-accent">
+                  <Loader2 size={11} className="animate-spin" /> Activating Pro…
+                </span>
               ) : (
                 <span className="inline-flex items-center rounded-md bg-white/5 px-1.5 py-0.5 text-[11px] font-medium text-nd-muted">
                   {PLAN_LABELS[plan]} plan
@@ -154,6 +161,11 @@ export function AccountButton() {
               <CreditCard size={15} className="text-nd-muted" />
               {portalBusy ? "Opening…" : "Manage billing"}
             </button>
+          ) : activating ? (
+            <div className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-nd-muted">
+              <Loader2 size={15} className="animate-spin text-nd-accent" />
+              Activating Pro…
+            </div>
           ) : (
             <button
               type="button"

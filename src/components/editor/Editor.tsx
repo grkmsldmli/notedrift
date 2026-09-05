@@ -37,7 +37,7 @@ import { getCloudEngine } from "@/lib/cloud/engine";
 import { onAuthChange } from "@/lib/auth/client";
 import { CloudButton } from "./CloudButton";
 import { CloudCanvasesDialog } from "./CloudCanvasesDialog";
-import { BillingActivating } from "../billing/BillingActivating";
+import { CheckoutActivation } from "../billing/CheckoutActivation";
 import { AuthNotice } from "../auth/AuthNotice";
 import { Toolbar } from "./Toolbar";
 import { TopBar } from "./TopBar";
@@ -920,7 +920,7 @@ export default function Editor() {
         />
       )}
 
-      <BillingActivating />
+      <CheckoutActivation />
       <AuthNotice />
     </div>
   );

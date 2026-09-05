@@ -28,9 +28,13 @@ async function resolveOne(configured: string, interval: BillingInterval): Promis
       type: "recurring",
       limit: 100,
     });
-    const match =
-      prices.data.find((p) => p.recurring?.interval === wanted) ?? prices.data[0];
-    if (!match) throw new Error(`No active recurring price found for product (${interval})`);
+    // Fail CLOSED: require an active recurring price whose interval matches the
+    // requested one. NEVER fall back to prices.data[0] — that could charge a
+    // yearly price for a monthly checkout (or vice versa).
+    const match = prices.data.find((p) => p.recurring?.interval === wanted);
+    if (!match) {
+      throw new Error(`No active recurring ${wanted}ly price for the configured ${interval} product`);
+    }
     return match.id;
   }
   return configured; // unknown format — use as configured

@@ -55,6 +55,35 @@ export async function startCheckout(interval: BillingInterval): Promise<ActionRe
   }
 }
 
+export type ConfirmStatus =
+  | "pro"
+  | "incomplete"
+  | "not_active"
+  | "unknown_price"
+  | "invalid"
+  | "forbidden"
+  | "not_found"
+  | "unauthorized"
+  | "unconfigured"
+  | "network";
+
+/** Ask the server to verify a completed Checkout Session against Stripe and
+ *  reconcile Pro into trusted billing state. session_id is only a lookup handle —
+ *  the server derives the user + entitlement itself. */
+export async function confirmCheckout(sessionId: string): Promise<ConfirmStatus> {
+  try {
+    const res = await fetch("/api/billing/confirm-checkout", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId }),
+    });
+    const json = (await res.json().catch(() => ({}))) as { status?: string };
+    return (json.status as ConfirmStatus) ?? "network";
+  } catch {
+    return "network";
+  }
+}
+
 export async function openBillingPortal(): Promise<ActionResult> {
   try {
     const res = await fetch("/api/billing/portal", { method: "POST" });

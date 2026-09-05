@@ -76,7 +76,10 @@ export async function POST(request: Request): Promise<Response> {
       mode: "subscription",
       customer: customerId,
       line_items: [{ price: await resolvedPriceId(interval), quantity: 1 }],
-      success_url: `${origin}/?billing=success`,
+      // Stripe substitutes the real id for {CHECKOUT_SESSION_ID}; the browser uses
+      // it ONLY as a lookup handle for the server confirmation route (never as
+      // proof of entitlement).
+      success_url: `${origin}/?billing=success&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${origin}/?billing=cancelled`,
       client_reference_id: user.id,
       metadata: { supabase_user_id: user.id },
