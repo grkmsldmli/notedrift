@@ -1,23 +1,35 @@
 "use client";
 
-import { memo, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import Link from "next/link";
 import {
   ChevronDown,
   Download,
   FileText,
+  LayoutGrid,
   MoreHorizontal,
+  Music,
   Pencil,
   Plus,
   Redo2,
+  Timer,
   Trash2,
   Undo2,
+  Volume2,
   Wrench,
 } from "lucide-react";
 import type { PageMeta } from "@/lib/types";
 import { IconButton } from "../ui/IconButton";
 import { AccountButton } from "../auth/AccountButton";
 import { NavArrows, BrandHome } from "@/components/nav/HeaderNav";
+
+// The three audio Free Tools surfaced in the header Tools menu; the full catalog
+// (converters, PDF editor) stays reachable via "Convert Files" / "View All Tools".
+const AUDIO_LINKS = [
+  { href: "/tools/sound-meter", label: "Sound Meter", Icon: Volume2 },
+  { href: "/tools/tap-bpm", label: "Tap BPM", Icon: Music },
+  { href: "/tools/metronome", label: "Metronome", Icon: Timer },
+] as const;
 
 interface TopBarProps {
   pages: PageMeta[];
@@ -65,6 +77,7 @@ export const TopBar = memo(function TopBar(props: TopBarProps) {
 
   const [pagesOpen, setPagesOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [confirmId, setConfirmId] = useState<string | null>(null);
@@ -72,8 +85,19 @@ export const TopBar = memo(function TopBar(props: TopBarProps) {
   const closeAll = () => {
     setPagesOpen(false);
     setMenuOpen(false);
+    setToolsOpen(false);
     setConfirmId(null);
   };
+
+  // Escape closes the Tools dropdown (its outside click is handled by an overlay).
+  useEffect(() => {
+    if (!toolsOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setToolsOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [toolsOpen]);
 
   const startEditing = () => {
     closeAll();
@@ -235,6 +259,58 @@ export const TopBar = memo(function TopBar(props: TopBarProps) {
           Convert Files
         </Link>
 
+        {/* Tools dropdown — surfaces the audio utilities. Secondary treatment (not a
+            CTA); hidden below md, where its items move into the More menu. */}
+        <div className="relative hidden md:block">
+          <button
+            type="button"
+            aria-haspopup="menu"
+            aria-expanded={toolsOpen}
+            onClick={() => {
+              setPagesOpen(false);
+              setMenuOpen(false);
+              setConfirmId(null);
+              setToolsOpen((o) => !o);
+            }}
+            className="nd-hit inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-sm text-nd-muted transition-colors hover:bg-white/5 hover:text-nd-text"
+          >
+            Tools
+            <ChevronDown size={14} />
+          </button>
+          {toolsOpen && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={closeAll} />
+              <div
+                role="menu"
+                className="absolute right-0 top-full z-50 mt-1.5 w-56 rounded-xl border border-nd-border bg-nd-surface p-1 shadow-2xl"
+              >
+                {AUDIO_LINKS.map(({ href, label, Icon }) => (
+                  <Link
+                    key={href}
+                    href={href}
+                    role="menuitem"
+                    onClick={closeAll}
+                    className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-nd-text transition-colors hover:bg-white/5"
+                  >
+                    <Icon size={16} className="text-nd-muted" />
+                    <span className="flex-1">{label}</span>
+                  </Link>
+                ))}
+                <div className="my-1 h-px bg-nd-border" />
+                <Link
+                  href="/tools"
+                  role="menuitem"
+                  onClick={closeAll}
+                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-nd-text transition-colors hover:bg-white/5"
+                >
+                  <LayoutGrid size={16} className="text-nd-muted" />
+                  <span className="flex-1">View All Tools</span>
+                </Link>
+              </div>
+            </>
+          )}
+        </div>
+
         <button
           type="button"
           onClick={onNewPage}
@@ -317,6 +393,32 @@ export const TopBar = memo(function TopBar(props: TopBarProps) {
                 >
                   <Wrench size={16} className="text-nd-muted" />
                   <span className="flex-1 text-left">Convert Files</span>
+                </Link>
+
+                {/* Audio tools — here only when the header Tools dropdown is hidden
+                    (below md); flat, no nested submenu. */}
+                <div className="my-1 h-px bg-nd-border md:hidden" />
+                <div className="px-2.5 pb-1 pt-1 text-[11px] font-medium uppercase tracking-wider text-nd-muted md:hidden">
+                  Tools
+                </div>
+                {AUDIO_LINKS.map(({ href, label, Icon }) => (
+                  <Link
+                    key={href}
+                    href={href}
+                    onClick={closeAll}
+                    className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-nd-text transition-colors hover:bg-white/5 md:hidden"
+                  >
+                    <Icon size={16} className="text-nd-muted" />
+                    <span className="flex-1 text-left">{label}</span>
+                  </Link>
+                ))}
+                <Link
+                  href="/tools"
+                  onClick={closeAll}
+                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-nd-text transition-colors hover:bg-white/5 md:hidden"
+                >
+                  <LayoutGrid size={16} className="text-nd-muted" />
+                  <span className="flex-1 text-left">View All Tools</span>
                 </Link>
               </div>
             </>
