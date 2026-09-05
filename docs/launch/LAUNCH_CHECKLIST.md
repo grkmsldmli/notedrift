@@ -9,11 +9,17 @@ variable NAMES.**
 > (`grkmsldmli/notedrift`). Never touch MinimumStress or any unrelated Stripe /
 > Supabase / domain account.
 
+> **Production Supabase decision (2026-09-05): reuse the existing project
+> `kmgcmoaveppzhjezyqax`.** The DB cutover (mode-guard migration + TEST-billing
+> cleanup + `expected_livemode=true`) runs in the Supabase SQL Editor per
+> [`EXISTING_PROJECT_CUTOVER.md`](./EXISTING_PROJECT_CUTOVER.md).
+
 Companion docs:
 
+- [`EXISTING_PROJECT_CUTOVER.md`](./EXISTING_PROJECT_CUTOVER.md) — **the chosen** DB cutover runbook (SQL Editor, transactional).
 - [`STRIPE_PRODUCTION_CUTOVER.md`](./STRIPE_PRODUCTION_CUTOVER.md) — Stripe LIVE product, prices, webhook, env names.
 - [`SUPABASE_PRODUCTION.md`](./SUPABASE_PRODUCTION.md) — Supabase production auth + dashboard steps.
-- [`BILLING_STATE_AUDIT.md`](./BILLING_STATE_AUDIT.md) — test/live DB strategy, preflight + optional cleanup SQL.
+- [`BILLING_STATE_AUDIT.md`](./BILLING_STATE_AUDIT.md) — test/live DB strategy + rationale (fresh-project option kept for reference).
 - [`SMOKE_TEST.md`](./SMOKE_TEST.md) — post-deploy manual real-device test checklist.
 
 ---
@@ -66,12 +72,17 @@ not set it yourself. Keep a separate **development/preview** environment on
 3. Confirm HTTPS is issued and `https://notedrift.com` serves the app. HTTPS is
    mandatory (the Sound Meter microphone requires a secure context).
 
-## E. Supabase production URLs → see [`SUPABASE_PRODUCTION.md`](./SUPABASE_PRODUCTION.md)
+## E. Supabase production (reuse existing project `kmgcmoaveppzhjezyqax`)
 
+Auth config → see [`SUPABASE_PRODUCTION.md`](./SUPABASE_PRODUCTION.md):
 1. Site URL = `https://notedrift.com`.
 2. Redirect allow-list includes `https://notedrift.com/auth/callback`.
 3. Magic-link email template emits `token_hash` + `type` (stateless links).
-4. Apply DB migrations to the production project (see BILLING_STATE_AUDIT.md).
+
+DB cutover → run [`EXISTING_PROJECT_CUTOVER.md`](./EXISTING_PROJECT_CUTOVER.md) in
+the SQL Editor: apply the mode-guard migration, transactionally remove TEST
+billing state, then `update billing_config set expected_livemode = true`. A
+read-only audit + a local billing backup were captured on 2026-09-05.
 
 ## F. Stripe LIVE product / prices → see [`STRIPE_PRODUCTION_CUTOVER.md`](./STRIPE_PRODUCTION_CUTOVER.md)
 

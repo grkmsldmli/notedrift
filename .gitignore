@@ -46,3 +46,8 @@ next-env.d.ts
 
 # temporary PDF test fixtures (regenerated during dev testing)
 /public/__test/
+
+# local-only launch artifacts (billing backups, secrets) — NEVER committed
+/docs/launch/private-local/
+# temporary local DB/verification scripts
+/scratch-*.mjs

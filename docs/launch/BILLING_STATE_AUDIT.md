@@ -8,6 +8,15 @@ SQL to audit and — only if you choose the reuse path — clean up test billing
 > are read-only. The cleanup queries are clearly labeled and must be reviewed and
 > run by a human. Never delete auth users, cloud canvases, or assets.
 
+> **⚑ CHOSEN DECISION (2026-09-05): reuse the existing project
+> `kmgcmoaveppzhjezyqax` as production** — i.e. the "Alternative" column below, NOT
+> the fresh-project recommendation. The fresh-project path stays documented here as
+> the theoretically safest option, but it is **not** the path being taken. Because
+> the existing project already holds Stripe TEST billing state, the mode-guard
+> migration, the TEST-billing cleanup, and `expected_livemode = true` are all
+> **required**. The exact, tailored, transactional SQL-Editor runbook for this
+> decision is [`EXISTING_PROJECT_CUTOVER.md`](./EXISTING_PROJECT_CUTOVER.md).
+
 ---
 
 ## The risk

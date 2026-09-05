@@ -9,12 +9,14 @@ values here — only names and public settings.** Do these by hand.
 
 ## 0. Which project is production?
 
-Use a **dedicated production Supabase project** paired with **Stripe LIVE**, and
-keep the existing/development project paired with **Stripe TEST**. This keeps each
-database single-mode. See [`BILLING_STATE_AUDIT.md`](./BILLING_STATE_AUDIT.md) for
-the full rationale and the billing-state audit. The `NEXT_PUBLIC_SUPABASE_URL`,
-`NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, and `SUPABASE_SECRET_KEY` in the Vercel
-**Production** environment come from this production project.
+**Chosen (2026-09-05): reuse the existing project `kmgcmoaveppzhjezyqax` as
+production.** The `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`,
+and `SUPABASE_SECRET_KEY` in the Vercel **Production** environment come from this
+project. Because it already holds Stripe TEST billing state, the DB cutover
+(mode-guard migration → transactional TEST-billing cleanup → `expected_livemode =
+true`) is required: run [`EXISTING_PROJECT_CUTOVER.md`](./EXISTING_PROJECT_CUTOVER.md)
+in the SQL Editor. (The alternative fresh-project topology and its rationale are
+retained in [`BILLING_STATE_AUDIT.md`](./BILLING_STATE_AUDIT.md).)
 
 ## 1. Auth URL configuration (Authentication → URL Configuration)
 
@@ -67,15 +69,17 @@ production project (Supabase CLI `db push`, or paste each into the SQL Editor):
 3. `20250904100000_billing_pro_entitlements.sql`
 4. `20250905120000_billing_mode_guard.sql` ← **new this phase**
 
-Then set the production database to **live** entitlement mode (one statement,
-after reviewing [`BILLING_STATE_AUDIT.md`](./BILLING_STATE_AUDIT.md)):
+On the reused project, migration 4 is applied and TEST billing state is cleaned
+transactionally in the SQL Editor, then the database is switched to **live**
+entitlement mode — all per
+[`EXISTING_PROJECT_CUTOVER.md`](./EXISTING_PROJECT_CUTOVER.md):
 
 ```sql
 update public.billing_config set expected_livemode = true;
 ```
 
-On the **development/test** project, leave `expected_livemode = false` (the
-default) so test billing keeps working.
+(If you instead ran a separate development project, you would leave its
+`expected_livemode = false` so test billing keeps working there.)
 
 ## 6. Verify
 
