@@ -9,5 +9,5 @@ export interface AuthUser {
 }
 
 /** Result of a sign-in attempt. `ok:true` for email means "magic link sent";
- *  for Google it means the OAuth redirect is underway. */
+ *  for Google (ID-token sign-in) it means the session was established. */
 export type AuthResult = { ok: true } | { ok: false; error: string };

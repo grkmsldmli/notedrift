@@ -34,3 +34,20 @@ export function supabasePublishableKey(): string | undefined {
 export function isSupabaseConfigured(): boolean {
   return !!supabaseUrl() && !!supabasePublishableKey();
 }
+
+/** The NoteDrift Google OAuth *Web Client ID* — browser-safe and PUBLIC (it is
+ *  designed to be shipped to clients; the Google Client SECRET lives only in the
+ *  Supabase provider config and never reaches the browser). Read at call time so
+ *  Next inlines `process.env.NEXT_PUBLIC_*`. Returns undefined when unset. */
+export function googleClientId(): string | undefined {
+  const id = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+  return id && id.length > 0 ? id : undefined;
+}
+
+/** True only when Google Identity Services sign-in can be offered: Supabase must
+ *  be configured (to exchange the ID token) AND a Google Web Client ID present.
+ *  When false, the Google button is simply hidden — we NEVER fall back to the
+ *  Supabase hosted OAuth redirect. */
+export function isGoogleAuthConfigured(): boolean {
+  return isSupabaseConfigured() && !!googleClientId();
+}

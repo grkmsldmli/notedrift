@@ -32,7 +32,6 @@ import {
   getCurrentUser,
   onAuthChange,
   signInWithEmail,
-  signInWithGoogle,
   signOut,
 } from "@/lib/auth/client";
 import { resolvePlan } from "@/lib/auth/plan";
@@ -64,7 +63,6 @@ interface AuthContextValue {
   /** Re-read billing status from the server. */
   refreshBilling: () => Promise<void>;
   signInWithEmail: (email: string) => Promise<AuthResult>;
-  signInWithGoogle: () => Promise<AuthResult>;
   signOut: () => Promise<void>;
 }
 
@@ -248,7 +246,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       dismissCheckoutCancelled,
       refreshBilling,
       signInWithEmail,
-      signInWithGoogle,
       signOut,
     }),
     [

@@ -3,18 +3,21 @@
 import { useEffect, useRef, useState } from "react";
 import { Mail, X } from "lucide-react";
 import { useAuth } from "./AuthProvider";
+import { isGoogleAuthConfigured } from "@/lib/auth/config";
+import { GoogleSignInButton } from "./GoogleSignInButton";
 
-/** A small, dismissible sign-in sheet. Passwordless: Google OAuth or an email
- *  magic link. Copy matches the shipped model: cloud save is explicit and
- *  opt-in — signing in uploads nothing and your canvases stay local until you
- *  choose Save to cloud (§72). */
+/** A small, dismissible sign-in sheet. Passwordless: Google (via Google Identity
+ *  Services / ID-token sign-in) or an email magic link. Copy matches the shipped
+ *  model: cloud save is explicit and opt-in — signing in uploads nothing and your
+ *  canvases stay local until you choose Save to cloud (§72). */
 export function SignInDialog({ onClose }: { onClose: () => void }) {
-  const { signInWithEmail, signInWithGoogle } = useAuth();
+  const { signInWithEmail } = useAuth();
   const [email, setEmail] = useState("");
-  const [busy, setBusy] = useState<null | "email" | "google">(null);
+  const [busy, setBusy] = useState<null | "email">(null);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const emailRef = useRef<HTMLInputElement>(null);
+  const showGoogle = isGoogleAuthConfigured();
   const titleId = "nd-signin-title";
   const errId = "nd-signin-error";
 
@@ -36,18 +39,6 @@ export function SignInDialog({ onClose }: { onClose: () => void }) {
     setBusy(null);
     if (res.ok) setSent(true);
     else setError(res.error);
-  };
-
-  const google = async () => {
-    if (busy) return;
-    setError(null);
-    setBusy("google");
-    const res = await signInWithGoogle();
-    // On success the browser redirects away; only reach here on failure.
-    if (!res.ok) {
-      setBusy(null);
-      setError(res.error);
-    }
   };
 
   return (
@@ -105,21 +96,20 @@ export function SignInDialog({ onClose }: { onClose: () => void }) {
               device until you choose Save to cloud.
             </p>
 
-            <button
-              type="button"
-              onClick={google}
-              disabled={busy !== null}
-              className="mt-4 flex w-full items-center justify-center gap-2.5 rounded-lg border border-nd-border bg-nd-surface-2 py-2.5 text-sm font-medium text-nd-text transition-colors hover:bg-white/5 disabled:opacity-50"
-            >
-              <GoogleGlyph />
-              {busy === "google" ? "Opening Google…" : "Continue with Google"}
-            </button>
-
-            <div className="my-3.5 flex items-center gap-3 text-[11px] uppercase tracking-wide text-nd-muted">
-              <span className="h-px flex-1 bg-nd-border" />
-              or
-              <span className="h-px flex-1 bg-nd-border" />
-            </div>
+            {showGoogle && (
+              <>
+                <GoogleSignInButton
+                  onSuccess={onClose}
+                  onError={setError}
+                  disabled={busy !== null}
+                />
+                <div className="my-3.5 flex items-center gap-3 text-[11px] uppercase tracking-wide text-nd-muted">
+                  <span className="h-px flex-1 bg-nd-border" />
+                  or
+                  <span className="h-px flex-1 bg-nd-border" />
+                </div>
+              </>
+            )}
 
             <form onSubmit={submitEmail} noValidate>
               <label htmlFor="nd-email" className="sr-only">
@@ -156,29 +146,5 @@ export function SignInDialog({ onClose }: { onClose: () => void }) {
         )}
       </div>
     </div>
-  );
-}
-
-/** Small inline Google mark (no external asset). */
-function GoogleGlyph() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 48 48" aria-hidden="true">
-      <path
-        fill="#FFC107"
-        d="M43.6 20.5h-1.9V20H24v8h11.3c-1.6 4.7-6.1 8-11.3 8a12 12 0 1 1 7.9-21l5.7-5.7A20 20 0 1 0 24 44c11 0 20-9 20-20 0-1.2-.1-2.3-.4-3.5z"
-      />
-      <path
-        fill="#FF3D00"
-        d="M6.3 14.7l6.6 4.8A12 12 0 0 1 24 12c3.1 0 5.9 1.2 8 3.1l5.7-5.7A20 20 0 0 0 6.3 14.7z"
-      />
-      <path
-        fill="#4CAF50"
-        d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2A12 12 0 0 1 12.7 28l-6.5 5A20 20 0 0 0 24 44z"
-      />
-      <path
-        fill="#1976D2"
-        d="M43.6 20.5H24v8h11.3a12 12 0 0 1-4.1 5.6l6.2 5.2C41.2 36.4 44 30.8 44 24c0-1.2-.1-2.3-.4-3.5z"
-      />
-    </svg>
   );
 }

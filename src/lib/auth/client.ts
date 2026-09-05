@@ -76,14 +76,22 @@ export async function signInWithEmail(email: string): Promise<AuthResult> {
   }
 }
 
-/** Google OAuth. On success the browser is redirected to the provider. */
-export async function signInWithGoogle(): Promise<AuthResult> {
+/** Exchange a Google Identity Services ID token for a Supabase session (direct
+ *  ID-token sign-in — NOT the hosted OAuth redirect, so Google's screen shows the
+ *  NoteDrift client, never the raw Supabase domain). `nonce` is the RAW nonce
+ *  whose SHA-256 hash was given to Google. On success onAuthStateChange fires and
+ *  the app reflects the signed-in user; no /auth/callback round-trip. */
+export async function signInWithGoogleIdToken(
+  credential: string,
+  nonce: string,
+): Promise<AuthResult> {
   const sb = getBrowserSupabase();
   if (!sb) return { ok: false, error: "Sign-in isn't available yet." };
   try {
-    const { error } = await sb.auth.signInWithOAuth({
+    const { error } = await sb.auth.signInWithIdToken({
       provider: "google",
-      options: { redirectTo: callbackUrl() },
+      token: credential,
+      nonce,
     });
     return error ? { ok: false, error: friendly(error.message) } : { ok: true };
   } catch {
