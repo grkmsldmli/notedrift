@@ -18,7 +18,7 @@ import type Stripe from "stripe";
 import { createServerSupabase } from "@/lib/auth/server";
 import { getStripe } from "@/lib/billing/stripe";
 import { getAdminSupabase } from "@/lib/billing/admin";
-import { missingBillingConfig } from "@/lib/billing/config";
+import { billingModeReason, missingBillingConfig } from "@/lib/billing/config";
 import { approvedInterval, resolvedPriceId } from "@/lib/billing/prices";
 import { trustedOrigin } from "@/lib/billing/urls";
 import type { BillingInterval } from "@/lib/billing/types";
@@ -26,6 +26,11 @@ import type { BillingInterval } from "@/lib/billing/types";
 export async function POST(request: Request): Promise<Response> {
   if (missingBillingConfig().length > 0) {
     return NextResponse.json({ error: "billing_unconfigured" }, { status: 503 });
+  }
+  // Fail closed on an inconsistent mode (invalid mode, key/mode mismatch, or live
+  // billing attempted on localhost/dev/insecure origin).
+  if (billingModeReason()) {
+    return NextResponse.json({ error: "billing_unavailable" }, { status: 503 });
   }
 
   const supabase = await createServerSupabase();

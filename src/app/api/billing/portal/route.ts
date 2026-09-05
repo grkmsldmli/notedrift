@@ -10,12 +10,15 @@ import { NextResponse } from "next/server";
 import { createServerSupabase } from "@/lib/auth/server";
 import { getStripe } from "@/lib/billing/stripe";
 import { getAdminSupabase } from "@/lib/billing/admin";
-import { missingBillingConfig } from "@/lib/billing/config";
+import { billingModeReason, missingBillingConfig } from "@/lib/billing/config";
 import { trustedOrigin } from "@/lib/billing/urls";
 
 export async function POST(request: Request): Promise<Response> {
   if (missingBillingConfig().length > 0) {
     return NextResponse.json({ error: "billing_unconfigured" }, { status: 503 });
+  }
+  if (billingModeReason()) {
+    return NextResponse.json({ error: "billing_unavailable" }, { status: 503 });
   }
 
   const supabase = await createServerSupabase();

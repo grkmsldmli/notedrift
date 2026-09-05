@@ -7,6 +7,13 @@ import "server-only";
 // accessors (never at module scope, never logged) and never returned to the browser.
 
 import type { BillingInterval } from "./types";
+import {
+  evaluateBilling,
+  keyKindMatchesMode,
+  normalizeBillingMode,
+  stripeKeyKind,
+  type BillingMode,
+} from "./mode";
 
 /** Required for checkout/portal/entitlement. STRIPE_WEBHOOK_SECRET is required
  *  only by the webhook route and checked separately. */
@@ -27,6 +34,39 @@ export function isBillingConfigured(): boolean {
   return missingBillingConfig().length === 0;
 }
 
+/** The configured Stripe billing mode. Default "test"; an INVALID value falls
+ *  back to "test" for messaging only — billingModeReason() reports it unavailable,
+ *  so routes fail closed before doing anything mode-sensitive. Never NEXT_PUBLIC_. */
+export function billingMode(): BillingMode {
+  return normalizeBillingMode(process.env.STRIPE_BILLING_MODE) ?? "test";
+}
+
+/** The livemode flag every trusted Stripe object/event must satisfy:
+ *  session/subscription/price/event.livemode === expectedStripeLivemode(). */
+export function expectedStripeLivemode(): boolean {
+  return billingMode() === "live";
+}
+
+/** Evaluate mode/key/origin consistency against the real environment. */
+function billingEvaluation() {
+  return evaluateBilling({
+    modeRaw: process.env.STRIPE_BILLING_MODE,
+    keyKind: stripeKeyKind(process.env.STRIPE_SECRET_KEY),
+    nodeEnv: process.env.NODE_ENV,
+    siteUrl: process.env.NEXT_PUBLIC_SITE_URL,
+  });
+}
+
+/** null when the billing mode, Stripe key and (in live) origin/NODE_ENV are all
+ *  consistent; otherwise a stable reason CODE (never a secret). Routes treat a
+ *  non-null result as "billing unavailable" and fail closed. This is the guard
+ *  that refuses to run live billing on localhost, in dev, or with a mismatched
+ *  key — and refuses to run at all under an invalid STRIPE_BILLING_MODE. */
+export function billingModeReason(): string | null {
+  const e = billingEvaluation();
+  return e.ok ? null : e.reason;
+}
+
 export function hasWebhookSecret(): boolean {
   return !!process.env.STRIPE_WEBHOOK_SECRET;
 }
@@ -34,10 +74,12 @@ export function hasWebhookSecret(): boolean {
 export function stripeSecretKey(): string {
   const k = process.env.STRIPE_SECRET_KEY;
   if (!k) throw new Error("STRIPE_SECRET_KEY is not configured");
-  // Real-money safety (§7): refuse to operate with a LIVE Stripe key. Sandbox
-  // uses sk_test_ / rk_test_ keys; live uses sk_live_ / rk_live_.
-  if (k.startsWith("sk_live") || k.startsWith("rk_live")) {
-    throw new Error("Refusing to operate with a LIVE Stripe key — NoteDrift billing is sandbox/test only");
+  // Real-money safety: the key MUST match the explicitly-configured mode. A test
+  // key is refused in live mode and a live key in test mode, so a mismatched key
+  // can never construct a Stripe client even if a caller skipped billingModeReason().
+  // The error names the mismatch, never the key value.
+  if (!keyKindMatchesMode(stripeKeyKind(k), billingMode())) {
+    throw new Error("STRIPE_SECRET_KEY does not match STRIPE_BILLING_MODE");
   }
   return k;
 }

@@ -13,7 +13,7 @@ import { NextResponse } from "next/server";
 import { createServerSupabase } from "@/lib/auth/server";
 import { getStripe } from "@/lib/billing/stripe";
 import { getAdminSupabase } from "@/lib/billing/admin";
-import { missingBillingConfig } from "@/lib/billing/config";
+import { billingModeReason, expectedStripeLivemode, missingBillingConfig } from "@/lib/billing/config";
 import { approvedInterval } from "@/lib/billing/prices";
 import { parseHttpDateSeconds } from "@/lib/billing/ordering";
 import { reconcileSubscription } from "@/lib/billing/reconcile";
@@ -35,6 +35,7 @@ const json = (status: Status, http = 200) => NextResponse.json({ status }, { sta
 
 export async function POST(request: Request): Promise<Response> {
   if (missingBillingConfig().length > 0) return json("unconfigured", 503);
+  if (billingModeReason()) return json("unconfigured", 503); // fail closed on mode mismatch
 
   const supabase = await createServerSupabase();
   if (!supabase) return json("unauthorized", 401);
@@ -60,8 +61,10 @@ export async function POST(request: Request): Promise<Response> {
     return json("not_found", 404);
   }
 
-  // Must be a sandbox subscription checkout that belongs to THIS user.
-  if (session.livemode) return json("invalid", 400);
+  // Must be a subscription checkout in the EXPECTED Stripe mode that belongs to
+  // THIS user. livemode must EQUAL the configured expectation (not merely be
+  // false) — a wrong-mode session can never grant Pro (§6).
+  if (session.livemode !== expectedStripeLivemode()) return json("invalid", 400);
   if (session.mode !== "subscription") return json("invalid", 400);
   const owner =
     (session.metadata?.supabase_user_id as string | undefined) ?? session.client_reference_id ?? null;
@@ -101,6 +104,9 @@ export async function POST(request: Request): Promise<Response> {
   } catch {
     return json("not_found", 404);
   }
+
+  // The subscription is a distinct Stripe object; re-check its mode too.
+  if (sub.livemode !== expectedStripeLivemode()) return json("invalid", 400);
 
   const priceId = sub.items?.data?.[0]?.price?.id ?? null;
   const interval = await approvedInterval(priceId);

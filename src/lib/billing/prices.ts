@@ -7,7 +7,7 @@ import "server-only";
 // two Pro prices to live on two separate Products. Cached after first resolution.
 
 import { getStripe } from "./stripe";
-import { configuredPriceId } from "./config";
+import { configuredPriceId, expectedStripeLivemode } from "./config";
 import type { BillingInterval } from "./types";
 
 interface Approved {
@@ -19,25 +19,49 @@ interface Approved {
 let cache: Approved | null = null;
 
 async function resolveOne(configured: string, interval: BillingInterval): Promise<string> {
-  if (configured.startsWith("price_")) return configured;
+  const wanted = interval === "monthly" ? "month" : "year";
+  const expectLive = expectedStripeLivemode();
+  const stripe = getStripe();
+
+  if (configured.startsWith("price_")) {
+    // Validate the configured Price object rather than trusting the id blindly:
+    // it must be active, in the EXPECTED Stripe mode (§6), and recurring on the
+    // requested interval. A wrong-mode / wrong-interval / inactive price is
+    // refused so it can never be charged or grant Pro.
+    const price = await stripe.prices.retrieve(configured);
+    if (!price.active) throw new Error(`Configured ${interval} price is not active`);
+    if (price.livemode !== expectLive) {
+      throw new Error(`Configured ${interval} price is in the wrong Stripe mode`);
+    }
+    if (price.recurring?.interval !== wanted) {
+      throw new Error(`Configured ${interval} price is not a ${wanted}ly recurring price`);
+    }
+    return price.id;
+  }
+
   if (configured.startsWith("prod_")) {
-    const wanted = interval === "monthly" ? "month" : "year";
-    const prices = await getStripe().prices.list({
+    const prices = await stripe.prices.list({
       product: configured,
       active: true,
       type: "recurring",
       limit: 100,
     });
-    // Fail CLOSED: require an active recurring price whose interval matches the
-    // requested one. NEVER fall back to prices.data[0] — that could charge a
-    // yearly price for a monthly checkout (or vice versa).
-    const match = prices.data.find((p) => p.recurring?.interval === wanted);
+    // Fail CLOSED: require an active recurring price whose interval AND mode match.
+    // NEVER fall back to prices.data[0] — that could charge a yearly price for a
+    // monthly checkout, or a wrong-mode price.
+    const match = prices.data.find(
+      (p) => p.recurring?.interval === wanted && p.livemode === expectLive,
+    );
     if (!match) {
-      throw new Error(`No active recurring ${wanted}ly price for the configured ${interval} product`);
+      throw new Error(
+        `No active recurring ${wanted}ly ${expectLive ? "live" : "test"} price for the configured ${interval} product`,
+      );
     }
     return match.id;
   }
-  return configured; // unknown format — use as configured
+
+  // Fail closed on an unrecognized id format instead of using it as-is.
+  throw new Error(`Unrecognized price/product id format for the ${interval} plan`);
 }
 
 /** The resolved approved prices, cached. Throws if a configured id can't resolve. */

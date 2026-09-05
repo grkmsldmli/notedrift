@@ -17,7 +17,12 @@ export const runtime = "nodejs";
 
 import type Stripe from "stripe";
 import { getStripe } from "@/lib/billing/stripe";
-import { hasWebhookSecret, webhookSecret } from "@/lib/billing/config";
+import {
+  billingModeReason,
+  expectedStripeLivemode,
+  hasWebhookSecret,
+  webhookSecret,
+} from "@/lib/billing/config";
 import { applySubscriptionEvent, normalizeSubscription } from "@/lib/billing/webhook";
 
 export async function POST(request: Request): Promise<Response> {
@@ -27,6 +32,11 @@ export async function POST(request: Request): Promise<Response> {
     // Endpoint exists but isn't configured to verify signatures yet.
     return new Response("webhook not configured", { status: 503 });
   }
+  // Fail closed on an inconsistent billing mode (invalid mode, key/mode mismatch,
+  // live on an insecure origin) before touching Stripe or the DB.
+  if (billingModeReason()) {
+    return new Response("billing unavailable", { status: 503 });
+  }
 
   const body = await request.text();
 
@@ -35,6 +45,14 @@ export async function POST(request: Request): Promise<Response> {
     event = getStripe().webhooks.constructEvent(body, signature, webhookSecret());
   } catch {
     return new Response("invalid signature", { status: 400 });
+  }
+
+  // Wrong-mode event (a test event reaching a live endpoint or vice versa): fail
+  // SAFELY — acknowledge with 200 so Stripe stops retrying, but never touch the
+  // DB. In practice each environment has its own signing secret, so this can't
+  // pass the signature check across modes; this is defense in depth (§6).
+  if (event.livemode !== expectedStripeLivemode()) {
+    return new Response("ignored (mode mismatch)", { status: 200 });
   }
 
   try {
