@@ -14,6 +14,7 @@ import {
   CloudOff,
   FolderOpen,
   Loader2,
+  Sparkles,
   Trash2,
   UploadCloud,
 } from "lucide-react";
@@ -21,6 +22,8 @@ import { getCloudEngine } from "@/lib/cloud/engine";
 import { onAuthChange } from "@/lib/auth/client";
 import { isSupabaseConfigured } from "@/lib/auth/config";
 import type { SyncState } from "@/lib/cloud/link";
+import { useAuth } from "../auth/AuthProvider";
+import { UpgradeDialog } from "../billing/UpgradeDialog";
 
 export function CloudButton({
   currentId,
@@ -33,15 +36,19 @@ export function CloudButton({
   onOpenCloudList: () => void;
   onNotice: (msg: string) => void;
 }) {
+  const { plan } = useAuth();
   const [signedIn, setSignedIn] = useState(false);
   const [, force] = useState(0);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [upgradeOpen, setUpgradeOpen] = useState(false);
 
   useEffect(() => onAuthChange((u) => setSignedIn(!!u)), []);
   useEffect(() => getCloudEngine().subscribe(() => force((n) => n + 1)), []);
 
   if (!isSupabaseConfigured() || !signedIn) return null;
+
+  const isPro = plan === "pro";
 
   const engine = getCloudEngine();
   const link = engine.status(currentId);
@@ -55,11 +62,13 @@ export function CloudButton({
     setBusy(false);
     setOpen(false);
     if (!res.ok) {
-      onNotice(
-        res.kind === "limit"
-          ? "You already have 3 cloud canvases. Remove one from cloud to save another. Local canvases stay unlimited."
-          : res.message,
-      );
+      if (res.kind === "limit") {
+        onNotice("You already have 3 cloud canvases. Local canvases stay unlimited.");
+        // Offer the upgrade at the moment they hit the Free limit (§43).
+        if (!isPro) setUpgradeOpen(true);
+      } else {
+        onNotice(res.message);
+      }
     }
   }
 
@@ -140,8 +149,17 @@ export function CloudButton({
             <MenuItem icon={<FolderOpen size={16} className="text-nd-muted" />} onClick={() => { setOpen(false); onOpenCloudList(); }}>
               Cloud canvases…
             </MenuItem>
+            {!isPro && (
+              <MenuItem icon={<Sparkles size={16} className="text-nd-accent" />} onClick={() => { setOpen(false); setUpgradeOpen(true); }}>
+                Upgrade to Pro
+              </MenuItem>
+            )}
           </div>
         </>
+      )}
+
+      {upgradeOpen && (
+        <UpgradeDialog onClose={() => setUpgradeOpen(false)} onNotice={onNotice} />
       )}
     </div>
   );

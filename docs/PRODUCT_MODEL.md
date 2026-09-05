@@ -6,12 +6,12 @@
 > capabilities and pricing is [`src/lib/plans.ts`](../src/lib/plans.ts); this
 > document is its prose companion. Phase 2.0 established both. **Since then** these
 > have shipped: the auth foundation (2.0B), **cloud canvas sync** with the
-> server-enforced 3-cloud Free cap (2.0C — see “Cloud canvas sync — shipped”
+> server-enforced 3-cloud Free cap (2.0C), **Stripe + server-authoritative Pro
+> billing** (2.0D — Pro = unlimited cloud canvases; see “Pro billing — shipped”
 > below), and the separate Convert Files + PDF Editor growth track. Still **not
-> built**: Stripe / Pro billing — so every authenticated account is currently
-> treated as **Free** server-side — plus long-term version history, sharing /
-> collaboration, professional exports, and AI. Sections still marked _(future)_
-> are design intent, not shipped features.
+> built**: long-term version history, sharing / collaboration, professional
+> exports, and AI. Sections still marked _(future)_ are design intent, not shipped
+> features.
 
 ## The four load-bearing statements
 
@@ -56,7 +56,7 @@ is derived elsewhere and passed into the entitlement layer.
 | Local autosave | ✅ | ✅ | ✅ |
 | Account required | ❌ | for cloud only | yes |
 | Cloud sync | ❌ | ✅ | ✅ |
-| Cloud canvas limit (server-enforced) | 0 | **3** | ∞ _(Pro needs billing — future)_ |
+| Cloud canvas limit (server-enforced) | 0 | **3** | **∞** (Pro, via Stripe billing) |
 | Version history _(future)_ | — | ~7 days | long-term / ∞ |
 | Public view sharing _(future)_ | ❌ | limited | ✅ |
 | Private sharing / collab _(future)_ | ❌ | ❌ | ✅ |
@@ -84,12 +84,13 @@ and a small AI allowance. No ads.
 
 ### Pro plan (canonical)
 
-Pro is **$3.99/month** or **$29.99/year** (see Pricing). Pro adds _(all future)_:
-unlimited cloud canvases + device sync + cloud backup; advanced/unlimited
-folders & notebooks; long-term/unlimited version history; unlimited public
-sharing, private links, and collaboration when built; professional export
-(HD PNG, 4K PNG, transparent PNG, SVG, export selection, multi-page PDF, custom
-dimensions); a larger AI allowance; always ad-free.
+Pro is **$3.99/month** or **$29.99/year** (see Pricing). Pro adds, **shipped in
+2.0D**, **unlimited cloud canvases** (with the same cloud sync + device access as
+Free, just without the 3-cap) and is always ad-free. Still _(future)_: advanced/
+unlimited folders & notebooks; long-term/unlimited version history; unlimited
+public sharing, private links, and collaboration; professional export (HD PNG,
+4K PNG, transparent PNG, SVG, export selection, multi-page PDF, custom
+dimensions); a larger AI allowance.
 
 ### The four Pro pillars (how Pro is positioned)
 
@@ -154,9 +155,11 @@ requirement. Anonymous usage is first-class. There is **no permanent
 monetization chrome on the canvas** — no persistent Pro badges, no Pro locks over
 the toolbar, nothing that interrupts drawing or writing.
 
-## Upgrade UX (future)
+## Upgrade UX
 
-Prompts appear at genuine value moments, phrased around the benefit:
+The 2.0D entry points (account-menu "Upgrade to Pro", the at-limit cloud nudge,
+and a compact Upgrade sheet) follow this; future prompts must too. Prompts appear
+at genuine value moments, phrased around the benefit:
 
 > ✅ "Sync this canvas across devices" · "Keep unlimited canvases in the cloud" ·
 > "Export a transparent PNG" · "Access full version history"
@@ -212,7 +215,58 @@ fully denied**. Client code lives in `src/lib/cloud/` (`engine`, `client`,
 `CloudCanvasesDialog` (signed-in only — never shown to anonymous users).
 
 **Still future on cloud docs** (not built here): version-history snapshots,
-sharing / collaboration, professional exports, Pro billing (2.0D), and AI.
+sharing / collaboration, professional exports, and AI. (Pro billing shipped in
+2.0D — see “Pro billing — shipped”.)
+
+---
+
+# Pro billing — shipped (Phase 2.0D)
+
+Pro is real: **Stripe-hosted checkout**, a **server-authoritative** subscription
+record, and **verified webhooks** decide who is Pro. The only shipped Pro benefit
+is **unlimited cloud canvases** (Free stays at 3). Every other Pro row in the
+table above remains _(future)_. Pricing is unchanged (**$3.99/mo**, **$29.99/yr**),
+derived from `PRICING` in `plans.ts`.
+
+**Authority chain (never bypassable by the client):**
+
+> Stripe subscription → signature-verified webhook (service role) →
+> `billing_subscriptions.plan_key` → `is_pro()` → `create_cloud_canvas` cap → UI
+
+**Non-negotiable rules this phase enforces:**
+
+- **The client can never self-promote.** `plan="pro"` in the browser is
+  display-only, read from the sanitized `get_billing_status()` RPC. The cloud cap
+  re-checks `is_pro()` server-side, so a spoofed client plan grants nothing.
+- **Billing rows are server-owned.** `billing_customers` / `billing_subscriptions`
+  / `stripe_webhook_events` have RLS on with no anon/authenticated policies or
+  grants — writes happen only via the service role (webhook/checkout) and the
+  `service_role`-only apply RPC. A user can't read or mutate them; the only read
+  path is their own sanitized status.
+- **Approved-price allowlist.** A subscription grants Pro only if its Stripe Price
+  is one of the two approved Pro prices (resolved from the configured monthly/
+  yearly ids, which may be Price or Product ids). An unapproved price is never Pro,
+  even if active — never product name / customer / email / metadata.
+- **Checkout completion never grants Pro.** Only subscription lifecycle webhooks
+  do. `active` / `trialing` (incl. the `cancel_at_period_end` window) = Pro;
+  `past_due` / `unpaid` / `canceled` / `incomplete` / `paused` / unknown = Free
+  (fail closed).
+- **Idempotent + ordered.** The apply RPC dedupes by event id and ignores
+  out-of-order (older) events, so retries and races can't corrupt state.
+- **Non-destructive downgrade.** Losing Pro deletes/hides/disables nothing — a
+  Free user with >3 cloud canvases keeps them all readable, editable and syncable;
+  only NEW cloud creation is blocked while at/above the Free limit.
+
+**Surfaces.** Server-only code (behind `server-only`) in `src/lib/billing/*`
+(config, stripe, admin, prices, webhook) + routes `/api/billing/checkout`,
+`/api/billing/portal`, `/api/stripe/webhook`. Client: `get_billing_status()` via
+the browser Supabase RPC feeds `AuthProvider`; UX is the account menu (Upgrade to
+Pro / Manage billing), a compact Upgrade sheet, plan-aware cloud UI, and an
+"Activating Pro…" return state. Secrets never reach the client bundle. Billing is
+**sandbox/test-mode**; the app refuses to run with a live Stripe key.
+
+**Still future for Pro** (not built here): professional exports, folders,
+long-term version history, sharing / collaboration, expanded AI.
 
 ---
 
@@ -231,17 +285,17 @@ entitlements later; entitlements never import them.
 
 ## Server-authoritative Pro status
 
+> **✅ Implemented in 2.0D** (see “Pro billing — shipped”). This section is kept as
+> the principle the shipped design follows.
+
 **Never trust `localStorage`, React state, or any client claim as authoritative
-Pro status.** When billing ships, a `"pro"` `Plan` must derive from
-server-verified Stripe state:
+Pro status.** A `"pro"` `Plan` derives from server-verified Stripe state:
 
 - a Stripe **Customer** and **Subscription**, with monthly and annual **Price IDs**;
 - subscription truth driven by **webhooks** (`active`, `past_due`, `canceled`,
   `cancel_at_period_end`, current-period end);
-- the client may _cache_ a plan for UX, but any privileged action re-checks
-  server state.
-
-Do **not** integrate Stripe in this phase.
+- the client may _cache_ a plan for UX, but any privileged action (the cloud cap)
+  re-checks server state.
 
 ## Recommended backend
 
@@ -445,8 +499,9 @@ inspected for advertising. Candidate events: `canvas_created`, `canvas_opened`,
 - **2.0B — Auth / account foundation** — ✅ shipped
 - **2.0C — Cloud canvas sync** (3-cloud Free cap, server-enforced; local
   untouched) — ✅ shipped
-- **2.0D** — Stripe billing + server-authoritative Pro state ← _next_
-- **2.0E** — Professional exports
+- **2.0D — Stripe billing + server-authoritative Pro state** (Pro = unlimited
+  cloud; non-destructive downgrade) — ✅ shipped
+- **2.0E** — Professional exports ← _next_
 - **2.0F** — Folders / version history / sharing
 
 Separate growth track: **Convert Files** (`/tools`). Later: **AI**, then

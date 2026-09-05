@@ -6,8 +6,10 @@
 // (keeps the local copy). Fetched fresh on open + on demand.
 
 import { useCallback, useEffect, useState } from "react";
-import { Cloud, FolderOpen, Loader2, RefreshCw, Trash2, X } from "lucide-react";
+import { Cloud, FolderOpen, Loader2, RefreshCw, Sparkles, Trash2, X } from "lucide-react";
 import { getCloudEngine, type CloudCanvasMeta } from "@/lib/cloud/engine";
+import { useAuth } from "../auth/AuthProvider";
+import { UpgradeDialog } from "../billing/UpgradeDialog";
 
 function timeAgo(iso: string): string {
   const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
@@ -29,8 +31,11 @@ export function CloudCanvasesDialog({
   onNotice: (msg: string) => void;
 }) {
   const engine = getCloudEngine();
+  const { plan } = useAuth();
+  const isPro = plan === "pro";
   const [rows, setRows] = useState<CloudCanvasMeta[] | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [upgradeOpen, setUpgradeOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     setRows(null);
@@ -69,11 +74,16 @@ export function CloudCanvasesDialog({
           <div className="flex items-center gap-2">
             <Cloud size={16} className="text-nd-accent" />
             <h2 className="text-sm font-semibold text-nd-text">Cloud canvases</h2>
-            {rows && (
-              <span className="rounded-full bg-nd-surface-2 px-2 py-0.5 text-[11px] tabular-nums text-nd-muted">
-                {count} of 3
-              </span>
-            )}
+            {rows &&
+              (isPro ? (
+                <span className="nd-gradient inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold text-white">
+                  <Sparkles size={10} /> Pro · {count}
+                </span>
+              ) : (
+                <span className="rounded-full bg-nd-surface-2 px-2 py-0.5 text-[11px] tabular-nums text-nd-muted">
+                  {count} of 3
+                </span>
+              ))}
           </div>
           <div className="flex items-center gap-0.5">
             <button type="button" aria-label="Refresh" onClick={() => void refresh()} className="nd-hit flex h-8 w-8 items-center justify-center rounded-lg text-nd-muted hover:bg-white/5 hover:text-nd-text">
@@ -131,10 +141,33 @@ export function CloudCanvasesDialog({
           })}
         </div>
 
+        {rows && !isPro && count >= 3 && (
+          <div className="border-t border-nd-border bg-nd-accent/5 px-4 py-3 text-[11px]">
+            <p className="text-nd-text">
+              {count > 3
+                ? `You have ${count} cloud canvases from Pro. They all stay available to open, edit and sync. Free includes up to 3 — to save another, resubscribe to Pro or reduce your cloud count below 3.`
+                : "You're at the Free limit of 3 cloud canvases. Local canvases stay unlimited — upgrade to Pro for unlimited cloud, or remove one below."}
+            </p>
+            <button
+              type="button"
+              onClick={() => setUpgradeOpen(true)}
+              className="nd-gradient mt-2 inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12px] font-medium text-white transition-opacity hover:opacity-90"
+            >
+              <Sparkles size={13} /> {count > 3 ? "Resubscribe to Pro" : "Upgrade to Pro"}
+            </button>
+          </div>
+        )}
+
         <p className="border-t border-nd-border px-4 py-2.5 text-[11px] text-nd-muted">
-          Cloud canvases are stored privately in your NoteDrift account. Free includes 3; your local canvases stay unlimited.
+          {isPro
+            ? "Cloud canvases are stored privately in your NoteDrift account. Pro includes unlimited cloud canvases; your local canvases stay unlimited too."
+            : "Cloud canvases are stored privately in your NoteDrift account. Free includes 3; your local canvases stay unlimited."}
         </p>
       </div>
+
+      {upgradeOpen && (
+        <UpgradeDialog onClose={() => setUpgradeOpen(false)} onNotice={onNotice} />
+      )}
     </div>
   );
 }
