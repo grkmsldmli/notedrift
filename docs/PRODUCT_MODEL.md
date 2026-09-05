@@ -4,9 +4,14 @@
 > architecture future phases must follow. When code and this document disagree,
 > treat the disagreement as a bug. The machine-readable source of truth for
 > capabilities and pricing is [`src/lib/plans.ts`](../src/lib/plans.ts); this
-> document is its prose companion. Phase 2.0 established both. No authentication,
-> cloud, Stripe, AI, collaboration, or file-converter code exists yet — the
-> sections below marked _(future)_ are design intent, not shipped features.
+> document is its prose companion. Phase 2.0 established both. **Since then** these
+> have shipped: the auth foundation (2.0B), **cloud canvas sync** with the
+> server-enforced 3-cloud Free cap (2.0C — see “Cloud canvas sync — shipped”
+> below), and the separate Convert Files + PDF Editor growth track. Still **not
+> built**: Stripe / Pro billing — so every authenticated account is currently
+> treated as **Free** server-side — plus long-term version history, sharing /
+> collaboration, professional exports, and AI. Sections still marked _(future)_
+> are design intent, not shipped features.
 
 ## The four load-bearing statements
 
@@ -50,8 +55,8 @@ is derived elsewhere and passed into the entitlement layer.
 | Unlimited **local** canvases | ✅ | ✅ | ✅ |
 | Local autosave | ✅ | ✅ | ✅ |
 | Account required | ❌ | for cloud only | yes |
-| Cloud sync _(future)_ | ❌ | ✅ | ✅ |
-| Cloud canvas limit _(future)_ | 0 | **3** | ∞ |
+| Cloud sync | ❌ | ✅ | ✅ |
+| Cloud canvas limit (server-enforced) | 0 | **3** | ∞ _(Pro needs billing — future)_ |
 | Version history _(future)_ | — | ~7 days | long-term / ∞ |
 | Public view sharing _(future)_ | ❌ | limited | ✅ |
 | Private sharing / collab _(future)_ | ❌ | ❌ | ✅ |
@@ -72,9 +77,10 @@ canvases**, local autosave, no account required, and **Standard PNG** export
 export itself is **not built yet** — it ships in a later phase; a user can always
 get their work out as PNG in the meantime.
 
-_Future_ Free cloud plan: up to **3 cloud canvases** (local stays unlimited),
-~7-day version history on cloud docs, limited public view sharing, a small AI
-allowance. No ads at launch.
+The Free **cloud** plan is **shipped** (2.0C): up to **3 cloud canvases** (local
+stays unlimited), the cap enforced **server-side** (never by client `plans.ts`).
+Still _future_ on cloud docs: ~7-day version history, limited public view sharing,
+and a small AI allowance. No ads.
 
 ### Pro plan (canonical)
 
@@ -160,6 +166,56 @@ core tools.
 
 ---
 
+# Cloud canvas sync — shipped (Phase 2.0C)
+
+Cloud sync is **live** and **local-first**. It never changes startup or local
+behaviour; it is inert until a user, while signed in, explicitly chooses **Save to
+cloud** on a canvas. The design notes in “Future architecture” below (cloud
+document storage, image assets) are now **implemented** by this phase and kept
+there only as rationale.
+
+**Non-negotiable rules this phase enforces:**
+
+- **Local save is independent of cloud.** The editor persists locally and only
+  _then_ notifies the sync engine; any cloud failure (offline, error, conflict,
+  cap) leaves local autosave untouched.
+- **Signing in uploads nothing.** No local canvas is auto-uploaded on sign-in. A
+  canvas becomes cloud-linked only via an explicit `saveToCloud`; edits then
+  auto-sync (debounced, single-flight).
+- **The 3-cloud Free cap is server-side.** Enforced inside a `SECURITY DEFINER`
+  RPC under a per-user advisory lock — never by client `plans.ts`. Every
+  authenticated account is currently treated as **Free** (no billing yet), so the
+  effective cap is 3 for everyone. Local canvases stay unlimited.
+- **No last-write-wins.** Updates are **optimistically revisioned**; a stale write
+  becomes a **conflict**, resolved by the user. “Use cloud version” first preserves
+  unsynced local work as a separate **local backup** page.
+- **An account-A canvas never syncs under account B.** Each cloud link is bound to
+  one owner uid and is never retargeted; RLS isolates rows per owner.
+
+**Architecture (three concerns, not one blob):**
+
+1. **Canvas metadata + document JSON** — `cloud_canvases` (owner-scoped, RLS,
+   `revision`, `schema_version`). The document JSON stored in the cloud contains
+   **no image data-URLs**.
+2. **Content-addressed image assets** — images are extracted from the document,
+   hashed (**SHA-256**), and stored once in a **private** `canvas-assets` storage
+   bucket under an owner-id prefix; the document references them by hash
+   (`ndasset:<sha>`). Deduplicated within and across canvases; hydrated back to
+   data-URLs on open. Old local docs with embedded data-URLs still load.
+3. **Asset references** — `cloud_canvas_asset_refs` ties a canvas to the assets it
+   uses, so deleting a canvas can garbage-collect newly-orphaned assets.
+
+Access is entirely through `SECURITY DEFINER` RPCs (`create` / `update` /
+`delete` / `count`), with base-table GRANTs backing the RLS policies and **anon
+fully denied**. Client code lives in `src/lib/cloud/` (`engine`, `client`,
+`manifest`, `link`, `linkStore`); the UI is the compact `CloudButton` +
+`CloudCanvasesDialog` (signed-in only — never shown to anonymous users).
+
+**Still future on cloud docs** (not built here): version-history snapshots,
+sharing / collaboration, professional exports, Pro billing (2.0D), and AI.
+
+---
+
 # Future architecture (design only — not implemented in 2.0)
 
 ## Authentication / subscription / entitlements are three layers
@@ -197,6 +253,10 @@ documents, RLS, and sharing. Do **not** connect production services in 2.0.
 
 ## Cloud document storage strategy
 
+> **Implemented in 2.0C** (see “Cloud canvas sync — shipped”). The notes below are
+> retained as the rationale the shipped design followed. Local persistence is
+> still a single blob, as stated.
+
 Today a `CanvasDoc` is a single Fabric `toObject()` JSON blob persisted per page
 in IndexedDB (see `src/lib/storage.ts`). Representative sizes (measured during
 Phase 1.6H performance testing):
@@ -217,7 +277,11 @@ into three concerns rather than one blob:
 
 Do **not** rewrite local persistence yet; local-first stays a single blob.
 
-## Image asset strategy (future)
+## Image asset strategy
+
+> **Implemented in 2.0C** (content-addressed SHA-256 assets in a private bucket,
+> deduped, hydrated on open; see “Cloud canvas sync — shipped”). Requirements
+> below were the acceptance criteria and all hold.
 
 For cloud, extract embedded images into content-addressed **assets** and
 reference them from the document JSON. Requirements:
@@ -377,10 +441,11 @@ inspected for advertising. Candidate events: `canvas_created`, `canvas_opened`,
 
 ## Recommended implementation order
 
-- **2.0A — Entitlements / product architecture** ← _this phase_
-- **2.0B** — Auth / account foundation
-- **2.0C** — Cloud canvas sync (3-cloud Free cap; local untouched)
-- **2.0D** — Stripe billing + server-authoritative Pro state
+- **2.0A — Entitlements / product architecture** — ✅ shipped
+- **2.0B — Auth / account foundation** — ✅ shipped
+- **2.0C — Cloud canvas sync** (3-cloud Free cap, server-enforced; local
+  untouched) — ✅ shipped
+- **2.0D** — Stripe billing + server-authoritative Pro state ← _next_
 - **2.0E** — Professional exports
 - **2.0F** — Folders / version history / sharing
 

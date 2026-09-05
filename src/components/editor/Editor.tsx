@@ -519,6 +519,9 @@ export default function Editor() {
     // Don't let a pending autosave resurrect the page we're discarding.
     if (deletingCurrent) c.cancelPersist();
     void deleteCanvasDoc(id);
+    // Deleting the local page must not remove the cloud copy (§83); just forget
+    // the link so the cloud canvas re-downloads cleanly if opened again.
+    getCloudEngine().forgetLocal(id);
     const remaining = pagesRef.current.filter((p) => p.id !== id);
 
     if (remaining.length === 0) {

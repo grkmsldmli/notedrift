@@ -5,7 +5,9 @@ import { Mail, X } from "lucide-react";
 import { useAuth } from "./AuthProvider";
 
 /** A small, dismissible sign-in sheet. Passwordless: Google OAuth or an email
- *  magic link. Copy deliberately does NOT claim sync exists yet. */
+ *  magic link. Copy matches the shipped model: cloud save is explicit and
+ *  opt-in — signing in uploads nothing and your canvases stay local until you
+ *  choose Save to cloud (§72). */
 export function SignInDialog({ onClose }: { onClose: () => void }) {
   const { signInWithEmail, signInWithGoogle } = useAuth();
   const [email, setEmail] = useState("");
@@ -98,8 +100,9 @@ export function SignInDialog({ onClose }: { onClose: () => void }) {
               Sign in to NoteDrift
             </h2>
             <p className="mt-1 text-sm text-nd-muted">
-              Create an account for upcoming cloud features. Your canvases stay on
-              this device.
+              Save canvases to your private cloud and reopen them on another
+              device. Nothing uploads automatically — your work stays on this
+              device until you choose Save to cloud.
             </p>
 
             <button

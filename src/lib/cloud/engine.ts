@@ -212,7 +212,13 @@ class CloudSyncEngine {
    *  linked local page if present (no duplicate). Returns the local page id. */
   async openFromCloud(cloudId: string): Promise<{ ok: true; localId: string } | { ok: false; message: string }> {
     const existing = getLinkByCloudId(cloudId);
-    if (existing && ownsLink(existing, this.uid)) return { ok: true, localId: existing.localId };
+    if (existing && ownsLink(existing, this.uid)) {
+      // Reuse the on-device copy only if it still exists. If the local page was
+      // deleted or evicted, fall through to a fresh download instead of handing
+      // back a dead local id (§83: delete local ≠ remove from cloud).
+      if (await loadCanvasDoc(existing.localId)) return { ok: true, localId: existing.localId };
+      removeLink(existing.localId);
+    }
     if (!this.uid) return { ok: false, message: "Sign in to open a cloud canvas." };
 
     const res = await getCloudCanvas(cloudId);
@@ -257,6 +263,17 @@ class CloudSyncEngine {
 
   /** A cloud row vanished remotely: keep the local content, drop the link. */
   unlinkMissing(localId: string): void {
+    removeLink(localId);
+    this.emit();
+  }
+
+  /** A local page was deleted on this device. Forget its cloud link — the cloud
+   *  copy is untouched and stays openable from the Cloud Canvases list (§83).
+   *  Also stops any pending autosync from acting on the discarded page. */
+  forgetLocal(localId: string): void {
+    if (!getLink(localId)) return;
+    clearTimeout(this.timers.get(localId));
+    this.timers.delete(localId);
     removeLink(localId);
     this.emit();
   }

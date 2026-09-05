@@ -6,7 +6,7 @@
 // Cloud, Remove from cloud, resolve a conflict). The browse-all dialog lives in
 // CloudCanvasesDialog.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   AlertTriangle,
   Check,
@@ -88,6 +88,8 @@ export function CloudButton({
         type="button"
         aria-label={`Cloud — ${visual.label}`}
         title={visual.label}
+        aria-haspopup="menu"
+        aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
         className="nd-hit flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs text-nd-muted transition-colors hover:bg-white/5 hover:text-nd-text"
       >
@@ -98,7 +100,7 @@ export function CloudButton({
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-full z-50 mt-1.5 w-64 rounded-xl border border-nd-border bg-nd-surface p-1 shadow-2xl">
+          <div role="menu" className="absolute right-0 top-full z-50 mt-1.5 w-64 rounded-xl border border-nd-border bg-nd-surface p-1 shadow-2xl">
             {state === "local-only" && !foreign && (
               <MenuItem icon={<UploadCloud size={16} />} onClick={saveToCloud}>
                 Save to cloud
@@ -149,6 +151,7 @@ function MenuItem({ icon, onClick, children }: { icon: React.ReactNode; onClick:
   return (
     <button
       type="button"
+      role="menuitem"
       onClick={onClick}
       className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm text-nd-text transition-colors hover:bg-white/5"
     >
