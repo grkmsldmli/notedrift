@@ -38,6 +38,7 @@ import { onAuthChange } from "@/lib/auth/client";
 import { CloudButton } from "./CloudButton";
 import { CloudCanvasesDialog } from "./CloudCanvasesDialog";
 import { BillingActivating } from "../billing/BillingActivating";
+import { AuthNotice } from "../auth/AuthNotice";
 import { Toolbar } from "./Toolbar";
 import { TopBar } from "./TopBar";
 import { ZoomControls } from "./ZoomControls";
@@ -920,6 +921,7 @@ export default function Editor() {
       )}
 
       <BillingActivating />
+      <AuthNotice />
     </div>
   );
 }
