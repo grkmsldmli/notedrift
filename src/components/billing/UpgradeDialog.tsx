@@ -136,6 +136,15 @@ export function UpgradeDialog({
         <p className="mt-2 text-center text-[11px] text-nd-muted">
           Secure checkout by Stripe. Cancel anytime. No free trial.
         </p>
+        <p className="mt-1 text-center text-[11px] text-nd-muted">
+          <a href="/terms" target="_blank" rel="noopener noreferrer" className="hover:text-nd-text hover:underline">
+            Terms
+          </a>{" "}
+          ·{" "}
+          <a href="/privacy" target="_blank" rel="noopener noreferrer" className="hover:text-nd-text hover:underline">
+            Privacy
+          </a>
+        </p>
       </div>
     </div>
   );

@@ -13,14 +13,29 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+const SITE_DESCRIPTION =
+  "A blank space for whatever's on your mind. An instant, local-first infinite canvas — no login, no clutter.";
+
 export const metadata: Metadata = {
   metadataBase: new URL(
     process.env.NEXT_PUBLIC_SITE_URL ?? "https://notedrift.com",
   ),
   title: "NoteDrift — Open. Think. Create.",
-  description:
-    "A blank space for whatever's on your mind. An instant, local-first infinite canvas — no login, no clutter.",
+  description: SITE_DESCRIPTION,
   applicationName: "NoteDrift",
+  alternates: { canonical: "/" },
+  openGraph: {
+    type: "website",
+    siteName: "NoteDrift",
+    title: "NoteDrift — Open. Think. Create.",
+    description: SITE_DESCRIPTION,
+    url: "/",
+  },
+  twitter: {
+    card: "summary",
+    title: "NoteDrift — Open. Think. Create.",
+    description: SITE_DESCRIPTION,
+  },
 };
 
 export const viewport: Viewport = {

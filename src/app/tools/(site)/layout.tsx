@@ -11,10 +11,18 @@ export default function ToolsLayout({ children }: { children: ReactNode }) {
         <ToolsHeader />
         <main className="flex-1">{children}</main>
         <footer className="border-t border-nd-border px-4 py-6 text-center text-xs text-nd-muted">
-          Files stay on your device — every conversion runs in your browser.{" "}
-          <Link href="/" className="text-nd-accent hover:underline">
-            NoteDrift
-          </Link>
+          <p>Files stay on your device — every conversion runs in your browser.</p>
+          <nav className="mt-2 flex flex-wrap items-center justify-center gap-x-4 gap-y-1">
+            <Link href="/" className="text-nd-accent hover:underline">
+              NoteDrift
+            </Link>
+            <Link href="/privacy" className="transition-colors hover:text-nd-text">
+              Privacy
+            </Link>
+            <Link href="/terms" className="transition-colors hover:text-nd-text">
+              Terms
+            </Link>
+          </nav>
         </footer>
       </div>
     </div>
