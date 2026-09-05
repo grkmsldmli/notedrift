@@ -80,10 +80,12 @@ export function GoogleSignInButton({
         const width = Math.min(Math.max(containerRef.current.clientWidth || 320, 200), 400);
         gis.renderButton(containerRef.current, {
           type: "standard",
-          // GIS supports only outline | filled_blue | filled_black; "outline" is
-          // the neutral outlined button that sits cleanly on the dark dialog
-          // (filled_black looked muddy against it).
-          theme: "outline",
+          // GIS only supports outline | filled_blue | filled_black. "outline" is a
+          // WHITE button whose corners jut out against the dark dialog; "filled_black"
+          // is too low-contrast on the dark-navy surface. "filled_blue" is the
+          // branded, no-white button that reads cleanly here (we can't restyle
+          // Google's iframe, so the theme is the only lever).
+          theme: "filled_blue",
           size: "large",
           text: "continue_with",
           shape: "rectangular",
