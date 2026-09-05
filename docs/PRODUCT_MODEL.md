@@ -262,8 +262,13 @@ derived from `PRICING` in `plans.ts`.
 `/api/billing/portal`, `/api/stripe/webhook`. Client: `get_billing_status()` via
 the browser Supabase RPC feeds `AuthProvider`; UX is the account menu (Upgrade to
 Pro / Manage billing), a compact Upgrade sheet, plan-aware cloud UI, and an
-"Activating Pro…" return state. Secrets never reach the client bundle. Billing is
-**sandbox/test-mode**; the app refuses to run with a live Stripe key.
+"Activating Pro…" return state. Secrets never reach the client bundle. Billing
+runs in an explicit, fail-closed **test/live mode** (`STRIPE_BILLING_MODE`, added
+in Phase 3.0A): the Stripe key must match the mode, live additionally requires
+`NODE_ENV=production` + a secure `https` origin, and every trusted Stripe
+object/event's `livemode` must equal the configured mode. A mode-aware DB guard
+(`billing_config.expected_livemode`) ensures a test subscription can never grant
+production Pro. See [`docs/launch/`](launch/) for the production cutover.
 
 **Still future for Pro** (not built here): professional exports, folders,
 long-term version history, sharing / collaboration, expanded AI.

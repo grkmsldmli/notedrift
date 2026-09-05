@@ -7,8 +7,13 @@ white canvas immediately — no sign-up, no login, no onboarding, no dashboard.
 Write, draw, sketch, diagram, or brainstorm the moment the page loads. Your work
 is saved locally and survives refreshes automatically.
 
-> `/` opens directly into the editor. There is no marketing homepage (yet) —
-> the blank canvas _is_ the product.
+NoteDrift is **local-first**: the core editor works fully anonymously, entirely
+in your browser. Signing in is **optional** and only unlocks cloud sync; a Pro
+subscription only raises the cloud-canvas limit. Anonymous local use is never
+gated.
+
+> `/` opens directly into the editor. The blank canvas _is_ the product — there is
+> no marketing homepage or onboarding wall.
 
 ---
 
@@ -27,35 +32,60 @@ Other scripts:
 npm run build    # production build
 npm run start    # serve the production build
 npm run lint     # eslint
+npm test         # unit tests (node --test)
 npx tsc --noEmit # type-check
 ```
 
 Requires Node 18+ (developed on Node 24).
 
+### Configuration
+
+NoteDrift runs with **no configuration** — auth, cloud, and billing simply stay
+disabled until you provide the relevant environment variables. Copy
+[`.env.example`](.env.example) to `.env.local` and fill in what you need:
+
+- **Supabase** (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`,
+  `SUPABASE_SECRET_KEY`) enables accounts + cloud canvases.
+- **Stripe** (`STRIPE_BILLING_MODE`, `STRIPE_SECRET_KEY`, `STRIPE_PRICE_PRO_*`,
+  `STRIPE_WEBHOOK_SECRET`) enables Pro billing. Billing is explicitly **test** or
+  **live** and fails closed on a mismatched key/origin — see
+  [`docs/launch/`](docs/launch/).
+
+Never put a secret in a `NEXT_PUBLIC_*` variable; server secrets are read only by
+route handlers behind `server-only` modules and never reach the browser.
+
+For production launch, follow
+[`docs/launch/LAUNCH_CHECKLIST.md`](docs/launch/LAUNCH_CHECKLIST.md).
+
 ---
 
 ## Tech stack
 
-| Concern       | Choice                                              |
-| ------------- | --------------------------------------------------- |
-| Framework     | Next.js 16 (App Router) + React 19                  |
-| Language      | TypeScript (strict)                                 |
-| Styling       | Tailwind CSS v4                                      |
-| Canvas engine | [Fabric.js](http://fabricjs.com/) v7 — **MIT**      |
-| Icons         | lucide-react — **ISC**                              |
-| Persistence   | IndexedDB (canvas docs) + localStorage (page index) |
+| Concern       | Choice                                                    |
+| ------------- | --------------------------------------------------------- |
+| Framework     | Next.js 16 (App Router) + React 19                        |
+| Language      | TypeScript (strict)                                       |
+| Styling       | Tailwind CSS v4                                           |
+| Canvas engine | [Fabric.js](http://fabricjs.com/) v7 — **MIT**            |
+| PDF           | pdf.js (render) + pdf-lib (export), self-hosted           |
+| Icons         | lucide-react — **ISC**                                    |
+| Local storage | IndexedDB (canvas docs) + localStorage (page index/prefs) |
+| Accounts + cloud | Supabase (auth, Postgres + RLS, private storage) — optional |
+| Billing       | Stripe (hosted Checkout + Customer Portal, webhooks) — optional |
 
-No backend, no auth, no database, no external services. Everything runs in the
-browser and stores data locally on the device.
+Everything in the core editor runs in the browser and stores data locally. The
+optional cloud and billing layers are server-authoritative: entitlements are
+decided on the server (verified Stripe webhooks → Supabase billing state), never
+by the client.
 
 ### Why Fabric.js?
 
 We needed a mature, commercially-licensed engine that ships freehand drawing,
 text, shapes, selection/transform, JSON (de)serialization, and PNG export out of
 the box — while still letting us build our _own_ minimal, branded UI on top.
-Fabric.js fits exactly: it is **MIT licensed** (free for commercial use, no
-watermark, no fee), battle-tested since 2010, and gives us object serialization
-(`toJSON`/`loadFromJSON`) that makes autosave and undo/redo straightforward.
+Fabric.js is **MIT licensed** (free for commercial use, no watermark, no fee),
+battle-tested since 2010, and gives us object serialization (`toJSON`/
+`loadFromJSON`) that makes autosave and undo/redo straightforward.
 
 Alternatives considered: **tldraw** (excellent, but its license requires a
 watermark or a paid business license) and **Excalidraw** (MIT, but ships its own
@@ -65,72 +95,62 @@ full app UI that would fight the custom toolbar/top-bar layout we want).
 
 ## Architecture
 
-The design separates **imperative canvas logic** (Fabric) from **declarative UI**
-(React). React never touches Fabric directly.
+Three decoupled layers, in order of how load-bearing they are:
+
+1. **Local-first core editor** (always on, anonymous). Imperative canvas logic
+   (Fabric) is separated from declarative UI (React); React never touches Fabric
+   directly. Canvas documents live in IndexedDB; the page index and preferences
+   in localStorage. Autosave is debounced and independent of everything below.
+2. **Optional cloud** (signed-in only, explicit). A canvas syncs to the cloud
+   only when you choose _Save to cloud_. Documents and content-addressed image
+   assets are stored per-account with row-level security; one account can never
+   read another's data. Local save always works independently of cloud.
+3. **Optional Pro billing** (server-authoritative). Stripe-hosted checkout, a
+   verified-webhook-driven subscription record, and a server-side entitlement gate
+   decide who is Pro. The client can never self-promote; the only shipped Pro
+   benefit today is unlimited cloud canvases (Free is capped at 3).
 
 ```
 src/
   app/
-    layout.tsx          Root layout, fonts, metadata, dark theme
-    page.tsx            Client entry — dynamically imports the editor (ssr:false)
-    globals.css         Theme tokens + base styles (Tailwind v4)
-    icon.png            App/tab icon (brand mark)
-    apple-icon.png
-  components/
-    editor/
-      Editor.tsx        Orchestrator: owns the controller, page state, shortcuts
-      TopBar.tsx        Logo, page switcher, New Page, Undo/Redo, Export, menu
-      Toolbar.tsx       Left floating tool palette (+ Shape popover)
-      ZoomControls.tsx  Bottom-left zoom % and grid toggle
-      Logo.tsx          NoteDrift SVG mark
-    ui/
-      IconButton.tsx    Reusable icon button
+    layout.tsx              Root layout, fonts, metadata, security headers
+    page.tsx                Client entry — dynamically imports the editor (ssr:false)
+    robots.ts / sitemap.ts  SEO metadata routes (derived from tool registries)
+    (legal)/                /privacy, /terms (public, server-rendered)
+    tools/                  Free Tools: converters, PDF editor, audio tools
+    auth/callback/          Magic-link / OAuth callback
+    api/billing/*           Stripe checkout / confirm / portal (server-only)
+    api/stripe/webhook/     Stripe webhook receiver (signature-verified)
+  components/               Editor, tools, billing, auth, legal, nav UI
   lib/
-    canvasController.ts The Fabric engine wrapper (tools, drawing, zoom/pan,
-                        history, export, autosave). The heart of the app.
-    shapes.ts           Arrow + sticky-note factories (composite Fabric groups)
-    history.ts          Undo/redo snapshot stack
-    storage.ts          IndexedDB (canvas docs) + localStorage (pages, prefs)
-    constants.ts        Colors, grid size, zoom limits, fonts
-    types.ts            Tool / EditorState / PageMeta types
-brand/                  Brand source assets (logo, mockups) — not imported
+    canvasController.ts     The Fabric engine wrapper (the heart of the editor)
+    storage.ts              IndexedDB + localStorage persistence
+    plans.ts                Entitlement/pricing source of truth
+    billing/                Stripe mode, config, prices, webhook, reconcile (server-only)
+    cloud/                  Cloud sync engine, manifest, links
+    auth/                   Supabase browser/server clients + plan derivation
+    convert/ · audio/       Free-tool registries and pure logic
+supabase/migrations/        Cloud + billing schema (RLS, entitlement RPCs)
+docs/                       PRODUCT_MODEL.md + docs/launch/ runbooks
 ```
-
-### Data flow
-
-1. `page.tsx` dynamically imports `Editor` with `ssr: false` (Fabric needs
-   browser APIs, so it must never run during SSR/prerender).
-2. `Editor` mounts a `<canvas>`, bootstraps the page list from storage, and
-   creates one `CanvasController`.
-3. The controller emits an `EditorState` snapshot (`onState`) on every change;
-   React re-renders the chrome from it. UI actions call controller methods.
-4. On every meaningful change the controller records an undo snapshot and
-   schedules a debounced autosave (`onPersist`).
-
-### Persistence model
-
-- **Canvas documents** (Fabric JSON, can be large because pasted images embed as
-  data URLs) → **IndexedDB**, keyed by page id.
-- **Page index** (`{id, title, createdAt, updatedAt}`), **current page id**, and
-  **prefs** (grid on/off) → **localStorage** (tiny, needed synchronously).
-- Autosave is debounced (~600 ms). Switching pages flushes the current page
-  first, so nothing is lost.
 
 ---
 
-## Features (MVP)
+## Features
 
-- Infinite white canvas with an optional dotted grid
-- Tools: **Select, Pen, Text, Rectangle, Ellipse, Line, Arrow, Sticky note,
-  Eraser** (+ image insert)
-- Select / move / resize objects
-- Undo / redo (async loads are serialized so rapid undo/redo can't corrupt state)
-- Zoom in / out / reset, pan (scroll / two-finger / space-drag / middle-mouse)
-- Zoom toward the pointer on Ctrl-scroll / pinch
-- Paste images from the clipboard; drag & drop image files
-- Export the whole canvas as a 2× PNG (white background)
-- New Page + a lightweight recent-pages list (not a dashboard)
-- Automatic local save — work survives a browser refresh with no account
+**Core editor (Free, anonymous):** infinite canvas with optional grid; Select,
+Pen, Text, Rectangle, Ellipse, Line, Arrow, Sticky note, Eraser, image insert;
+select/move/resize; undo/redo; zoom/pan; paste & drop images; 2× PNG export; New
+Page + recent-pages list; automatic local save. Unlimited **local** canvases,
+always free.
+
+**Cloud (optional, signed-in):** explicit Save to cloud, cross-device sync,
+conflict-safe revisioned updates; Free = 3 cloud canvases, Pro = unlimited (local
+stays unlimited regardless).
+
+**Free Tools (`/tools`, public, no signup):** browser-side image/PDF converters,
+image compress/resize, a full **PDF Editor**, and **audio tools** (Sound Meter,
+Tap BPM, Metronome). Files never leave the device.
 
 ### Keyboard shortcuts
 
@@ -151,18 +171,16 @@ brand/                  Brand source assets (logo, mockups) — not imported
 
 ---
 
-## Known limitations / next steps
+## Honest limitations
 
-- **Eraser** deletes whole objects (click or drag over them), not pixels.
-- **Sticky-note text** is editable while you work; after a reload a note becomes
-  a static group (still movable/deletable) — text re-editing after reload is a
-  planned improvement.
-- **Export** captures all content on a white background; per-selection export and
-  SVG export are future additions.
-- Desktop-first. It works on tablets, but touch gestures aren't tuned yet.
-- No backend by design — data lives only in the current browser/device.
-- The optional right panel (Mind Map / Flowchart / Wireframe / Math / Sketch
-  starters) is intentionally not built yet.
+- **Eraser** deletes whole objects, not pixels.
+- **Sound Meter** is an approximate indicator, **not** a certified professional
+  SPL meter.
+- **PDF whiteout** is an opaque cover, **not** secure redaction — the underlying
+  content is not removed.
+- Desktop-first; touch works but isn't fully tuned.
+
+See [`docs/PRODUCT_MODEL.md`](docs/PRODUCT_MODEL.md) for the full Free/Pro model.
 
 ---
 
@@ -170,5 +188,7 @@ brand/                  Brand source assets (logo, mockups) — not imported
 
 - Fabric.js — MIT
 - lucide-react — ISC
+- Patrick Hand (canvas handwriting font) — SIL Open Font License 1.1
 
-Both are free for commercial use. See `node_modules/<pkg>/LICENSE`.
+All free for commercial use. See `node_modules/<pkg>/LICENSE` and
+`public/fonts/`.
