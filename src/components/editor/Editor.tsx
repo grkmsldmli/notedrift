@@ -33,6 +33,10 @@ import type {
 import { DEFAULT_RAIL_SLOTS, MAX_RAIL_SLOTS } from "@/lib/types";
 import { DRAW_TOOLS } from "@/lib/brush/materials";
 import { ensureCanvasFonts } from "@/lib/fonts";
+import { getCloudEngine } from "@/lib/cloud/engine";
+import { onAuthChange } from "@/lib/auth/client";
+import { CloudButton } from "./CloudButton";
+import { CloudCanvasesDialog } from "./CloudCanvasesDialog";
 import { Toolbar } from "./Toolbar";
 import { TopBar } from "./TopBar";
 import { ZoomControls } from "./ZoomControls";
@@ -154,6 +158,9 @@ export default function Editor() {
           savePages(next);
           return next;
         });
+        // Local save succeeded — ONLY now tell the cloud engine (local-first).
+        // A no-op unless this canvas is explicitly cloud-linked to this account.
+        getCloudEngine().notifyLocalSave(id);
       });
     },
     [showNotice],
@@ -469,6 +476,41 @@ export default function Editor() {
     c.setCanvasStyle(styleOf(target));
   }, []);
 
+  // --- Cloud sync engine wiring (local-first; inert unless a canvas is linked) ---
+  const [, setCloudTick] = useState(0);
+  const [cloudDialogOpen, setCloudDialogOpen] = useState(false);
+  const reloadCurrentCanvas = useCallback(async (id: string) => {
+    const c = controllerRef.current;
+    if (!c || id !== currentIdRef.current) return;
+    await c.loadDoc(await loadCanvasDoc(id));
+  }, []);
+  useEffect(() => {
+    const engine = getCloudEngine();
+    engine.configure({
+      onPagesChanged: () => {
+        const list = loadPages();
+        pagesRef.current = list;
+        setPages(list);
+      },
+      onCanvasReplaced: (id) => void reloadCurrentCanvas(id),
+    });
+    const unsubEngine = engine.subscribe(() => setCloudTick((t) => t + 1));
+    const unsubAuth = onAuthChange((user) => engine.setUser(user?.id ?? null));
+    return () => {
+      unsubEngine();
+      unsubAuth();
+    };
+  }, [reloadCurrentCanvas]);
+
+  const openCloudCanvas = useCallback(
+    async (cloudId: string) => {
+      const res = await getCloudEngine().openFromCloud(cloudId);
+      if (res.ok) await handleSwitchPage(res.localId);
+      else showNotice(res.message);
+    },
+    [handleSwitchPage, showNotice],
+  );
+
   const handleDeletePage = useCallback((id: string) => {
     const c = controllerRef.current;
     if (!c) return;
@@ -515,6 +557,7 @@ export default function Editor() {
       savePages(next);
       return next;
     });
+    getCloudEngine().notifyTitleChange(id); // sync the new title if cloud-linked
   }, []);
 
   /* ------------------------------- tool / view ------------------------------- */
@@ -742,6 +785,16 @@ export default function Editor() {
         onSwitchPage={handleSwitchPage}
         onDeletePage={handleDeletePage}
         onRenamePage={handleRenamePage}
+        cloudSlot={
+          currentId ? (
+            <CloudButton
+              currentId={currentId}
+              currentTitle={currentTitle}
+              onOpenCloudList={() => setCloudDialogOpen(true)}
+              onNotice={showNotice}
+            />
+          ) : null
+        }
       />
 
       <div
@@ -850,6 +903,17 @@ export default function Editor() {
         hidden
         onChange={onFileChange}
       />
+
+      {cloudDialogOpen && (
+        <CloudCanvasesDialog
+          onClose={() => setCloudDialogOpen(false)}
+          onOpen={(cloudId) => {
+            setCloudDialogOpen(false);
+            void openCloudCanvas(cloudId);
+          }}
+          onNotice={showNotice}
+        />
+      )}
     </div>
   );
 }

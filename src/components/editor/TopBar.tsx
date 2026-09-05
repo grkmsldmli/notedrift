@@ -32,6 +32,8 @@ interface TopBarProps {
   onSwitchPage: (id: string) => void;
   onDeletePage: (id: string) => void;
   onRenamePage: (id: string, title: string) => void;
+  /** Optional cloud control, rendered just before the account button. */
+  cloudSlot?: React.ReactNode;
 }
 
 function timeAgo(ts: number): string {
@@ -320,6 +322,8 @@ export const TopBar = memo(function TopBar(props: TopBarProps) {
             </>
           )}
         </div>
+
+        {props.cloudSlot}
 
         {/* Account (top-right). Renders nothing unless auth is configured. */}
         <AccountButton />
