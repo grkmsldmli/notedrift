@@ -87,7 +87,7 @@ interface ObjectToolbarProps {
 }
 
 const iconBtn =
-  "flex h-7 w-7 items-center justify-center rounded-md text-nd-muted transition-colors hover:bg-white/5 hover:text-nd-text";
+  "nd-hit flex h-7 w-7 items-center justify-center rounded-md text-nd-muted transition-colors hover:bg-white/5 hover:text-nd-text";
 
 export const ObjectToolbar = memo(function ObjectToolbar({
   selection,
@@ -507,7 +507,7 @@ export const ObjectToolbar = memo(function ObjectToolbar({
         className="pointer-events-auto absolute z-30"
         style={box ? { left: box.left, top: box.top } : { left: -9999, top: -9999 }}
       >
-        <div className="flex items-center gap-1 rounded-xl border border-nd-border bg-nd-surface/95 px-1.5 py-1 shadow-2xl backdrop-blur">
+        <div className="flex max-w-[calc(100vw-1rem)] flex-wrap items-center gap-1 rounded-xl border border-nd-border bg-nd-surface/95 px-1.5 py-1 shadow-2xl backdrop-blur">
           <span className="flex items-center gap-1.5 px-1.5 text-xs text-nd-muted">
             <Lock size={13} /> Locked
           </span>

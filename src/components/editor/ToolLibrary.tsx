@@ -41,6 +41,9 @@ const GROUPS: { title: string; tools: Tool[] }[] = [
 ];
 
 interface ToolLibraryProps {
+  /** "v" = desktop left rail (opens to the right); "h" = mobile bottom dock
+   *  (opens as a centered panel above the dock). */
+  orient?: "h" | "v";
   tool: Tool;
   pinnedSlots: RailSlot[];
   onSelectTool: (tool: Tool) => void;
@@ -53,6 +56,7 @@ interface ToolLibraryProps {
  *  activatable and (where it has a rail slot) pinnable — the calm alternative to
  *  a permanently crowded rail. */
 export const ToolLibrary = memo(function ToolLibrary({
+  orient = "v",
   tool,
   pinnedSlots,
   onSelectTool,
@@ -60,13 +64,17 @@ export const ToolLibrary = memo(function ToolLibrary({
   onTogglePin,
   onClose,
 }: ToolLibraryProps) {
+  // Desktop: anchored to the trigger's BOTTOM, opening rightward. Mobile: a
+  // viewport-centered panel floating just above the bottom dock (fixed, so the
+  // rightmost dock button can't push it off-screen).
+  const panelPos =
+    orient === "h"
+      ? "fixed bottom-[max(4.75rem,calc(env(safe-area-inset-bottom)+4.25rem))] left-1/2 z-50 w-[min(20rem,92vw)] -translate-x-1/2"
+      : "absolute bottom-0 left-full z-50 ml-2 w-56";
   return (
     <>
       <div className="fixed inset-0 z-40" onClick={onClose} />
-      {/* Anchored to the button's BOTTOM so it opens upward: the "All tools"
-          trigger sits near the base of the vertically-centred rail, and a
-          top-anchored popover would run its lower groups off the viewport. */}
-      <div className="absolute bottom-0 left-full z-50 ml-2 w-56 rounded-xl border border-nd-border bg-nd-surface p-1.5 shadow-2xl">
+      <div className={`${panelPos} rounded-xl border border-nd-border bg-nd-surface p-1.5 shadow-2xl`}>
         <div className="mb-1.5 px-1 text-[11px] font-semibold uppercase tracking-wide text-nd-muted">
           Tools
         </div>
@@ -93,7 +101,7 @@ export const ToolLibrary = memo(function ToolLibrary({
                   >
                     <button
                       type="button"
-                      className="flex flex-1 items-center gap-2.5 text-left"
+                      className="nd-hit flex flex-1 items-center gap-2.5 text-left"
                       onClick={() => {
                         if (def?.action === "pick-image") onPickImage();
                         else onSelectTool(t);
@@ -111,7 +119,7 @@ export const ToolLibrary = memo(function ToolLibrary({
                         title={pinned ? "Unpin from toolbar" : "Pin to toolbar"}
                         onClick={() => onTogglePin(slot)}
                         className={[
-                          "flex h-6 w-6 items-center justify-center rounded-md transition-colors",
+                          "nd-hit flex h-6 w-6 items-center justify-center rounded-md transition-colors",
                           pinned
                             ? "text-nd-accent hover:bg-white/5"
                             : "text-nd-faint opacity-0 hover:bg-white/5 hover:text-nd-text group-hover:opacity-100",

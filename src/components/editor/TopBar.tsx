@@ -155,7 +155,7 @@ export const TopBar = memo(function TopBar(props: TopBarProps) {
               className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm text-nd-muted transition-colors hover:bg-white/5 hover:text-nd-text"
             >
               <FileText size={14} className="hidden sm:block" />
-              <span className="max-w-[110px] truncate sm:max-w-[130px]">
+              <span className="max-w-[84px] truncate sm:max-w-[130px]">
                 {currentTitle}
               </span>
               <ChevronDown size={14} className="hidden sm:block" />
@@ -314,6 +314,8 @@ export const TopBar = memo(function TopBar(props: TopBarProps) {
         <button
           type="button"
           onClick={onNewPage}
+          aria-label="New page"
+          title="New page"
           className="nd-hit nd-gradient flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-white shadow-sm transition hover:opacity-90"
         >
           <Plus size={16} />
@@ -322,18 +324,22 @@ export const TopBar = memo(function TopBar(props: TopBarProps) {
 
         <div className="mx-1 hidden h-6 w-px bg-nd-border sm:block" />
 
-        <IconButton
-          icon={<Undo2 size={18} />}
-          label="Undo  (Ctrl Z)"
-          onClick={onUndo}
-          disabled={!canUndo}
-        />
-        <IconButton
-          icon={<Redo2 size={18} />}
-          label="Redo  (Ctrl Shift Z)"
-          onClick={onRedo}
-          disabled={!canRedo}
-        />
+        {/* Undo/Redo: inline on ≥sm; on phones they move into the More menu so
+            the header can't overflow and clip the account control. */}
+        <span className="hidden items-center gap-1 sm:flex">
+          <IconButton
+            icon={<Undo2 size={18} />}
+            label="Undo  (Ctrl Z)"
+            onClick={onUndo}
+            disabled={!canUndo}
+          />
+          <IconButton
+            icon={<Redo2 size={18} />}
+            label="Redo  (Ctrl Shift Z)"
+            onClick={onRedo}
+            disabled={!canRedo}
+          />
+        </span>
         {/* Redundant with the "More" menu's Export — hide on phones so the
             account control fits without crowding the title (see Phase 1.6H). */}
         <span className="hidden sm:block">
@@ -359,6 +365,32 @@ export const TopBar = memo(function TopBar(props: TopBarProps) {
             <>
               <div className="fixed inset-0 z-40" onClick={closeAll} />
               <div className="absolute right-0 top-full z-50 mt-1.5 w-52 rounded-xl border border-nd-border bg-nd-surface p-1 shadow-2xl">
+                {/* Undo/Redo live here on phones (inline on ≥sm). */}
+                <button
+                  type="button"
+                  disabled={!canUndo}
+                  onClick={() => {
+                    onUndo();
+                    closeAll();
+                  }}
+                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-nd-text transition-colors hover:bg-white/5 disabled:pointer-events-none disabled:opacity-40 sm:hidden"
+                >
+                  <Undo2 size={16} className="text-nd-muted" />
+                  <span className="flex-1 text-left">Undo</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={!canRedo}
+                  onClick={() => {
+                    onRedo();
+                    closeAll();
+                  }}
+                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-nd-text transition-colors hover:bg-white/5 disabled:pointer-events-none disabled:opacity-40 sm:hidden"
+                >
+                  <Redo2 size={16} className="text-nd-muted" />
+                  <span className="flex-1 text-left">Redo</span>
+                </button>
+                <div className="my-1 h-px bg-nd-border sm:hidden" />
                 <button
                   type="button"
                   onClick={startEditing}

@@ -146,6 +146,20 @@ textarea {
   padding-right: env(safe-area-inset-right, 0px);
 }
 
+/* Respect the OS "Reduce motion" preference: neutralize animation/transition
+   durations app-wide (spinners settle instead of looping, hover-scale/transitions
+   become instant). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 /* Compact range slider used in brush width / opacity popovers. */
 .nd-range {
   -webkit-appearance: none;

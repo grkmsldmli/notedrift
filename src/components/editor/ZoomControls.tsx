@@ -14,6 +14,7 @@ import {
   Square,
 } from "lucide-react";
 import type { CanvasStyle } from "@/lib/types";
+import { useIsMobile } from "@/lib/hooks/useIsMobile";
 
 interface ZoomControlsProps {
   zoom: number;
@@ -52,13 +53,15 @@ export const ZoomControls = memo(function ZoomControls({
 }: ZoomControlsProps) {
   const [open, setOpen] = useState(false);
   const [zoomMenu, setZoomMenu] = useState(false);
+  const isMobile = useIsMobile();
   const pct = Math.round(zoom * 100);
   const current = STYLES.find((s) => s.id === canvasStyle) ?? STYLES[1];
 
   return (
     <div
       className="absolute left-4 z-20 flex items-center gap-1 rounded-xl border border-nd-border bg-nd-surface/95 p-1 shadow-xl backdrop-blur transition-[bottom]"
-      style={{ bottom: 20 + keyboardInset }}
+      // Lift above the mobile bottom tool dock so they never overlap.
+      style={{ bottom: (isMobile ? 84 : 20) + keyboardInset }}
     >
       <button
         type="button"

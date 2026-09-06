@@ -36,6 +36,7 @@ import {
 } from "lucide-react";
 import type { EraserMode, RailSlot, Tool } from "@/lib/types";
 import { getToolDef } from "@/lib/tools/registry";
+import { useIsMobile } from "@/lib/hooks/useIsMobile";
 import { IconButton } from "../ui/IconButton";
 import { ToolLibrary } from "./ToolLibrary";
 
@@ -51,6 +52,20 @@ interface ToolbarProps {
 
 const ICON = 18;
 const S = 17;
+
+/** On phones the rail becomes a compact bottom dock with a FIXED primary set —
+ *  every other tool stays reachable through All Tools. Keeps the dock at ~6
+ *  targets so it never overflows or scrolls on a 320px phone. */
+const MOBILE_SLOTS: RailSlot[] = ["draw", "text", "shapes", "eraser"];
+
+type Orient = "h" | "v";
+
+/** Popover anchor: to the RIGHT of the desktop rail, or ABOVE the mobile dock.
+ *  Capped in height and scrollable so it never runs off a short viewport. */
+const POPOVER_POS: Record<Orient, string> = {
+  v: "absolute left-full top-0 z-40 ml-2 max-h-[70vh] overflow-y-auto nd-scroll",
+  h: "absolute bottom-full left-1/2 z-40 mb-2 -translate-x-1/2 max-h-[60vh] overflow-y-auto nd-scroll",
+};
 
 const DRAW_OPTIONS: { tool: Tool; label: string; hint: string; icon: React.ReactNode }[] = [
   { tool: "pen", label: "Pen", hint: "Smooth & crisp", icon: <Pen size={ICON} /> },
@@ -89,7 +104,8 @@ const LINE_OPTIONS: { tool: Tool; label: string; hint: string; icon: React.React
   { tool: "doublearrow", label: "Double arrow", hint: "Both heads", icon: <ArrowLeftRight size={ICON} /> },
 ];
 
-const Divider = () => <div className="my-1 h-px w-6 bg-nd-border" />;
+const Divider = ({ h = false }: { h?: boolean }) =>
+  h ? <div className="mx-0.5 h-6 w-px bg-nd-border" /> : <div className="my-1 h-px w-6 bg-nd-border" />;
 
 export const Toolbar = memo(function Toolbar({
   tool,
@@ -100,6 +116,10 @@ export const Toolbar = memo(function Toolbar({
   onSetEraserMode,
   onTogglePin,
 }: ToolbarProps) {
+  const isMobile = useIsMobile();
+  const orient: Orient = isMobile ? "h" : "v";
+  const slots = isMobile ? MOBILE_SLOTS : pinnedSlots;
+
   const [openSlot, setOpenSlot] = useState<RailSlot | "library" | null>(null);
   const [lastDraw, setLastDraw] = useState<Tool>("pen");
   const [lastShape, setLastShape] = useState<Tool>("rect");
@@ -150,7 +170,7 @@ export const Toolbar = memo(function Toolbar({
           type="button"
           onClick={() => onPick(o.tool)}
           className={[
-            "flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left transition-colors",
+            "nd-hit flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors",
             tool === o.tool ? "bg-nd-accent/15 text-nd-text" : "hover:bg-white/5",
           ].join(" ")}
         >
@@ -168,7 +188,7 @@ export const Toolbar = memo(function Toolbar({
     openSlot === slot && (
       <>
         <div className="fixed inset-0 z-30" onClick={close} />
-        <div className="absolute left-full top-0 z-40 ml-2 rounded-xl border border-nd-border bg-nd-surface p-1 shadow-2xl">
+        <div className={`${POPOVER_POS[orient]} rounded-xl border border-nd-border bg-nd-surface p-1 shadow-2xl`}>
           {body}
         </div>
       </>
@@ -223,7 +243,7 @@ export const Toolbar = memo(function Toolbar({
             {openSlot === "shapes" && (
               <>
                 <div className="fixed inset-0 z-30" onClick={close} />
-                <div className="absolute left-full top-0 z-40 ml-2 w-52 rounded-xl border border-nd-border bg-nd-surface p-1.5 shadow-2xl">
+                <div className={`${POPOVER_POS[orient]} w-52 rounded-xl border border-nd-border bg-nd-surface p-1.5 shadow-2xl`}>
                   <div className="mb-0.5 px-1 text-[10px] font-medium uppercase tracking-wide text-nd-muted">
                     Basic
                   </div>
@@ -313,7 +333,7 @@ export const Toolbar = memo(function Toolbar({
             {openSlot === "eraser" && (
               <>
                 <div className="fixed inset-0 z-30" onClick={close} />
-                <div className="absolute left-full top-0 z-40 ml-2 w-40 rounded-xl border border-nd-border bg-nd-surface p-1 shadow-2xl">
+                <div className={`${POPOVER_POS[orient]} w-40 rounded-xl border border-nd-border bg-nd-surface p-1 shadow-2xl`}>
                   {(
                     [
                       { mode: "object", label: "Object", hint: "Erase whole objects", icon: <Boxes size={16} /> },
@@ -329,7 +349,7 @@ export const Toolbar = memo(function Toolbar({
                         close();
                       }}
                       className={[
-                        "flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left transition-colors",
+                        "nd-hit flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors",
                         eraserMode === o.mode ? "bg-nd-accent/15 text-nd-text" : "hover:bg-white/5",
                       ].join(" ")}
                     >
@@ -352,19 +372,33 @@ export const Toolbar = memo(function Toolbar({
     }
   };
 
+  // Outer wrapper is pointer-events-none so the transparent area around the pill
+  // (full width at the bottom on mobile) never blocks the canvas; the pill itself
+  // re-enables pointer events.
+  const outer = isMobile
+    ? "pointer-events-none absolute inset-x-0 bottom-0 z-20 flex justify-center px-2 pb-[max(0.4rem,env(safe-area-inset-bottom))]"
+    : "pointer-events-none absolute left-4 top-1/2 z-20 flex max-h-[calc(100%-1.25rem)] -translate-y-1/2 flex-col";
+  // No overflow/scroll on the pill itself: its flyout popovers open OUTSIDE it
+  // (left-full on desktop, bottom-full on mobile), and an overflow container would
+  // clip them. Item counts are bounded (fixed 6 on mobile; the rail only shows on
+  // tall screens), so the pill always fits without scrolling.
+  const pill = isMobile
+    ? "nd-rail pointer-events-auto flex max-w-full items-center gap-0.5 rounded-2xl border border-nd-border bg-nd-surface/95 p-1 shadow-xl backdrop-blur"
+    : "nd-rail pointer-events-auto flex min-h-0 flex-col items-center gap-0.5 rounded-2xl border border-nd-border bg-nd-surface/95 p-1 shadow-xl backdrop-blur";
+
   return (
-    <div className="absolute left-4 top-1/2 z-20 flex max-h-[calc(100%-1.25rem)] -translate-y-1/2 flex-col">
-      <div className="nd-rail flex min-h-0 flex-col items-center gap-0.5 rounded-2xl border border-nd-border bg-nd-surface/95 p-1 shadow-xl backdrop-blur">
+    <div className={outer}>
+      <div className={pill}>
         <IconButton
           icon={<MousePointer2 size={ICON} />}
           label="Select  (V)"
           active={tool === "select"}
           onClick={() => onSelectTool("select")}
         />
-        <Divider />
-        {pinnedSlots.map(renderSlot)}
-        <Divider />
-        {/* Tool Library — the unified discovery + pinning path. */}
+        <Divider h={isMobile} />
+        {slots.map(renderSlot)}
+        <Divider h={isMobile} />
+        {/* Tool Library — the unified discovery + pinning path (All Tools). */}
         <div className="relative">
           <IconButton
             icon={<LayoutGrid size={ICON} />}
@@ -374,6 +408,7 @@ export const Toolbar = memo(function Toolbar({
           />
           {openSlot === "library" && (
             <ToolLibrary
+              orient={orient}
               tool={tool}
               pinnedSlots={pinnedSlots}
               onSelectTool={(t) => {

@@ -864,7 +864,7 @@ export default function Editor() {
         )}
 
         {notice && (
-          <div className="pointer-events-none absolute bottom-6 left-1/2 z-40 -translate-x-1/2 rounded-lg border border-nd-border bg-nd-surface/95 px-3.5 py-2 text-sm text-nd-text shadow-2xl backdrop-blur">
+          <div className="pointer-events-none absolute bottom-24 left-1/2 z-40 -translate-x-1/2 rounded-lg border border-nd-border bg-nd-surface/95 px-3.5 py-2 text-sm text-nd-text shadow-2xl backdrop-blur sm:bottom-6">
             {notice}
           </div>
         )}
