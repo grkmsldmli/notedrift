@@ -116,6 +116,21 @@ export class PdfRenderer {
   private renderTask: PdfRenderTask | null = null;
   private renderToken = 0;
   private destroyed = false;
+  // Serializes ALL page renders on this document. pdf.js does not support
+  // rendering the same page proxy into two canvases concurrently — which is
+  // exactly what happened when the main view and the thumbnail rail (sharing this
+  // renderer) rendered the current page at the same time, producing duplicated
+  // text and black regions. Running renders one at a time removes that vector.
+  private renderGate: Promise<unknown> = Promise.resolve();
+
+  private gate<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.renderGate.then(fn, fn);
+    this.renderGate = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
 
   get numPages(): number {
     return this.doc?.numPages ?? 0;
@@ -192,43 +207,53 @@ export class PdfRenderer {
     const token = ++this.renderToken;
     this.cancelRender();
 
-    const page = await doc.getPage(pageNumber);
-    if (token !== this.renderToken) {
-      page.cleanup();
-      return { ok: false, cssWidth: 0, cssHeight: 0 };
-    }
+    // Serialize against any in-flight render (page or thumbnail) on this document.
+    return this.gate(async () => {
+      if (this.destroyed || token !== this.renderToken) {
+        return { ok: false, cssWidth: 0, cssHeight: 0 };
+      }
+      const page = await doc.getPage(pageNumber);
+      if (token !== this.renderToken) {
+        page.cleanup();
+        return { ok: false, cssWidth: 0, cssHeight: 0 };
+      }
 
-    const dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
-    const base = page.getViewport({ scale: 1, rotation });
-    const eff = safeRenderScale(base.width, base.height, scale, dpr);
-    const viewport = page.getViewport({ scale: eff, rotation });
+      const dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
+      const base = page.getViewport({ scale: 1, rotation });
+      const eff = safeRenderScale(base.width, base.height, scale, dpr);
+      const viewport = page.getViewport({ scale: eff, rotation });
 
-    const cssWidth = Math.max(1, Math.floor(viewport.width));
-    const cssHeight = Math.max(1, Math.floor(viewport.height));
-    canvas.width = Math.max(1, Math.floor(viewport.width * dpr));
-    canvas.height = Math.max(1, Math.floor(viewport.height * dpr));
-    canvas.style.width = `${cssWidth}px`;
-    canvas.style.height = `${cssHeight}px`;
+      const cssWidth = Math.max(1, Math.floor(viewport.width));
+      const cssHeight = Math.max(1, Math.floor(viewport.height));
+      canvas.width = Math.max(1, Math.floor(viewport.width * dpr));
+      canvas.height = Math.max(1, Math.floor(viewport.height * dpr));
+      canvas.style.width = `${cssWidth}px`;
+      canvas.style.height = `${cssHeight}px`;
 
-    const ctx = canvas.getContext("2d", { alpha: false });
-    if (!ctx) {
-      page.cleanup();
-      throw new PdfLoadError("unknown", "Your browser couldn't provide a canvas to draw on.");
-    }
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      // alpha:true — an interrupted/partial render leaves TRANSPARENT pixels (the
+      // white page background shows through) instead of the opaque black an
+      // alpha:false canvas defaults to. Removes the "black rectangle" symptom.
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        page.cleanup();
+        throw new PdfLoadError("unknown", "Your browser couldn't provide a canvas to draw on.");
+      }
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, cssWidth, cssHeight);
 
-    const task = page.render({ canvasContext: ctx, viewport });
-    this.renderTask = task;
-    try {
-      await task.promise;
-    } catch (err) {
-      if (isCancel(err)) return { ok: false, cssWidth, cssHeight };
-      throw err;
-    } finally {
-      if (this.renderTask === task) this.renderTask = null;
-      page.cleanup();
-    }
-    return { ok: token === this.renderToken, cssWidth, cssHeight };
+      const task = page.render({ canvasContext: ctx, viewport });
+      this.renderTask = task;
+      try {
+        await task.promise;
+      } catch (err) {
+        if (isCancel(err)) return { ok: false, cssWidth, cssHeight };
+        throw err;
+      } finally {
+        if (this.renderTask === task) this.renderTask = null;
+        page.cleanup();
+      }
+      return { ok: token === this.renderToken, cssWidth, cssHeight };
+    });
   }
 
   /**
@@ -244,34 +269,42 @@ export class PdfRenderer {
     rotation?: number,
   ): Promise<boolean> {
     const doc = this.requireDoc();
-    const page = await doc.getPage(pageNumber);
-    const base = page.getViewport({ scale: 1, rotation });
-    const scale = cssWidth / base.width;
-    const dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
-    const eff = safeRenderScale(base.width, base.height, scale, dpr);
-    const viewport = page.getViewport({ scale: eff, rotation });
+    // Share the same render gate as the main view so a thumbnail never renders a
+    // page concurrently with the main canvas rendering the same page.
+    return this.gate(async () => {
+      if (this.destroyed) return false;
+      const page = await doc.getPage(pageNumber);
+      const base = page.getViewport({ scale: 1, rotation });
+      const scale = cssWidth / base.width;
+      const dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
+      const eff = safeRenderScale(base.width, base.height, scale, dpr);
+      const viewport = page.getViewport({ scale: eff, rotation });
 
-    canvas.width = Math.max(1, Math.floor(viewport.width * dpr));
-    canvas.height = Math.max(1, Math.floor(viewport.height * dpr));
-    canvas.style.width = `${Math.max(1, Math.floor(viewport.width))}px`;
-    canvas.style.height = `${Math.max(1, Math.floor(viewport.height))}px`;
+      const cw = Math.max(1, Math.floor(viewport.width));
+      const ch = Math.max(1, Math.floor(viewport.height));
+      canvas.width = Math.max(1, Math.floor(viewport.width * dpr));
+      canvas.height = Math.max(1, Math.floor(viewport.height * dpr));
+      canvas.style.width = `${cw}px`;
+      canvas.style.height = `${ch}px`;
 
-    const ctx = canvas.getContext("2d", { alpha: false });
-    if (!ctx) {
-      page.cleanup();
-      return false;
-    }
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    const task = page.render({ canvasContext: ctx, viewport });
-    try {
-      await task.promise;
-    } catch (err) {
-      if (isCancel(err)) return false;
-      throw err;
-    } finally {
-      page.cleanup();
-    }
-    return true;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        page.cleanup();
+        return false;
+      }
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, cw, ch);
+      const task = page.render({ canvasContext: ctx, viewport });
+      try {
+        await task.promise;
+      } catch (err) {
+        if (isCancel(err)) return false;
+        throw err;
+      } finally {
+        page.cleanup();
+      }
+      return true;
+    });
   }
 
   cancelRender(): void {

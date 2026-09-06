@@ -151,7 +151,9 @@ export function PdfThumbnailRail({
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={src} alt="" className="max-h-full max-w-full object-contain" draggable={false} />
                   ) : (
-                    <span className="h-full w-full animate-pulse bg-nd-surface-2" />
+                    // Light neutral (on the white thumb) so a still-loading page
+                    // reads as "loading", never as a black/corrupt thumbnail.
+                    <span className="h-full w-full animate-pulse bg-neutral-200" />
                   )}
                 </span>
                 <span className={`text-[10px] tabular-nums ${active ? "text-nd-accent" : "text-nd-muted"}`}>
