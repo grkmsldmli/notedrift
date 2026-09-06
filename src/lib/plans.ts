@@ -226,12 +226,10 @@ export function annualSavingsPercent(): number {
  *  is a tiny secondary line in the UI, never one of these paid capabilities. */
 export const SHIPPED_PRO_BENEFITS = [
   "Unlimited cloud canvases",
-  "Access your canvases across devices",
-  "HD & 4K PNG export",
-  "Transparent PNG export",
-  "SVG & selection export",
-  "Multi-page PDF export",
-  "Custom export sizes",
+  "Access on any device",
+  "HD, 4K & transparent PNG",
+  "SVG, selection & custom-size exports",
+  "Multi-page PDF",
 ] as const;
 
 /** What every Free user already gets, for an honest comparison. */

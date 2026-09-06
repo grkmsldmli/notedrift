@@ -96,7 +96,7 @@ export function UpgradeDialog({
           Save every canvas. Export professionally.
         </h2>
         <p className="mt-1 text-sm text-nd-muted">
-          Cloud, high-resolution exports, SVG and multi-page PDF — for people who use NoteDrift regularly.
+          Unlimited cloud, pro exports, and access across devices.
         </p>
 
         {/* Free vs Pro — understand the difference in seconds. */}
@@ -162,7 +162,6 @@ export function UpgradeDialog({
           ·{" "}
           <a href="/privacy" target="_blank" rel="noopener noreferrer" className="hover:text-nd-text hover:underline">Privacy</a>
         </p>
-        <p className="mt-1 text-center text-[11px] text-nd-faint">Plus, you help fund NoteDrift&apos;s development.</p>
       </div>
     </div>
   );
