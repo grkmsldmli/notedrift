@@ -221,18 +221,23 @@ export function annualSavingsPercent(): number {
 // canvases (canAddCloudCanvas) and cross-device cloud sync (the cloud engine) are
 // live; everything else Pro remains future and is deliberately absent here.
 
-/** The only Pro benefits sales UI may render today. */
+/** The only Pro benefits sales UI may render today — distinct SHIPPED capabilities
+ *  (cloud + the professional export formats added in 3.0C). "Support development"
+ *  is a tiny secondary line in the UI, never one of these paid capabilities. */
 export const SHIPPED_PRO_BENEFITS = [
   "Unlimited cloud canvases",
-  "Open your canvases on any device",
-  "Your cloud canvases stay backed up and in sync",
-  "Support ongoing NoteDrift development",
+  "Access your canvases across devices",
+  "HD & 4K PNG export",
+  "Transparent PNG export",
+  "SVG & selection export",
+  "Multi-page PDF export",
+  "Custom export sizes",
 ] as const;
 
 /** What every Free user already gets, for an honest comparison. */
 export const SHIPPED_FREE_BENEFITS = [
   "Every drawing & writing tool",
   "Unlimited local canvases",
-  "PNG export",
+  "Standard PNG & PDF export",
   "3 cloud canvases",
 ] as const;

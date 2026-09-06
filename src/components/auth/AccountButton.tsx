@@ -181,7 +181,7 @@ export function AccountButton() {
                 <span className="flex flex-col">
                   <span className="text-sm font-medium text-nd-text">NoteDrift Pro</span>
                   <span className="text-[11px] text-nd-muted">
-                    Founding ${PRICING.monthly.toFixed(2)}/mo
+                    Unlimited cloud + pro exports · ${PRICING.monthly.toFixed(2)}/mo
                   </span>
                 </span>
               </span>

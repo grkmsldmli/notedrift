@@ -104,10 +104,14 @@ export default function HelpPage() {
 
         <Section title="Free vs Pro">
           <ul className="ml-4 list-disc space-y-1.5 marker:text-nd-border">
-            <li><span className="text-nd-text">Free</span> — the full editor, unlimited local canvases, PNG export, and 3 cloud canvases.</li>
             <li>
-              <span className="text-nd-text">Pro</span> ({money(PRICING.monthly)}/mo or {money(PRICING.annual)}/yr) — unlimited cloud canvases,
-              open on any device.
+              <span className="text-nd-text">Free</span> — the full editor, unlimited local
+              canvases, standard PNG &amp; PDF export, and 3 cloud canvases.
+            </li>
+            <li>
+              <span className="text-nd-text">Pro</span> ({money(PRICING.monthly)}/mo or {money(PRICING.annual)}/yr) —
+              unlimited cloud canvases across devices, plus professional exports: HD &amp; 4K PNG,
+              transparent PNG, SVG, selection export, custom sizes, and multi-page PDF.
             </li>
           </ul>
         </Section>

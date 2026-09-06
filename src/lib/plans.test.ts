@@ -174,11 +174,10 @@ test("entitlement objects are frozen (immutable at runtime)", () => {
 /* -------------------- shipped-benefit truth source ------------------------ */
 
 test("SHIPPED_PRO_BENEFITS never advertises an UNBUILT future feature", () => {
-  // Guards sales copy: if someone pastes a future entitlement (folders, version
-  // history, sharing, collaboration, pro export formats, AI…) into the list, this
-  // fails. Only shipped, wired benefits may be sold.
-  const FORBIDDEN =
-    /folder|history|version|collaborat|shar|svg|4k|transparent|multi-?page|\bpdf\b|\bai\b|watermark|sso|export format|custom size|selection export|hd png/i;
+  // Guards sales copy: if someone pastes a still-unbuilt entitlement (folders,
+  // version history, sharing, collaboration, AI) into the list, this fails. The
+  // professional export formats ARE shipped (3.0C), so they are allowed now.
+  const FORBIDDEN = /folder|history|version|collaborat|sharing|\bai\b|watermark|\bsso\b/i;
   assert.ok(SHIPPED_PRO_BENEFITS.length >= 1);
   for (const b of SHIPPED_PRO_BENEFITS) {
     assert.equal(typeof b, "string");
@@ -188,6 +187,17 @@ test("SHIPPED_PRO_BENEFITS never advertises an UNBUILT future feature", () => {
   // The primary claim must be backed by a real, wired entitlement.
   assert.equal(limitOf("pro", "cloudCanvasLimit"), Number.POSITIVE_INFINITY);
   assert.ok(SHIPPED_PRO_BENEFITS.some((b) => /unlimited cloud/i.test(b)));
+});
+
+test("advertised Pro export benefits map to real, Pro-only shipped capabilities", () => {
+  // Each pro export format is a genuine entitlement Pro has and Free does not.
+  for (const cap of ["hdPNG", "transparentPNG", "svgExport", "selectionExport", "multiPagePDF", "customExportSize"] as const) {
+    assert.equal(can("pro", cap), true, `pro should have ${cap}`);
+    assert.equal(can("free", cap), false, `free should NOT have ${cap}`);
+  }
+  // Standard PNG/PDF are Free for everyone.
+  assert.equal(can("free", "standardPNG"), true);
+  assert.equal(can("free", "standardPDF"), true);
 });
 
 test("SHIPPED_FREE_BENEFITS reflects the real Free tier (3 cloud, PNG, unlimited local)", () => {
