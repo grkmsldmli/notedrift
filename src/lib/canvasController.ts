@@ -794,6 +794,7 @@ export class CanvasController {
       selection: this.buildSelection(),
       cropping: this.cropState !== null,
       eraserMode: this.eraserMode,
+      isEmpty: this.canvas.getObjects().length === 0,
     };
   }
 

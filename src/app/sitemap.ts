@@ -37,8 +37,9 @@ export default function sitemap(): MetadataRoute.Sitemap {
     });
   }
 
-  // Legal pages.
+  // Help + legal pages.
   entries.push(
+    { url: url("/help"), lastModified, changeFrequency: "monthly", priority: 0.5 },
     { url: url("/privacy"), lastModified, changeFrequency: "yearly", priority: 0.3 },
     { url: url("/terms"), lastModified, changeFrequency: "yearly", priority: 0.3 },
   );

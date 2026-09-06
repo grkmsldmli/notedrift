@@ -4,6 +4,7 @@ import { memo, useEffect, useState } from "react";
 import Link from "next/link";
 import {
   ChevronDown,
+  CircleHelp,
   Download,
   FileText,
   LayoutGrid,
@@ -451,6 +452,16 @@ export const TopBar = memo(function TopBar(props: TopBarProps) {
                 >
                   <LayoutGrid size={16} className="text-nd-muted" />
                   <span className="flex-1 text-left">View All Tools</span>
+                </Link>
+
+                <div className="my-1 h-px bg-nd-border" />
+                <Link
+                  href="/help"
+                  onClick={closeAll}
+                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-nd-text transition-colors hover:bg-white/5"
+                >
+                  <CircleHelp size={16} className="text-nd-muted" />
+                  <span className="flex-1 text-left">Help &amp; shortcuts</span>
                 </Link>
               </div>
             </>

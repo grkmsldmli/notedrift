@@ -46,6 +46,7 @@ import { ToolOptionsBar } from "./ToolOptionsBar";
 import { ObjectToolbar, type LayerOp } from "./ObjectToolbar";
 import { CropBar } from "./CropBar";
 import { NodeQuickAdd } from "./NodeQuickAdd";
+import { EmptyCanvasHint, QuickStart } from "./FirstRun";
 import { Logo } from "./Logo";
 
 const INITIAL_STATE: EditorState = {
@@ -58,6 +59,7 @@ const INITIAL_STATE: EditorState = {
   selection: { kind: "none", count: 0, rect: null },
   cropping: false,
   eraserMode: "object",
+  isEmpty: true,
 };
 
 const TOOL_KEYS: Record<string, Tool> = {
@@ -898,6 +900,8 @@ export default function Editor() {
             </div>
           </div>
         )}
+
+        <EmptyCanvasHint isEmpty={state.isEmpty} ready={ready} />
       </div>
 
       <input
@@ -922,6 +926,7 @@ export default function Editor() {
 
       <CheckoutActivation />
       <AuthNotice />
+      <QuickStart />
     </div>
   );
 }

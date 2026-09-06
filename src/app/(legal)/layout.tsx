@@ -30,6 +30,9 @@ export default function LegalLayout({ children }: { children: ReactNode }) {
             <Link href="/tools" className="transition-colors hover:text-nd-text">
               Free Tools
             </Link>
+            <Link href="/help" className="transition-colors hover:text-nd-text">
+              Help
+            </Link>
             <Link href="/privacy" className="transition-colors hover:text-nd-text">
               Privacy
             </Link>

@@ -285,6 +285,8 @@ export interface EditorState {
   cropping: boolean;
   /** Phase 1.6G — active eraser behaviour. */
   eraserMode: EraserMode;
+  /** True when the current page has no user objects (drives the empty-canvas hint). */
+  isEmpty: boolean;
 }
 
 /** Metadata for a single page, kept in localStorage (small, always-loaded). */
