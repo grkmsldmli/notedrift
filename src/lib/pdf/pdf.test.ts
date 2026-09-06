@@ -9,6 +9,7 @@ import {
   hasPdfHeader,
 } from "./limits.ts";
 import {
+  FIT_PAD,
   clampZoom,
   fitPageScale,
   fitWidthScale,
@@ -74,6 +75,17 @@ test("fitPageScale fits the limiting dimension inside the viewport", () => {
 test("fitWidthScale scales page width to the viewport width", () => {
   assert.equal(fitWidthScale(250, 500, 0), 2);
   assert.equal(fitWidthScale(2000, 500, 0), 0.25); // clamped to MIN_ZOOM
+});
+
+test("default fit padding is small so pages use the workspace (Letter portrait)", () => {
+  // Letter portrait (612x792) in a height-constrained viewport (1148x444):
+  // height-limited. The generous default pad must beat the old 40px pad.
+  assert.equal(FIT_PAD, 16);
+  const generous = fitPageScale(612, 792, 1148, 444);
+  const old = fitPageScale(612, 792, 1148, 444, 40);
+  assert.ok(generous > old, "default fit should use more space than a 40px pad");
+  // ~ (444 - 32) / 792 = 0.520
+  assert.ok(Math.abs(generous - (444 - FIT_PAD * 2) / 792) < 1e-9);
 });
 
 test("safeRenderScale caps the bitmap's longest edge", () => {

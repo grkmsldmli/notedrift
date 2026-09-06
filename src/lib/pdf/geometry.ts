@@ -8,13 +8,19 @@ export function clampZoom(z: number): number {
   return Math.min(Math.max(z, MIN_ZOOM), MAX_ZOOM);
 }
 
+// Breathing room around a fitted page, in CSS px per side. Deliberately small so
+// a page uses as much of the available workspace as reasonably possible (a large
+// pad made portrait pages look tiny inside a wide/short workspace — e.g. under
+// browser zoom + the reserved ad band). The page still never touches the edges.
+export const FIT_PAD = 16;
+
 /** Largest scale that fits a page fully inside the viewport (minus padding). */
 export function fitPageScale(
   pageW: number,
   pageH: number,
   viewW: number,
   viewH: number,
-  pad = 40,
+  pad = FIT_PAD,
 ): number {
   if (pageW <= 0 || pageH <= 0) return 1;
   const availW = Math.max(1, viewW - pad * 2);
@@ -23,7 +29,7 @@ export function fitPageScale(
 }
 
 /** Scale so the page width fills the viewport width (minus padding). */
-export function fitWidthScale(pageW: number, viewW: number, pad = 40): number {
+export function fitWidthScale(pageW: number, viewW: number, pad = FIT_PAD): number {
   if (pageW <= 0) return 1;
   const availW = Math.max(1, viewW - pad * 2);
   return clampZoom(availW / pageW);
