@@ -40,12 +40,14 @@ import { UpgradeDialog } from "../billing/UpgradeDialog";
 import { can } from "@/lib/plans";
 import { downloadBlob } from "@/lib/export/download";
 import { exportSinglePagePdf } from "@/lib/export/pdf";
+import { PNG_TARGET_LONG_EDGE } from "@/lib/export/scale";
 import {
   EXPORT_CAPABILITY,
   EXPORT_MENU,
   KIND_UPGRADE_CONTEXT,
   type ExportItem,
   type ExportKind,
+  type RasterRequest,
   type UpgradeContext,
 } from "@/lib/export/types";
 import { CloudButton } from "./CloudButton";
@@ -77,7 +79,32 @@ const INITIAL_STATE: EditorState = {
 
 // Export kinds that are actually wired. Grows as each professional export lands;
 // the menu only ever shows implemented exports so nothing offered can fail.
-const IMPLEMENTED_EXPORTS = new Set<ExportKind>(["png-standard", "pdf-standard"]);
+const IMPLEMENTED_EXPORTS = new Set<ExportKind>([
+  "png-standard",
+  "pdf-standard",
+  "png-hd",
+  "png-4k",
+  "png-transparent",
+  "png-selection",
+]);
+
+// Raster (PNG) export requests per kind. HD/4K target a longest edge; transparent
+// drops the paper background; selection crops tight to the chosen objects.
+const RASTER_REQUEST: Partial<Record<ExportKind, RasterRequest>> = {
+  "png-standard": { scope: "canvas", background: "white", scale: 2 },
+  "png-hd": { scope: "canvas", background: "white", targetLongEdge: PNG_TARGET_LONG_EDGE.hd },
+  "png-4k": { scope: "canvas", background: "white", targetLongEdge: PNG_TARGET_LONG_EDGE.k4 },
+  "png-transparent": { scope: "canvas", background: "transparent", scale: 2 },
+  "png-selection": { scope: "selection", background: "transparent", scale: 2 },
+};
+
+// Filename suffix per export kind.
+const EXPORT_SUFFIX: Partial<Record<ExportKind, string>> = {
+  "png-hd": "-hd",
+  "png-4k": "-4k",
+  "png-transparent": "-transparent",
+  "png-selection": "-selection",
+};
 
 const TOOL_KEYS: Record<string, Tool> = {
   v: "select",
@@ -646,14 +673,23 @@ export default function Editor() {
       setExporting(true);
       try {
         const base = exportBase();
-        if (kind === "png-standard") {
-          const r = await c.exportRasterBlob({ scope: "canvas", background: "white", scale: 2 });
-          if (!r) showNotice("Couldn't export — the canvas may be too large.");
-          else downloadBlob(r.blob, `${base}.png`);
-        } else if (kind === "pdf-standard") {
+        if (kind === "pdf-standard") {
           const r = await c.exportRasterBlob({ scope: "canvas", background: "white", scale: 2 });
           if (!r) showNotice("Couldn't create the PDF — the canvas may be too large.");
           else await exportSinglePagePdf(r, base);
+        } else {
+          const req = RASTER_REQUEST[kind];
+          if (!req) return;
+          const r = await c.exportRasterBlob(req);
+          if (!r) {
+            showNotice(
+              req.scope === "selection"
+                ? "Select something to export first."
+                : "Export is too large for this device. Try a smaller size.",
+            );
+          } else {
+            downloadBlob(r.blob, `${base}${EXPORT_SUFFIX[kind] ?? ""}.png`);
+          }
         }
       } catch {
         showNotice("Couldn't export. Please try again.");
