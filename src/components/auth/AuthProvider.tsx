@@ -39,6 +39,7 @@ import { resolvePlan } from "@/lib/auth/plan";
 import type { AuthResult, AuthUser } from "@/lib/auth/types";
 import { confirmCheckout, fetchBillingStatus } from "@/lib/billing/client";
 import type { BillingStatus } from "@/lib/billing/types";
+import { notifyLifecycle } from "@/lib/email/notify";
 
 type AuthStatus = "loading" | "ready";
 type Activation = "activating" | "success" | "processing" | null;
@@ -190,6 +191,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setBilling(s);
       if (s?.plan === "pro") {
         setBillingActivation("success");
+        notifyLifecycle("pro-welcome"); // idempotent server-side
         return;
       }
       if (i === 3) await confirmCheckout(sessionId); // one more reconcile attempt mid-way

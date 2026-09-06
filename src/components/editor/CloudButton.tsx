@@ -24,6 +24,7 @@ import { isSupabaseConfigured } from "@/lib/auth/config";
 import type { SyncState } from "@/lib/cloud/link";
 import { useAuth } from "../auth/AuthProvider";
 import { UpgradeDialog } from "../billing/UpgradeDialog";
+import { notifyLifecycle } from "@/lib/email/notify";
 
 export function CloudButton({
   currentId,
@@ -68,6 +69,7 @@ export function CloudButton({
         // toast covered by a modal (§13B).
         setAtLimit(true);
         setUpgradeOpen(true);
+        notifyLifecycle("cloud-limit"); // best-effort; idempotent + opt-in gated
       } else {
         onNotice(res.kind === "limit" ? "You're at 3 cloud canvases." : res.message);
       }

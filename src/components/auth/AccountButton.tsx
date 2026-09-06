@@ -17,6 +17,28 @@ import { openBillingPortal } from "@/lib/billing/client";
  * Signed in, it also carries the compact billing entry points: Free users get
  * "Upgrade to Pro"; Pro users get "Manage billing" (Stripe-hosted portal).
  */
+// Capture the email CTA deep-link (?upgrade=1) ONCE and strip it from the URL, so
+// a signed-in Free user who clicks "Go Pro" in an email lands with the upgrade
+// sheet open. Module-level so it survives StrictMode's double mount.
+let upgradeIntentCaptured = false;
+let upgradeIntent = false;
+function captureUpgradeIntent(): boolean {
+  if (upgradeIntentCaptured || typeof window === "undefined") return upgradeIntent;
+  upgradeIntentCaptured = true;
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("upgrade") === "1") {
+    upgradeIntent = true;
+    params.delete("upgrade");
+    const qs = params.toString();
+    window.history.replaceState(
+      {},
+      "",
+      window.location.pathname + (qs ? `?${qs}` : "") + window.location.hash,
+    );
+  }
+  return upgradeIntent;
+}
+
 export function AccountButton() {
   const { configured, status, user, plan, billing, billingActivation, signOut } = useAuth();
   const [dialog, setDialog] = useState(false);
@@ -25,6 +47,29 @@ export function AccountButton() {
   const [notice, setNotice] = useState<string | null>(null);
   const [portalBusy, setPortalBusy] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const upgradeIntentHandled = useRef(false);
+
+  // Open the upgrade sheet for a signed-in Free user arriving via ?upgrade=1.
+  useEffect(() => {
+    if (upgradeIntentHandled.current || status !== "ready") return;
+    if (!captureUpgradeIntent()) {
+      upgradeIntentHandled.current = true;
+      return;
+    }
+    if (!user) return; // wait for a possible sign-in to resolve
+    upgradeIntentHandled.current = true;
+    if (plan === "pro") return;
+    // Defer out of the synchronous effect phase (same pattern as the billing
+    // return handling) before opening the sheet.
+    let mounted = true;
+    void (async () => {
+      await Promise.resolve();
+      if (mounted) setUpgrade(true);
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, [status, user, plan]);
 
   useEffect(() => {
     if (!menu) return;

@@ -7,6 +7,7 @@ import { isGoogleAuthConfigured } from "@/lib/auth/config";
 import { GoogleSignInButton } from "./GoogleSignInButton";
 import { OtpInput } from "./OtpInput";
 import { OTP_LENGTH } from "@/lib/auth/otp";
+import { notifyLifecycle, setMarketingPreference } from "@/lib/email/notify";
 
 /** How long (seconds) to disable "Resend code" after a send, so a signed-in
  *  provider rate limit is never hit by spam-clicking. */
@@ -26,6 +27,8 @@ export function SignInDialog({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [cooldown, setCooldown] = useState(0);
   const [resent, setResent] = useState(false);
+  // Marketing opt-in — NEVER pre-checked (CAN-SPAM / Gmail sender rules).
+  const [marketingOptIn, setMarketingOptIn] = useState(false);
   // Bumped on each failed verify so the OtpInput remounts, clears, and refocuses.
   const [attempt, setAttempt] = useState(0);
   const emailRef = useRef<HTMLInputElement>(null);
@@ -79,7 +82,11 @@ export function SignInDialog({ onClose }: { onClose: () => void }) {
     setBusy("verify");
     const res = await verifyEmailOtp(cleanEmail, token);
     if (res.ok) {
-      // Session established; onAuthStateChange updates the app. Just close.
+      // Session established; onAuthStateChange updates the app. Persist the
+      // marketing choice and fire the (idempotent) welcome email — both
+      // best-effort, so neither blocks closing the dialog.
+      setMarketingPreference(marketingOptIn);
+      notifyLifecycle("welcome");
       onClose();
       return;
     }
@@ -247,6 +254,16 @@ export function SignInDialog({ onClose }: { onClose: () => void }) {
                 {busy === "send" ? "Sending code…" : "Continue with email"}
               </button>
             </form>
+
+            <label className="mt-3 flex cursor-pointer items-start gap-2 text-[12px] leading-snug text-nd-muted">
+              <input
+                type="checkbox"
+                checked={marketingOptIn}
+                onChange={(e) => setMarketingOptIn(e.target.checked)}
+                className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-nd-accent"
+              />
+              <span>Email me occasional product tips &amp; new free tools. No spam; unsubscribe anytime.</span>
+            </label>
 
             {error && (
               <p id={errId} role="alert" className="mt-3 text-sm text-red-400">

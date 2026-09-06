@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/email-lifecycle",
+      "schedule": "0 15 * * 3"
+    }
+  ]
+}

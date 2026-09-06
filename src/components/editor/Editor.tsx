@@ -66,6 +66,7 @@ import { EmptyCanvasHint, QuickStart } from "./FirstRun";
 import { CustomSizeDialog } from "./CustomSizeDialog";
 import { Logo } from "./Logo";
 import { BottomAdBand } from "../ads/BottomAdBand";
+import { notifyLifecycle } from "@/lib/email/notify";
 
 const INITIAL_STATE: EditorState = {
   tool: "select",
@@ -771,6 +772,7 @@ export default function Editor() {
     (kind: ExportKind) => {
       if (!can(plan, EXPORT_CAPABILITY[kind])) {
         setExportUpgrade(KIND_UPGRADE_CONTEXT[kind]);
+        notifyLifecycle("export-intent"); // best-effort; idempotent + opt-in gated server-side
         return;
       }
       if (kind === "custom") {
