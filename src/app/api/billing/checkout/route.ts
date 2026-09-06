@@ -25,12 +25,7 @@ import type { BillingInterval } from "@/lib/billing/types";
 
 export async function POST(request: Request): Promise<Response> {
   if (missingBillingConfig().length > 0) {
-    // TEMPORARY production diagnostic: surface ONLY the NAMES of the missing
-    // billing env vars (never any values) so the deployment can be repaired.
-    return NextResponse.json(
-      { error: "billing_unconfigured", missing: missingBillingConfig() },
-      { status: 503 },
-    );
+    return NextResponse.json({ error: "billing_unconfigured" }, { status: 503 });
   }
   // Fail closed on an inconsistent mode (invalid mode, key/mode mismatch, or live
   // billing attempted on localhost/dev/insecure origin).
