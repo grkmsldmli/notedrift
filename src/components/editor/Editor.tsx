@@ -39,7 +39,8 @@ import { useAuth } from "../auth/AuthProvider";
 import { UpgradeDialog } from "../billing/UpgradeDialog";
 import { can } from "@/lib/plans";
 import { downloadBlob } from "@/lib/export/download";
-import { exportSinglePagePdf } from "@/lib/export/pdf";
+import { exportMultiPagePdf, exportSinglePagePdf, type PdfPageImage } from "@/lib/export/pdf";
+import { renderDocToPng } from "@/lib/export/render";
 import { PNG_TARGET_LONG_EDGE } from "@/lib/export/scale";
 import {
   EXPORT_CAPABILITY,
@@ -89,6 +90,7 @@ const IMPLEMENTED_EXPORTS = new Set<ExportKind>([
   "png-selection",
   "svg",
   "custom",
+  "pdf-multi",
 ]);
 
 // Raster (PNG) export requests per kind. HD/4K target a longest edge; transparent
@@ -681,6 +683,34 @@ export default function Editor() {
           const r = await c.exportRasterBlob({ scope: "canvas", background: "white", scale: 2 });
           if (!r) showNotice("Couldn't create the PDF — the canvas may be too large.");
           else await exportSinglePagePdf(r, base);
+        } else if (kind === "pdf-multi") {
+          // Every local page → one PDF, chronological. The current page renders
+          // from the live canvas (freshest); the rest render off-screen from their
+          // saved docs, so the editor is never disturbed. Empty pages are tolerated.
+          const ordered = [...pagesRef.current].sort((a, b) => a.createdAt - b.createdAt);
+          const curId = currentIdRef.current;
+          const images: PdfPageImage[] = [];
+          for (let i = 0; i < ordered.length; i++) {
+            showNotice(`Preparing PDF… (${i + 1}/${ordered.length})`);
+            const page = ordered[i];
+            let png;
+            if (page.id === curId) {
+              png = await c.exportRasterBlob({ scope: "canvas", background: "white", scale: 2 });
+            } else {
+              const doc = (await loadCanvasDoc(page.id)) ?? ({ objects: [] } as unknown as CanvasDoc);
+              png = await renderDocToPng(doc, { background: "white", scale: 2 });
+            }
+            if (png) {
+              images.push({
+                bytes: new Uint8Array(await png.blob.arrayBuffer()),
+                width: png.width,
+                height: png.height,
+              });
+            }
+            await new Promise((r) => setTimeout(r, 0)); // yield between pages
+          }
+          if (images.length === 0) showNotice("Couldn't create the PDF. Try again.");
+          else await exportMultiPagePdf(images, base);
         } else if (kind === "svg") {
           const svg = c.exportSvgString("canvas");
           if (!svg) showNotice("Couldn't export the SVG. Please try again.");
