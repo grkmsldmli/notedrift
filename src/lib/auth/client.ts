@@ -9,6 +9,7 @@ import { createBrowserClient } from "@supabase/ssr";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 import { isSupabaseConfigured, supabasePublishableKey, supabaseUrl } from "./config";
 import type { AuthResult, AuthUser } from "./types";
+import { verifyEmailOtpCore } from "./otp";
 
 let cached: SupabaseClient | null = null;
 
@@ -35,11 +36,6 @@ export function toAuthUser(u: User | null | undefined): AuthUser | null {
   };
 }
 
-function callbackUrl(): string | undefined {
-  if (typeof window === "undefined") return undefined;
-  return `${window.location.origin}/auth/callback`;
-}
-
 function isValidEmail(email: string): boolean {
   // Deliberately simple: real validation is the provider sending (or not) a link.
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -57,7 +53,10 @@ function friendly(message: string): string {
   return "Couldn't sign in right now. Please try again.";
 }
 
-/** Passwordless email sign-in (magic link / OTP). Creates the account if new. */
+/** Send a 6-digit sign-in code to the email (passwordless OTP). Creates the
+ *  account if new. No emailRedirectTo: this is an OTP-only flow — the user types
+ *  the code back into the dialog (verifyEmailOtp), so no magic link / callback
+ *  round-trip is involved. `ok:true` means "code sent", not "signed in". */
 export async function signInWithEmail(email: string): Promise<AuthResult> {
   const sb = getBrowserSupabase();
   if (!sb) return { ok: false, error: "Sign-in isn't available yet." };
@@ -66,14 +65,25 @@ export async function signInWithEmail(email: string): Promise<AuthResult> {
     return { ok: false, error: "Enter a valid email address." };
   }
   try {
-    const { error } = await sb.auth.signInWithOtp({
-      email: clean,
-      options: { emailRedirectTo: callbackUrl() },
-    });
+    const { error } = await sb.auth.signInWithOtp({ email: clean });
     return error ? { ok: false, error: friendly(error.message) } : { ok: true };
   } catch {
     return { ok: false, error: "Network problem — please try again." };
   }
+}
+
+/** Verify a 6-digit email code and establish the Supabase session. On success
+ *  onAuthStateChange fires and the app reflects the signed-in user — no page
+ *  redirect and no /auth/callback round-trip. The token is never logged, stored,
+ *  or placed in a URL; all normalization/validation lives in verifyEmailOtpCore. */
+export async function verifyEmailOtp(email: string, token: string): Promise<AuthResult> {
+  const sb = getBrowserSupabase();
+  if (!sb) return { ok: false, error: "Sign-in isn't available yet." };
+  return verifyEmailOtpCore(
+    (params) => sb.auth.verifyOtp(params),
+    email,
+    token,
+  );
 }
 
 /** Exchange a Google Identity Services ID token for a Supabase session (direct

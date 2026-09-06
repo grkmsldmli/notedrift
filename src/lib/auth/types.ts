@@ -8,6 +8,7 @@ export interface AuthUser {
   readonly avatarUrl: string | null;
 }
 
-/** Result of a sign-in attempt. `ok:true` for email means "magic link sent";
- *  for Google (ID-token sign-in) it means the session was established. */
+/** Result of a sign-in attempt. `ok:true` means: for the email SEND step, the
+ *  6-digit code was sent; for email VERIFY and for Google (ID-token sign-in), the
+ *  session was established. */
 export type AuthResult = { ok: true } | { ok: false; error: string };

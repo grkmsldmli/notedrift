@@ -5,24 +5,36 @@ import { Mail, X } from "lucide-react";
 import { useAuth } from "./AuthProvider";
 import { isGoogleAuthConfigured } from "@/lib/auth/config";
 import { GoogleSignInButton } from "./GoogleSignInButton";
+import { OtpInput } from "./OtpInput";
+import { OTP_LENGTH } from "@/lib/auth/otp";
 
-/** A small, dismissible sign-in sheet. Passwordless: Google (via Google Identity
- *  Services / ID-token sign-in) or an email magic link. Copy matches the shipped
- *  model: cloud save is explicit and opt-in — signing in uploads nothing and your
- *  canvases stay local until you choose Save to cloud (§72). */
+/** How long (seconds) to disable "Resend code" after a send, so a signed-in
+ *  provider rate limit is never hit by spam-clicking. */
+const RESEND_COOLDOWN = 30;
+
+/** A small, dismissible sign-in sheet. Passwordless: Google (Google Identity
+ *  Services / ID-token sign-in) or a 6-digit email code. Two in-place steps —
+ *  enter email, then enter the code — with no page redirect and no /auth/callback
+ *  round-trip. Cloud save stays explicit and opt-in: signing in uploads nothing
+ *  and your canvases stay local until you choose Save to cloud (§72). */
 export function SignInDialog({ onClose }: { onClose: () => void }) {
-  const { signInWithEmail } = useAuth();
+  const { signInWithEmail, verifyEmailOtp } = useAuth();
+  const [step, setStep] = useState<"email" | "otp">("email");
   const [email, setEmail] = useState("");
-  const [busy, setBusy] = useState<null | "email">(null);
-  const [sent, setSent] = useState(false);
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState<null | "send" | "verify">(null);
   const [error, setError] = useState<string | null>(null);
+  const [cooldown, setCooldown] = useState(0);
+  const [resent, setResent] = useState(false);
+  // Bumped on each failed verify so the OtpInput remounts, clears, and refocuses.
+  const [attempt, setAttempt] = useState(0);
   const emailRef = useRef<HTMLInputElement>(null);
   const showGoogle = isGoogleAuthConfigured();
   const titleId = "nd-signin-title";
   const errId = "nd-signin-error";
+  const cleanEmail = email.trim().toLowerCase();
 
   useEffect(() => {
-    emailRef.current?.focus();
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
@@ -30,15 +42,77 @@ export function SignInDialog({ onClose }: { onClose: () => void }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const submitEmail = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (busy) return;
+  useEffect(() => {
+    if (step === "email") emailRef.current?.focus();
+  }, [step]);
+
+  // Resend cooldown tick.
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const t = setTimeout(() => setCooldown((c) => c - 1), 1000);
+    return () => clearTimeout(t);
+  }, [cooldown]);
+
+  const sendCode = async () => {
     setError(null);
-    setBusy("email");
+    setBusy("send");
     const res = await signInWithEmail(email);
     setBusy(null);
-    if (res.ok) setSent(true);
-    else setError(res.error);
+    if (res.ok) {
+      setStep("otp");
+      setCode("");
+      setCooldown(RESEND_COOLDOWN);
+    } else {
+      setError(res.error);
+    }
+  };
+
+  const submitEmail = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (busy) return;
+    void sendCode();
+  };
+
+  const verify = async (token: string) => {
+    if (busy) return;
+    setError(null);
+    setBusy("verify");
+    const res = await verifyEmailOtp(cleanEmail, token);
+    if (res.ok) {
+      // Session established; onAuthStateChange updates the app. Just close.
+      onClose();
+      return;
+    }
+    setBusy(null);
+    setError(res.error);
+    setCode("");
+    setAttempt((a) => a + 1); // remount OtpInput → clears + refocuses
+  };
+
+  const resend = async () => {
+    if (busy || cooldown > 0) return;
+    setError(null);
+    setResent(false);
+    setBusy("send");
+    const res = await signInWithEmail(email);
+    setBusy(null);
+    if (res.ok) {
+      setCode("");
+      setCooldown(RESEND_COOLDOWN);
+      setResent(true);
+      setAttempt((a) => a + 1);
+      setTimeout(() => setResent(false), 2500);
+    } else {
+      setError(res.error);
+    }
+  };
+
+  const useDifferentEmail = () => {
+    setStep("email");
+    setCode("");
+    setError(null);
+    setCooldown(0);
+    setResent(false);
   };
 
   return (
@@ -64,26 +138,65 @@ export function SignInDialog({ onClose }: { onClose: () => void }) {
           <X size={16} />
         </button>
 
-        {sent ? (
-          <div className="py-2 text-center">
+        {step === "otp" ? (
+          <div className="py-1">
             <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-full bg-nd-accent/15 text-nd-accent">
               <Mail size={20} />
             </div>
-            <h2 id={titleId} className="text-base font-semibold text-nd-text">
+            <h2 id={titleId} className="text-center text-base font-semibold text-nd-text">
               Check your email
             </h2>
-            <p className="mt-1.5 text-sm text-nd-muted">
-              We sent a sign-in link to{" "}
-              <span className="text-nd-text">{email.trim().toLowerCase()}</span>.
-              Open it to finish signing in.
+            <p className="mt-1.5 text-center text-sm text-nd-muted">
+              Enter the 6-digit code sent to{" "}
+              <span className="break-all text-nd-text">{cleanEmail}</span>.
             </p>
+
+            <div className="mt-4">
+              <OtpInput
+                key={attempt}
+                value={code}
+                onChange={setCode}
+                onComplete={(full) => void verify(full)}
+                disabled={busy === "verify"}
+                invalid={error !== null}
+                autoFocus
+                describedById={error ? errId : undefined}
+              />
+            </div>
+
+            {error && (
+              <p id={errId} role="alert" className="mt-3 text-center text-sm text-red-400">
+                {error}
+              </p>
+            )}
+
             <button
               type="button"
-              onClick={onClose}
-              className="mt-4 w-full rounded-lg border border-nd-border py-2 text-sm text-nd-text transition-colors hover:bg-white/5"
+              onClick={() => void verify(code)}
+              disabled={busy !== null || code.length !== OTP_LENGTH}
+              className="nd-gradient mt-4 w-full rounded-lg py-2.5 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
             >
-              Done
+              {busy === "verify" ? "Verifying…" : "Verify code"}
             </button>
+
+            <div className="mt-3 flex items-center justify-between text-[13px]">
+              <button
+                type="button"
+                onClick={() => void resend()}
+                disabled={busy !== null || cooldown > 0}
+                className="text-nd-muted transition-colors hover:text-nd-text disabled:cursor-default disabled:opacity-60 disabled:hover:text-nd-muted"
+              >
+                {resent ? "Code sent" : cooldown > 0 ? `Resend in ${cooldown}s` : "Resend code"}
+              </button>
+              <button
+                type="button"
+                onClick={useDifferentEmail}
+                disabled={busy !== null}
+                className="text-nd-muted transition-colors hover:text-nd-text disabled:opacity-60"
+              >
+                Use a different email
+              </button>
+            </div>
           </div>
         ) : (
           <>
@@ -131,7 +244,7 @@ export function SignInDialog({ onClose }: { onClose: () => void }) {
                 disabled={busy !== null || email.trim().length === 0}
                 className="nd-gradient mt-2.5 w-full rounded-lg py-2.5 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
               >
-                {busy === "email" ? "Sending link…" : "Continue with email"}
+                {busy === "send" ? "Sending code…" : "Continue with email"}
               </button>
             </form>
 
@@ -142,7 +255,7 @@ export function SignInDialog({ onClose }: { onClose: () => void }) {
             )}
 
             <p className="mt-3 text-center text-[11px] text-nd-muted">
-              Nothing uploads until you save to cloud.
+              We&apos;ll email you a 6-digit sign-in code. Nothing uploads until you save to cloud.
             </p>
           </>
         )}

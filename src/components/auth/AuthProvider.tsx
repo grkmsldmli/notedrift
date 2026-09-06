@@ -33,6 +33,7 @@ import {
   onAuthChange,
   signInWithEmail,
   signOut,
+  verifyEmailOtp,
 } from "@/lib/auth/client";
 import { resolvePlan } from "@/lib/auth/plan";
 import type { AuthResult, AuthUser } from "@/lib/auth/types";
@@ -62,7 +63,10 @@ interface AuthContextValue {
   dismissCheckoutCancelled: () => void;
   /** Re-read billing status from the server. */
   refreshBilling: () => Promise<void>;
+  /** Send a 6-digit sign-in code (ok:true = code sent). */
   signInWithEmail: (email: string) => Promise<AuthResult>;
+  /** Verify the 6-digit code and establish the session (ok:true = signed in). */
+  verifyEmailOtp: (email: string, token: string) => Promise<AuthResult>;
   signOut: () => Promise<void>;
 }
 
@@ -246,6 +250,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       dismissCheckoutCancelled,
       refreshBilling,
       signInWithEmail,
+      verifyEmailOtp,
       signOut,
     }),
     [
