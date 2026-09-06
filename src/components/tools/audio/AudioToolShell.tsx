@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import Link from "next/link";
 import { ArrowRight, ShieldCheck } from "lucide-react";
 import { getAudioTool, relatedAudioTools } from "@/lib/audio/tools";
+import { InlineAd } from "@/components/ads/InlineAd";
 
 // Server-rendered wrapper shared by every audio tool page: breadcrumb, title,
 // one-line tagline, the interactive tool, a privacy note, and cross-links. Keeps
@@ -31,6 +32,10 @@ export function AudioToolShell({ slug, children }: { slug: string; children: Rea
         <ShieldCheck size={14} className="text-nd-accent" />
         Runs in your browser — nothing is uploaded.
       </p>
+
+      {/* One ad AFTER the interactive tool + privacy note, BEFORE the related-tool
+          cross-links — never between the tool's controls. Hidden for Pro. */}
+      <InlineAd placement="tool-page" />
 
       {related.length > 0 && (
         <section className="mt-10 border-t border-nd-border pt-6">

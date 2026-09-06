@@ -7,6 +7,7 @@ import {
   toolsInCategory,
 } from "@/lib/convert/registry";
 import { AUDIO_TOOLS } from "@/lib/audio/tools";
+import { InlineAd } from "@/components/ads/InlineAd";
 
 export const metadata: Metadata = {
   title: "Free File Tools — Convert Images & PDFs in Your Browser | NoteDrift",
@@ -58,6 +59,10 @@ export default function ToolsLanding() {
           />
         </Link>
       </div>
+
+      {/* One tasteful in-flow ad after the intro/featured block, before the tool
+          groups. Never adjacent to a tool card. Hidden entirely for Pro. */}
+      <InlineAd placement="tools" />
 
       <div className="mt-12 space-y-10">
         <section>

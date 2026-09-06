@@ -125,15 +125,35 @@ export default function PrivacyPage() {
         />
       </LegalSection>
 
+      <LegalSection heading="Advertising">
+        <p>
+          NoteDrift is supported in part by advertising. Free and anonymous users
+          may see ads on the main editor and on the free tools pages, provided
+          through <span className="text-nd-text">Google AdSense</span>.
+        </p>
+        <LegalList
+          items={[
+            "Google's advertising technologies may use cookies, local storage, and device signals to serve and measure ads, in line with Google's own systems and applicable consent requirements.",
+            "How Google uses information from sites that use its services is described in Google's own policies; where required, ad personalization and consent are handled through Google's privacy and messaging tools.",
+            <>
+              <span className="text-nd-text">NoteDrift Pro does not display
+              NoteDrift AdSense advertising</span> — upgrading removes these ads.
+            </>,
+            "Your canvas content and files are never sent to advertisers, and are not used to target ads.",
+          ]}
+        />
+      </LegalSection>
+
       <LegalSection heading="Cookies, storage and analytics">
         <p>
           NoteDrift uses your browser&apos;s local storage and IndexedDB to keep
           your local canvases and preferences, and — only when you are signed in —
-          functional cookies to maintain your session. NoteDrift does not run
-          third-party advertising or cross-site tracking, and does not sell your
-          data. Our infrastructure providers (Supabase for accounts and cloud data,
-          Stripe for payments) process technical data as needed to provide those
-          services.
+          functional cookies to maintain your session. Advertising cookies and
+          similar technologies are used only in connection with the Google AdSense
+          ads described above, and only for Free and anonymous users. NoteDrift
+          does not sell your data. Our infrastructure providers (Supabase for
+          accounts and cloud data, Stripe for payments) process technical data as
+          needed to provide those services.
         </p>
       </LegalSection>
 

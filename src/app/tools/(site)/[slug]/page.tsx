@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { ArrowRight, ShieldCheck } from "lucide-react";
 import { TOOLS, getTool, relatedTools } from "@/lib/convert/registry";
 import { ToolConverter } from "@/components/tools/ToolConverter";
+import { InlineAd } from "@/components/ads/InlineAd";
 
 const SITE = process.env.NEXT_PUBLIC_SITE_URL ?? "https://notedrift.com";
 
@@ -85,6 +86,10 @@ export default async function ToolPage({
         Files stay on your device. NoteDrift processes this file in your browser —
         nothing is uploaded.
       </p>
+
+      {/* One ad AFTER the converter, BEFORE the explanatory content — never
+          between the input, convert and download controls. Hidden for Pro. */}
+      <InlineAd placement="tool-page" />
 
       <section className="mt-10 border-t border-nd-border pt-6 text-sm text-nd-muted">
         <h2 className="mb-2 text-base font-semibold text-nd-text">

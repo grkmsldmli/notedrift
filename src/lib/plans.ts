@@ -52,6 +52,9 @@ export interface Entitlements {
   readonly privateSharing: boolean;
   readonly collaboration: boolean;
 
+  // ---- Monetization. Free/anonymous are ad-supported; Pro is ad-free. ----
+  readonly adFree: boolean;
+
   // ---- Export. Standard is free for everyone; Pro adds professional formats. ----
   readonly standardPNG: boolean;
   readonly standardPDF: boolean;
@@ -97,6 +100,8 @@ const ANONYMOUS: Entitlements = {
   privateSharing: false,
   collaboration: false,
 
+  adFree: false,
+
   standardPNG: true,
   standardPDF: true,
   hdPNG: false,
@@ -132,6 +137,8 @@ const PRO: Entitlements = {
   publicSharing: true,
   privateSharing: true,
   collaboration: true,
+
+  adFree: true,
 
   standardPNG: true,
   standardPDF: true,
@@ -230,6 +237,9 @@ export const SHIPPED_PRO_BENEFITS = [
   "HD, 4K & transparent PNG",
   "SVG, selection & custom-size exports",
   "Multi-page PDF",
+  // Shipped in 3.1A: Free/anonymous are ad-supported (Google AdSense), Pro is not.
+  // Backed by the real `adFree` entitlement (PRO only) — see AdsProvider/AdSlot.
+  "Ad-free experience",
 ] as const;
 
 /** What every Free user already gets, for an honest comparison. */

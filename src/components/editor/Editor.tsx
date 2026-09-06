@@ -65,6 +65,7 @@ import { NodeQuickAdd } from "./NodeQuickAdd";
 import { EmptyCanvasHint, QuickStart } from "./FirstRun";
 import { CustomSizeDialog } from "./CustomSizeDialog";
 import { Logo } from "./Logo";
+import { BottomAdBand } from "../ads/BottomAdBand";
 
 const INITIAL_STATE: EditorState = {
   tool: "select",
@@ -1079,6 +1080,12 @@ export default function Editor() {
 
         <EmptyCanvasHint isEmpty={state.isEmpty} ready={ready} />
       </div>
+
+      {/* Ad band: a real flex row BELOW the canvas region (never an overlay). It
+          reserves its own height so the canvas above shrinks and the existing
+          ResizeObserver re-fits — no object displacement. Renders nothing for Pro
+          / ineligible users, so the canvas reclaims full height. */}
+      <BottomAdBand variant="editor" />
 
       <input
         ref={fileInputRef}

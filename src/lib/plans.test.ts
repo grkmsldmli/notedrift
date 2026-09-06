@@ -200,6 +200,18 @@ test("advertised Pro export benefits map to real, Pro-only shipped capabilities"
   assert.equal(can("free", "standardPDF"), true);
 });
 
+test("ad-free is a Pro-only entitlement (Free/anonymous are ad-supported)", () => {
+  assert.equal(can("pro", "adFree"), true);
+  assert.equal(can("free", "adFree"), false);
+  assert.equal(can("anonymous", "adFree"), false);
+});
+
+test("SHIPPED_PRO_BENEFITS advertises the ad-free experience (ads have shipped)", () => {
+  // Only valid because ads actually ship in 3.1A and adFree is a real, Pro-only
+  // entitlement — the benefit is backed by can("pro","adFree") above.
+  assert.ok(SHIPPED_PRO_BENEFITS.some((b) => /ad-free/i.test(b)));
+});
+
 test("SHIPPED_FREE_BENEFITS reflects the real Free tier (3 cloud, PNG, unlimited local)", () => {
   assert.equal(limitOf("free", "cloudCanvasLimit"), 3);
   assert.equal(can("free", "standardPNG"), true);

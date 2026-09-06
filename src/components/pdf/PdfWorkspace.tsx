@@ -18,6 +18,7 @@ import {
   Undo2,
 } from "lucide-react";
 import { BrandHome, NavArrows } from "@/components/nav/HeaderNav";
+import { BottomAdBand } from "@/components/ads/BottomAdBand";
 import { PdfDropzone } from "./PdfDropzone";
 import { PdfThumbnailRail } from "./PdfThumbnailRail";
 import { PdfToolRail } from "./PdfToolRail";
@@ -689,6 +690,11 @@ export function PdfWorkspace() {
           </div>
         )}
       </div>
+
+      {/* Reserved ad row below the PDF workspace (never an overlay). The content
+          region above shrinks and the page re-fits via its ResizeObserver; Pro
+          users get no band and reclaim the full height. */}
+      <BottomAdBand variant="tool-page" />
 
       {sigOpen && (
         <PdfSignatureDialog

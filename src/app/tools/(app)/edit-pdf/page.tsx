@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { PdfWorkspace } from "@/components/pdf/PdfWorkspace";
+import { AdsProviderStandalone } from "@/components/ads/AdsProvider";
 
 const DESCRIPTION =
   "Add text, highlight, draw, sign, add images, and rotate, reorder or delete PDF pages — directly in your browser. Free, no signup, and your files never leave your device.";
@@ -52,7 +53,9 @@ export default function EditPdfPage() {
         // eslint-disable-next-line react/no-danger
         dangerouslySetInnerHTML={{ __html: JSON.stringify(JSON_LD) }}
       />
-      <PdfWorkspace />
+      <AdsProviderStandalone>
+        <PdfWorkspace />
+      </AdsProviderStandalone>
     </>
   );
 }
