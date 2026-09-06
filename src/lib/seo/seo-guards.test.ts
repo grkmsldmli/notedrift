@@ -14,6 +14,7 @@ import {
   toolsInCategory,
 } from "../convert/registry.ts";
 import { AUDIO_TOOLS } from "../audio/tools.ts";
+import { FACTORY_TOOLS } from "../tools/factory.ts";
 
 /* ------------------------------ unique titles ----------------------------- */
 
@@ -69,7 +70,12 @@ test("a tool never lists itself as related", () => {
 /* -------------------------- index-only-finished --------------------------- */
 
 test("indexable routes contain ONLY finished, registered tools (no phantom pages)", () => {
-  const known = new Set([...TOOLS.map((t) => t.slug), ...AUDIO_TOOLS.map((t) => t.slug), "edit-pdf"]);
+  const known = new Set([
+    ...TOOLS.map((t) => t.slug),
+    ...AUDIO_TOOLS.map((t) => t.slug),
+    ...FACTORY_TOOLS.map((t) => t.slug),
+    "edit-pdf",
+  ]);
   for (const r of allToolRoutes()) {
     assert.ok(known.has(r.slug), `indexed route is not a finished/registered tool: ${r.slug}`);
   }

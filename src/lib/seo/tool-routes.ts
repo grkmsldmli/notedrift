@@ -7,6 +7,7 @@
 
 import { TOOLS } from "../convert/registry.ts";
 import { AUDIO_TOOLS } from "../audio/tools.ts";
+import { FACTORY_TOOLS } from "../tools/factory.ts";
 
 export interface ToolRoute {
   readonly path: string;
@@ -31,5 +32,6 @@ export function allToolRoutes(): ToolRoute[] {
     ...STANDALONE_TOOL_ROUTES,
     ...TOOLS.map((t) => ({ path: `/tools/${t.slug}`, slug: t.slug, seoTitle: t.seoTitle })),
     ...AUDIO_TOOLS.map((t) => ({ path: `/tools/${t.slug}`, slug: t.slug, seoTitle: t.seoTitle })),
+    ...FACTORY_TOOLS.map((t) => ({ path: `/tools/${t.slug}`, slug: t.slug, seoTitle: t.seoTitle })),
   ];
 }

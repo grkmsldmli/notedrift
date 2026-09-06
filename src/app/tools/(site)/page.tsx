@@ -7,6 +7,11 @@ import {
   toolsInCategory,
 } from "@/lib/convert/registry";
 import { AUDIO_TOOLS } from "@/lib/audio/tools";
+import {
+  FACTORY_CATEGORY_LABELS,
+  FACTORY_CATEGORY_ORDER,
+  factoryToolsInCategory,
+} from "@/lib/tools/factory";
 import { InlineAd } from "@/components/ads/InlineAd";
 import { JsonLd } from "@/components/seo/JsonLd";
 import { breadcrumbList } from "@/lib/seo/structured-data";
@@ -73,6 +78,36 @@ export default function ToolsLanding() {
       <InlineAd placement="tools" />
 
       <div className="mt-12 space-y-10">
+        {FACTORY_CATEGORY_ORDER.map((cat) => {
+          const tools = factoryToolsInCategory(cat);
+          if (tools.length === 0) return null;
+          return (
+            <section key={cat}>
+              <h2 className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-nd-muted">
+                {FACTORY_CATEGORY_LABELS[cat]}
+              </h2>
+              <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+                {tools.map((t) => (
+                  <Link
+                    key={t.slug}
+                    href={`/tools/${t.slug}`}
+                    className="group flex items-center justify-between gap-3 rounded-xl border border-nd-border bg-nd-surface/50 px-4 py-3.5 transition-colors hover:border-nd-accent/50 hover:bg-nd-surface"
+                  >
+                    <span className="min-w-0">
+                      <span className="block text-sm font-medium text-nd-text">{t.title}</span>
+                      <span className="mt-0.5 block truncate text-xs text-nd-muted">{t.tagline}</span>
+                    </span>
+                    <ArrowRight
+                      size={16}
+                      className="shrink-0 text-nd-muted transition-transform group-hover:translate-x-0.5 group-hover:text-nd-accent"
+                    />
+                  </Link>
+                ))}
+              </div>
+            </section>
+          );
+        })}
+
         <section>
           <h2 className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-nd-muted">
             Audio
