@@ -32,7 +32,9 @@ export const metadata: Metadata = {
     url: "/",
   },
   twitter: {
-    card: "summary",
+    // Large-image card. The 1200x630 image comes from app/twitter-image.tsx
+    // (og:image / twitter:image are injected automatically by the file convention).
+    card: "summary_large_image",
     title: "NoteDrift — Open. Think. Create.",
     description: SITE_DESCRIPTION,
   },
