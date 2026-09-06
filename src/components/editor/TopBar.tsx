@@ -158,7 +158,9 @@ export const TopBar = memo(function TopBar(props: TopBarProps) {
         {/* Back/forward: hidden on phones so the tight 375px header can't overflow. */}
         <NavArrows className="hidden sm:flex" />
         <BrandHome size={26} wordmarkClassName="hidden sm:inline" />
-        <span className="ml-1 hidden text-xs text-nd-muted md:inline">
+        {/* Decorative tagline — desktop only (≥xl). Hidden through the whole
+            tablet band so it never competes with core actions for width. */}
+        <span className="ml-1 hidden text-xs text-nd-muted xl:inline">
           Open. <span className="nd-gradient-text font-semibold">Think.</span>{" "}
           Create.
         </span>
@@ -283,25 +285,27 @@ export const TopBar = memo(function TopBar(props: TopBarProps) {
 
       {/* Right: actions */}
       <div className="flex shrink-0 items-center gap-1">
-        {/* Secondary to New Page; hidden on small screens (available in More). */}
+        {/* Secondary nav — desktop only (≥xl). Across the whole tablet band these
+            move into the More menu, keeping the compact one-row header collision-
+            free. Everything here has a matching entry in More below xl. */}
         <Link
           href="/tools/edit-pdf"
-          className="nd-hit hidden items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm text-nd-muted transition-colors hover:bg-white/5 hover:text-nd-text lg:inline-flex"
+          className="nd-hit hidden items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm text-nd-muted transition-colors hover:bg-white/5 hover:text-nd-text xl:inline-flex"
         >
           <FileText size={15} />
           Edit PDF Files
         </Link>
         <Link
           href="/tools"
-          className="nd-hit mr-0.5 hidden items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm text-nd-muted transition-colors hover:bg-white/5 hover:text-nd-text md:inline-flex"
+          className="nd-hit mr-0.5 hidden items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm text-nd-muted transition-colors hover:bg-white/5 hover:text-nd-text xl:inline-flex"
         >
           <Wrench size={15} />
           Convert Files
         </Link>
 
         {/* Tools dropdown — surfaces the audio utilities. Secondary treatment (not a
-            CTA); hidden below md, where its items move into the More menu. */}
-        <div className="relative hidden md:block">
+            CTA); hidden below xl, where its items move into the More menu. */}
+        <div className="relative hidden xl:block">
           <button
             type="button"
             aria-haspopup="menu"
@@ -471,7 +475,7 @@ export const TopBar = memo(function TopBar(props: TopBarProps) {
                 <Link
                   href="/tools/edit-pdf"
                   onClick={closeAll}
-                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-nd-text transition-colors hover:bg-white/5 lg:hidden"
+                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-nd-text transition-colors hover:bg-white/5 xl:hidden"
                 >
                   <FileText size={16} className="text-nd-muted" />
                   <span className="flex-1 text-left">Edit PDF Files</span>
@@ -479,16 +483,16 @@ export const TopBar = memo(function TopBar(props: TopBarProps) {
                 <Link
                   href="/tools"
                   onClick={closeAll}
-                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-nd-text transition-colors hover:bg-white/5 md:hidden"
+                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-nd-text transition-colors hover:bg-white/5 xl:hidden"
                 >
                   <Wrench size={16} className="text-nd-muted" />
                   <span className="flex-1 text-left">Convert Files</span>
                 </Link>
 
                 {/* Audio tools — here only when the header Tools dropdown is hidden
-                    (below md); flat, no nested submenu. */}
-                <div className="my-1 h-px bg-nd-border md:hidden" />
-                <div className="px-2.5 pb-1 pt-1 text-[11px] font-medium uppercase tracking-wider text-nd-muted md:hidden">
+                    (below xl); flat, no nested submenu. */}
+                <div className="my-1 h-px bg-nd-border xl:hidden" />
+                <div className="px-2.5 pb-1 pt-1 text-[11px] font-medium uppercase tracking-wider text-nd-muted xl:hidden">
                   Tools
                 </div>
                 {AUDIO_LINKS.map(({ href, label, Icon }) => (
@@ -496,7 +500,7 @@ export const TopBar = memo(function TopBar(props: TopBarProps) {
                     key={href}
                     href={href}
                     onClick={closeAll}
-                    className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-nd-text transition-colors hover:bg-white/5 md:hidden"
+                    className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-nd-text transition-colors hover:bg-white/5 xl:hidden"
                   >
                     <Icon size={16} className="text-nd-muted" />
                     <span className="flex-1 text-left">{label}</span>
@@ -505,7 +509,7 @@ export const TopBar = memo(function TopBar(props: TopBarProps) {
                 <Link
                   href="/tools"
                   onClick={closeAll}
-                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-nd-text transition-colors hover:bg-white/5 md:hidden"
+                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-nd-text transition-colors hover:bg-white/5 xl:hidden"
                 >
                   <LayoutGrid size={16} className="text-nd-muted" />
                   <span className="flex-1 text-left">View All Tools</span>
