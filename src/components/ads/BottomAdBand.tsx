@@ -7,7 +7,17 @@
 // the app's existing ResizeObserver re-measures and the canvas never sits under
 // the ad. When ineligible (Pro, loading, ad-free) it renders nothing at all — no
 // blank placeholder — and the canvas reclaims the full height.
+//
+// The band mounts at full height (non-zero) so Google can make a valid ad request.
+// A MutationObserver watches OUR OWN <ins class="adsbygoogle"> for the ad status
+// Google sets:
+//   • data-ad-status="filled"   → keep the band exactly as intended.
+//   • data-ad-status="unfilled" → collapse the band so the canvas reclaims the
+//     height (no giant blank rectangle). We only touch our own container — never
+//     Google's iframe, and we never re-push/refresh the ad.
+// If Google never sets the attribute, the band stays visible (safe default).
 
+import { useEffect, useRef, useState } from "react";
 import { adsenseSlotEditorBottom, adsenseSlotToolPage } from "@/lib/ads/config";
 import { useAdsEligible } from "./AdsProvider";
 import { AdSlot } from "./AdSlot";
@@ -15,9 +25,35 @@ import { AdSlot } from "./AdSlot";
 export function BottomAdBand({ variant }: { variant: "editor" | "tool-page" }) {
   const eligible = useAdsEligible();
   const slot = variant === "editor" ? adsenseSlotEditorBottom() : adsenseSlotToolPage();
+  const asideRef = useRef<HTMLElement>(null);
+  const [adStatus, setAdStatus] = useState<"filled" | "unfilled" | null>(null);
+
+  useEffect(() => {
+    const aside = asideRef.current;
+    if (!aside) return;
+    const read = () => {
+      const ins = aside.querySelector("ins.adsbygoogle");
+      const st = ins?.getAttribute("data-ad-status");
+      if (st === "filled" || st === "unfilled") setAdStatus(st);
+    };
+    read(); // catch a status already set before we attached
+    const mo = new MutationObserver(read);
+    mo.observe(aside, {
+      subtree: true,
+      childList: true, // the <ins> is inserted after mount
+      attributes: true,
+      attributeFilter: ["data-ad-status"],
+    });
+    return () => mo.disconnect();
+  }, [eligible, slot]);
+
   if (!eligible || !slot) return null;
+  // Google requested and returned no ad — reclaim the height for the canvas.
+  if (adStatus === "unfilled") return null;
+
   return (
     <aside
+      ref={asideRef}
       aria-label="Advertisement"
       className="relative shrink-0 border-t border-nd-border bg-nd-bg"
     >
