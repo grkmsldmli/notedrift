@@ -1007,6 +1007,7 @@ export default function Editor() {
 
         {toolDefaults && (
           <ToolOptionsBar
+            key={state.tool}
             tool={state.tool}
             defaults={toolDefaults}
             onSetDefault={applyDefaults}

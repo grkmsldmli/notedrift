@@ -1,7 +1,7 @@
 "use client";
 
-import { memo } from "react";
-import { PenTool } from "lucide-react";
+import { memo, useEffect, useState } from "react";
+import { ChevronDown, ChevronUp, PenTool } from "lucide-react";
 import { OUTLINE_WIDTHS } from "@/lib/constants";
 import { DRAW_TOOLS, materialFor } from "@/lib/brush/materials";
 import { SHAPE_IDS, shapeDef } from "@/lib/shapes/registry";
@@ -45,12 +45,52 @@ const LINE_LABEL: Record<string, string> = {
   doublearrow: "Double arrow",
 };
 
+/** The compact summary shown while the settings panel is collapsed: a color dot
+ *  plus the tool's key numbers. Mirrors the active branch's controls. */
+function summaryFor(
+  tool: Tool,
+  defaults: ToolDefaults,
+): { color: string; chips: string[]; label: string } | null {
+  if (DRAW_SET.has(tool)) {
+    const d = tool as DrawTool;
+    const mat = materialFor(d);
+    const p = defaults.draw[d];
+    return {
+      color: p.color,
+      label: mat.label,
+      chips: [`${p.width}`, ...(mat.showOpacity ? [`${Math.round(p.opacity * 100)}%`] : [])],
+    };
+  }
+  if (SHAPE_SET.has(tool)) {
+    return { color: defaults.shapeStroke, label: shapeDef(tool)?.label ?? "Shape", chips: [`${defaults.shapeStrokeWidth}`] };
+  }
+  if (LINE_SET.has(tool)) {
+    return { color: defaults.lineStroke, label: LINE_LABEL[tool] ?? "Line", chips: [`${defaults.lineStrokeWidth}`] };
+  }
+  if (tool === "text") return { color: defaults.textColor, label: "Text", chips: [`${defaults.textFontSize}`] };
+  if (tool === "note") return { color: defaults.noteFill, label: "Sticky note", chips: [] };
+  return null;
+}
+
 export const ToolOptionsBar = memo(function ToolOptionsBar({
   tool,
   defaults,
   onSetDefault,
   onSetDrawPref,
 }: ToolOptionsBarProps) {
+  // Canvas-first: the panel starts COLLAPSED (a compact pill) so the tool is
+  // usable immediately without a big card covering the canvas. The parent keys
+  // this component by tool, so switching tools resets it to collapsed.
+  const [expanded, setExpanded] = useState(false);
+  useEffect(() => {
+    if (!expanded) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setExpanded(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [expanded]);
+
   let content: React.ReactNode = null;
 
   if (DRAW_SET.has(tool)) {
@@ -241,9 +281,49 @@ export const ToolOptionsBar = memo(function ToolOptionsBar({
     return null;
   }
 
+  const summary = summaryFor(tool, defaults);
+
+  // Collapsed: a small pill with a color dot + key numbers. Draw immediately.
+  if (!expanded && summary) {
+    return (
+      <div className="pointer-events-auto absolute left-1/2 top-4 z-20 -translate-x-1/2">
+        <button
+          type="button"
+          onClick={() => setExpanded(true)}
+          aria-expanded={false}
+          aria-label={`${summary.label} settings`}
+          title={`${summary.label} settings`}
+          className="flex items-center gap-2 rounded-xl border border-nd-border bg-nd-surface/95 px-2.5 py-1.5 shadow-xl backdrop-blur transition-colors hover:bg-nd-surface"
+        >
+          <span
+            className="h-4 w-4 shrink-0 rounded-full border border-white/25"
+            style={{ background: summary.color }}
+          />
+          {summary.chips.map((c) => (
+            <span key={c} className="text-xs font-medium tabular-nums text-nd-muted">
+              {c}
+            </span>
+          ))}
+          <ChevronDown size={14} className="text-nd-muted" />
+        </button>
+      </div>
+    );
+  }
+
+  // Expanded: the full settings, with a clear collapse control (Escape also works).
   return (
     <div className="pointer-events-auto absolute left-1/2 top-4 z-20 flex max-w-[calc(100vw-1rem)] -translate-x-1/2 flex-wrap items-center justify-center gap-x-2 gap-y-1.5 rounded-xl border border-nd-border bg-nd-surface/95 px-3 py-2 shadow-xl backdrop-blur">
       {content}
+      <Divider />
+      <button
+        type="button"
+        onClick={() => setExpanded(false)}
+        aria-label="Collapse settings"
+        title="Collapse"
+        className="nd-hit flex h-8 w-8 items-center justify-center rounded-lg text-nd-muted transition-colors hover:bg-white/5 hover:text-nd-text"
+      >
+        <ChevronUp size={15} />
+      </button>
     </div>
   );
 });
