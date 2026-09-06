@@ -84,8 +84,7 @@ export function CheckoutActivation() {
               <Loader2 size={22} className="animate-spin text-nd-accent" />
             </div>
             <h2 className="text-base font-semibold text-nd-text">Payment successful</h2>
-            <p className="mt-1 text-sm text-nd-text">Activating NoteDrift Pro…</p>
-            <p className="mt-2 text-xs text-nd-muted">Confirming your subscription securely with Stripe.</p>
+            <p className="mt-1 text-sm text-nd-muted">Activating NoteDrift Pro…</p>
           </>
         )}
 
@@ -113,7 +112,7 @@ export function CheckoutActivation() {
             </div>
             <h2 className="text-base font-semibold text-nd-text">Almost there</h2>
             <p className="mt-1 text-sm text-nd-muted">
-              Your payment was completed, but Pro is still activating. This can take a moment.
+              Payment received — Pro is still activating.
             </p>
             <div className="mt-4 flex flex-col gap-2">
               <button

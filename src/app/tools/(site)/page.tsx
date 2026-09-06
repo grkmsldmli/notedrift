@@ -29,8 +29,7 @@ export default function ToolsLanding() {
           Convert files. <span className="nd-gradient-text">Free.</span>
         </h1>
         <p className="mx-auto mt-3 max-w-xl text-sm text-nd-muted sm:text-base">
-          Fast browser-based file tools. No signup, and your files stay on your
-          device — every conversion runs right here in your browser.
+          Fast, private file tools. No signup — files never leave your browser.
         </p>
       </section>
 
@@ -50,7 +49,7 @@ export default function ToolsLanding() {
               </span>
             </span>
             <span className="mt-0.5 block text-xs text-nd-muted">
-              Add text, highlight, draw, sign, add images, and arrange pages — free, right in your browser.
+              Add text, highlight, draw, sign, add images, and arrange pages.
             </span>
           </span>
           <ArrowRight

@@ -91,9 +91,7 @@ export function SignInDialog({ onClose }: { onClose: () => void }) {
               Sign in to NoteDrift
             </h2>
             <p className="mt-1 text-sm text-nd-muted">
-              Save canvases to your private cloud and reopen them on another
-              device. Nothing uploads automatically — your work stays on this
-              device until you choose Save to cloud.
+              Sync your canvases across devices.
             </p>
 
             {showGoogle && (
@@ -142,6 +140,10 @@ export function SignInDialog({ onClose }: { onClose: () => void }) {
                 {error}
               </p>
             )}
+
+            <p className="mt-3 text-center text-[11px] text-nd-muted">
+              Nothing uploads until you save to cloud.
+            </p>
           </>
         )}
       </div>

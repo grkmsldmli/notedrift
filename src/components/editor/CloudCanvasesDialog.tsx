@@ -145,8 +145,8 @@ export function CloudCanvasesDialog({
           <div className="border-t border-nd-border bg-nd-accent/5 px-4 py-3 text-[11px]">
             <p className="text-nd-text">
               {count > 3
-                ? `You have ${count} cloud canvases from Pro. They all stay available to open, edit and sync. Free includes up to 3 — to save another, resubscribe to Pro or reduce your cloud count below 3.`
-                : "You're at the Free limit of 3 cloud canvases. Local canvases stay unlimited — upgrade to Pro for unlimited cloud, or remove one below."}
+                ? `Your ${count} Pro canvases still open and sync. Free saves 3 — resubscribe or remove some to save more.`
+                : "You've used your 3 free cloud canvases. Go Pro for unlimited, or remove one below."}
             </p>
             <button
               type="button"
@@ -159,9 +159,7 @@ export function CloudCanvasesDialog({
         )}
 
         <p className="border-t border-nd-border px-4 py-2.5 text-[11px] text-nd-muted">
-          {isPro
-            ? "Cloud canvases are stored privately in your NoteDrift account. Pro includes unlimited cloud canvases; your local canvases stay unlimited too."
-            : "Cloud canvases are stored privately in your NoteDrift account. Free includes 3; your local canvases stay unlimited."}
+          Stored privately in your NoteDrift account. Local canvases stay unlimited.
         </p>
       </div>
 
