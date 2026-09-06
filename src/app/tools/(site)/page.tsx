@@ -8,6 +8,8 @@ import {
 } from "@/lib/convert/registry";
 import { AUDIO_TOOLS } from "@/lib/audio/tools";
 import { InlineAd } from "@/components/ads/InlineAd";
+import { JsonLd } from "@/components/seo/JsonLd";
+import { breadcrumbList } from "@/lib/seo/structured-data";
 
 export const metadata: Metadata = {
   title: "Free File Tools — Convert Images & PDFs in Your Browser | NoteDrift",
@@ -25,6 +27,12 @@ export const metadata: Metadata = {
 export default function ToolsLanding() {
   return (
     <div className="mx-auto w-full max-w-4xl px-4 py-12 sm:py-16">
+      <JsonLd
+        data={breadcrumbList([
+          { name: "NoteDrift", path: "/" },
+          { name: "Free Tools", path: "/tools" },
+        ])}
+      />
       <section className="text-center">
         <h1 className="text-3xl font-semibold tracking-tight text-nd-text sm:text-4xl">
           Convert files. <span className="nd-gradient-text">Free.</span>

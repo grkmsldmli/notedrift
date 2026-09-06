@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { PdfWorkspace } from "@/components/pdf/PdfWorkspace";
 import { AdsProviderStandalone } from "@/components/ads/AdsProvider";
+import { JsonLd } from "@/components/seo/JsonLd";
+import { toolBreadcrumb } from "@/lib/seo/structured-data";
 
 const DESCRIPTION =
   "Add text, highlight, draw, sign, add images, and rotate, reorder or delete PDF pages — directly in your browser. Free, no signup, and your files never leave your device.";
@@ -48,11 +50,8 @@ const JSON_LD = {
 export default function EditPdfPage() {
   return (
     <>
-      <script
-        type="application/ld+json"
-        // eslint-disable-next-line react/no-danger
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(JSON_LD) }}
-      />
+      <JsonLd data={JSON_LD} />
+      <JsonLd data={toolBreadcrumb("Edit PDF", "/tools/edit-pdf")} />
       <AdsProviderStandalone>
         <PdfWorkspace />
       </AdsProviderStandalone>

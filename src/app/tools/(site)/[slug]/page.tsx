@@ -5,6 +5,8 @@ import { ArrowRight, ShieldCheck } from "lucide-react";
 import { TOOLS, getTool, relatedTools } from "@/lib/convert/registry";
 import { ToolConverter } from "@/components/tools/ToolConverter";
 import { InlineAd } from "@/components/ads/InlineAd";
+import { JsonLd } from "@/components/seo/JsonLd";
+import { toolBreadcrumb, webApplication } from "@/lib/seo/structured-data";
 
 const SITE = process.env.NEXT_PUBLIC_SITE_URL ?? "https://notedrift.com";
 
@@ -45,25 +47,17 @@ export default async function ToolPage({
   if (!tool) notFound();
   const related = relatedTools(tool);
 
-  const ld = {
-    "@context": "https://schema.org",
-    "@type": "WebApplication",
-    name: `${tool.title} — NoteDrift`,
-    description: tool.description,
-    applicationCategory: "UtilitiesApplication",
-    operatingSystem: "Any (web browser)",
-    url: `${SITE}/tools/${tool.slug}`,
-    offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
-    isAccessibleForFree: true,
-  };
-
   return (
     <div className="mx-auto w-full max-w-2xl px-4 py-10 sm:py-14">
       {/* Structured data (own content, not user input). */}
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(ld) }}
+      <JsonLd
+        data={webApplication({
+          name: `${tool.title} — NoteDrift`,
+          description: tool.description,
+          path: `/tools/${tool.slug}`,
+        })}
       />
+      <JsonLd data={toolBreadcrumb(tool.title, `/tools/${tool.slug}`)} />
 
       <nav className="mb-5 text-xs text-nd-muted">
         <Link href="/tools" className="hover:text-nd-text">

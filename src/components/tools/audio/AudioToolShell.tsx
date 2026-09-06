@@ -3,6 +3,8 @@ import Link from "next/link";
 import { ArrowRight, ShieldCheck } from "lucide-react";
 import { getAudioTool, relatedAudioTools } from "@/lib/audio/tools";
 import { InlineAd } from "@/components/ads/InlineAd";
+import { JsonLd } from "@/components/seo/JsonLd";
+import { toolBreadcrumb } from "@/lib/seo/structured-data";
 
 // Server-rendered wrapper shared by every audio tool page: breadcrumb, title,
 // one-line tagline, the interactive tool, a privacy note, and cross-links. Keeps
@@ -14,6 +16,7 @@ export function AudioToolShell({ slug, children }: { slug: string; children: Rea
 
   return (
     <div className="mx-auto w-full max-w-2xl px-4 py-8 sm:py-12">
+      <JsonLd data={toolBreadcrumb(tool.title, `/tools/${tool.slug}`)} />
       <nav className="mb-5 text-xs text-nd-muted">
         <Link href="/tools" className="hover:text-nd-text">
           Free Tools
