@@ -1,14 +1,19 @@
 "use client";
 
-// Compact NoteDrift Pro upgrade sheet (Phase 2.0D-C). NOT a pricing page — a small
-// dismissible modal. Free (3 cloud canvases) vs Pro (unlimited cloud canvases), a
-// monthly/yearly choice, and one CTA that opens Stripe-hosted Checkout. Prices are
-// derived from the canonical PRICING constants (never hardcoded). No free trial,
-// no invented discounts — the yearly saving is computed truthfully.
+// Compact NoteDrift Pro conversion sheet. NOT a pricing page — a small dismissible
+// modal. Every benefit is rendered from SHIPPED_PRO_BENEFITS (the truth source), so
+// it can never advertise an unbuilt feature. Prices derive from canonical PRICING;
+// the yearly saving is computed, never hardcoded. No fake original price, no
+// countdown, no fabricated scarcity.
 
 import { useEffect, useState } from "react";
-import { Check, Cloud, Loader2, X } from "lucide-react";
-import { PRICING, annualMonthlyEquivalent, annualSavingsPercent } from "@/lib/plans";
+import { Check, Loader2, X } from "lucide-react";
+import {
+  PRICING,
+  SHIPPED_PRO_BENEFITS,
+  annualMonthlyEquivalent,
+  annualSavingsPercent,
+} from "@/lib/plans";
 import { startCheckout } from "@/lib/billing/client";
 import type { BillingInterval } from "@/lib/billing/types";
 
@@ -17,9 +22,12 @@ const money = (n: number) => `$${n.toFixed(2)}`;
 export function UpgradeDialog({
   onClose,
   onNotice,
+  atLimit = false,
 }: {
   onClose: () => void;
   onNotice: (msg: string) => void;
+  /** Opened at the Free 3-cloud-canvas limit — leads with an earned headline. */
+  atLimit?: boolean;
 }) {
   const [interval, setInterval] = useState<BillingInterval>("yearly");
   const [busy, setBusy] = useState(false);
@@ -33,6 +41,7 @@ export function UpgradeDialog({
 
   const savePct = Math.round(annualSavingsPercent() * 100);
   const yearlyPerMonth = annualMonthlyEquivalent();
+  const price = interval === "monthly" ? `${money(PRICING.monthly)}/month` : `${money(PRICING.annual)}/year`;
 
   async function upgrade() {
     if (busy) return;
@@ -73,36 +82,30 @@ export function UpgradeDialog({
           <X size={16} />
         </button>
 
-        <div className="mb-1 flex items-center gap-2">
-          <span className="nd-gradient flex h-7 items-center rounded-md px-2 text-xs font-semibold text-white">
-            Pro
-          </span>
-          <h2 id={titleId} className="text-base font-semibold text-nd-text">
-            NoteDrift Pro
-          </h2>
-        </div>
-        <p className="text-sm text-nd-muted">
-          Keep <span className="text-nd-text">unlimited cloud canvases</span> and open them on any
-          device. Your local canvases are always unlimited and free.
-        </p>
+        {atLimit && (
+          <p className="mb-3 rounded-lg bg-nd-accent/10 px-3 py-2 text-sm font-medium text-nd-text">
+            You&apos;ve used your 3 free cloud canvases.
+          </p>
+        )}
 
-        {/* Free vs Pro, cloud-count difference only (no future features promised). */}
-        <div className="mt-4 grid grid-cols-2 gap-2 text-sm">
-          <div className="rounded-xl border border-nd-border p-3">
-            <div className="text-xs font-medium uppercase tracking-wide text-nd-muted">Free</div>
-            <div className="mt-1 flex items-center gap-1.5 text-nd-text">
-              <Cloud size={15} className="text-nd-muted" /> 3 cloud canvases
-            </div>
-          </div>
-          <div className="rounded-xl border border-nd-accent/40 bg-nd-accent/5 p-3">
-            <div className="text-xs font-medium uppercase tracking-wide text-nd-accent">Pro</div>
-            <div className="mt-1 flex items-center gap-1.5 text-nd-text">
-              <Check size={15} className="text-emerald-400" /> Unlimited cloud canvases
-            </div>
-          </div>
-        </div>
+        <span className="inline-flex items-center rounded-full border border-nd-accent/40 bg-nd-accent/10 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-nd-accent">
+          Founding price
+        </span>
+        <h2 id={titleId} className="mt-2 text-lg font-semibold text-nd-text">
+          NoteDrift Pro
+        </h2>
+        <p className="mt-1 text-sm text-nd-muted">Keep every canvas, on every device.</p>
 
-        {/* Interval selector */}
+        <ul className="mt-4 space-y-2">
+          {SHIPPED_PRO_BENEFITS.map((b) => (
+            <li key={b} className="flex items-start gap-2.5 text-sm text-nd-text">
+              <Check size={16} className="mt-0.5 shrink-0 text-emerald-400" />
+              <span>{b}</span>
+            </li>
+          ))}
+        </ul>
+
+        {/* Interval selector — annual recommended. */}
         <div className="mt-4 grid grid-cols-2 gap-2">
           <IntervalOption
             selected={interval === "monthly"}
@@ -115,7 +118,8 @@ export function UpgradeDialog({
             onSelect={() => setInterval("yearly")}
             label="Yearly"
             price={`${money(PRICING.annual)}/yr`}
-            note={`≈ ${money(yearlyPerMonth)}/mo · save ~${savePct}%`}
+            note={`${money(yearlyPerMonth)}/mo`}
+            badge={`Save ${savePct}%`}
           />
         </div>
 
@@ -123,20 +127,18 @@ export function UpgradeDialog({
           type="button"
           onClick={upgrade}
           disabled={busy}
-          className="nd-gradient mt-4 flex w-full items-center justify-center gap-2 rounded-lg py-2.5 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-60"
+          className="nd-gradient mt-4 flex w-full items-center justify-center gap-2 rounded-lg py-2.5 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-60"
         >
           {busy ? (
             <>
               <Loader2 size={16} className="animate-spin" /> Opening checkout…
             </>
           ) : (
-            <>Upgrade — {interval === "monthly" ? `${money(PRICING.monthly)}/mo` : `${money(PRICING.annual)}/yr`}</>
+            <>Get Pro — {price}</>
           )}
         </button>
         <p className="mt-2 text-center text-[11px] text-nd-muted">
-          Secure checkout by Stripe. Cancel anytime. No free trial.
-        </p>
-        <p className="mt-1 text-center text-[11px] text-nd-muted">
+          Secure checkout · Cancel anytime ·{" "}
           <a href="/terms" target="_blank" rel="noopener noreferrer" className="hover:text-nd-text hover:underline">
             Terms
           </a>{" "}
@@ -156,12 +158,14 @@ function IntervalOption({
   label,
   price,
   note,
+  badge,
 }: {
   selected: boolean;
   onSelect: () => void;
   label: string;
   price: string;
   note?: string;
+  badge?: string;
 }) {
   return (
     <button
@@ -169,12 +173,15 @@ function IntervalOption({
       onClick={onSelect}
       aria-pressed={selected}
       className={[
-        "rounded-xl border p-3 text-left transition-colors",
-        selected
-          ? "border-nd-accent bg-nd-accent/10"
-          : "border-nd-border hover:bg-white/5",
+        "relative rounded-xl border p-3 text-left transition-colors",
+        selected ? "border-nd-accent bg-nd-accent/10" : "border-nd-border hover:bg-white/5",
       ].join(" ")}
     >
+      {badge && (
+        <span className="absolute -top-2 right-2 rounded-full bg-emerald-500 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+          {badge}
+        </span>
+      )}
       <div className="flex items-center justify-between">
         <span className="text-sm font-medium text-nd-text">{label}</span>
         <span
@@ -187,7 +194,7 @@ function IntervalOption({
         </span>
       </div>
       <div className="mt-1 text-sm text-nd-text">{price}</div>
-      {note && <div className="mt-0.5 text-[11px] text-emerald-400">{note}</div>}
+      {note && <div className="mt-0.5 text-[11px] text-nd-muted">{note}</div>}
     </button>
   );
 }

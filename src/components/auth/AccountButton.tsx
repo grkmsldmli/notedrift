@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { CreditCard, Loader2, LogOut, Sparkles, UserRound } from "lucide-react";
-import { PLAN_LABELS } from "@/lib/plans";
+import { PLAN_LABELS, PRICING } from "@/lib/plans";
 import { useAuth } from "./AuthProvider";
 import { SignInDialog } from "./SignInDialog";
 import { UpgradeDialog } from "../billing/UpgradeDialog";
@@ -174,10 +174,20 @@ export function AccountButton() {
                 setMenu(false);
                 setUpgrade(true);
               }}
-              className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-nd-text transition-colors hover:bg-white/5"
+              className="flex w-full items-center justify-between gap-2 rounded-lg border border-nd-accent/40 bg-nd-accent/5 px-3 py-2 text-left transition-colors hover:bg-nd-accent/10"
             >
-              <Sparkles size={15} className="text-nd-accent" />
-              Upgrade to Pro
+              <span className="flex items-center gap-2.5">
+                <Sparkles size={15} className="text-nd-accent" />
+                <span className="flex flex-col">
+                  <span className="text-sm font-medium text-nd-text">NoteDrift Pro</span>
+                  <span className="text-[11px] text-nd-muted">
+                    Founding ${PRICING.monthly.toFixed(2)}/mo
+                  </span>
+                </span>
+              </span>
+              <span className="nd-gradient rounded-md px-2 py-1 text-xs font-semibold text-white">
+                Upgrade
+              </span>
             </button>
           )}
 

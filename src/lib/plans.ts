@@ -211,3 +211,28 @@ export function annualSavingsPercent(): number {
   const monthlyAnnualized = PRICING.monthly * 12;
   return (monthlyAnnualized - PRICING.annual) / monthlyAnnualized;
 }
+
+/* --------------------------- shipped benefits ----------------------------- */
+// The Entitlements table above gates features and intentionally includes FUTURE
+// capabilities (folders, version history, sharing, pro export formats, AI). Those
+// must NEVER leak into sales copy. These two lists are the SINGLE SOURCE OF TRUTH
+// for what conversion UI may claim — only benefits that are actually shipped and
+// wired to real behavior today. Outcome-framed and verified: unlimited cloud
+// canvases (canAddCloudCanvas) and cross-device cloud sync (the cloud engine) are
+// live; everything else Pro remains future and is deliberately absent here.
+
+/** The only Pro benefits sales UI may render today. */
+export const SHIPPED_PRO_BENEFITS = [
+  "Unlimited cloud canvases",
+  "Open your canvases on any device",
+  "Your cloud canvases stay backed up and in sync",
+  "Support ongoing NoteDrift development",
+] as const;
+
+/** What every Free user already gets, for an honest comparison. */
+export const SHIPPED_FREE_BENEFITS = [
+  "Every drawing & writing tool",
+  "Unlimited local canvases",
+  "PNG export",
+  "3 cloud canvases",
+] as const;

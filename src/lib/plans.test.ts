@@ -10,6 +10,8 @@ import {
   canCreateLocalCanvas,
   canAddCloudCanvas,
   PRICING,
+  SHIPPED_PRO_BENEFITS,
+  SHIPPED_FREE_BENEFITS,
   annualMonthlyEquivalent,
   annualSavingsUsd,
   annualSavingsPercent,
@@ -167,4 +169,30 @@ test("entitlement objects are frozen (immutable at runtime)", () => {
     "use strict";
     e.hdPNG = true;
   });
+});
+
+/* -------------------- shipped-benefit truth source ------------------------ */
+
+test("SHIPPED_PRO_BENEFITS never advertises an UNBUILT future feature", () => {
+  // Guards sales copy: if someone pastes a future entitlement (folders, version
+  // history, sharing, collaboration, pro export formats, AI…) into the list, this
+  // fails. Only shipped, wired benefits may be sold.
+  const FORBIDDEN =
+    /folder|history|version|collaborat|shar|svg|4k|transparent|multi-?page|\bpdf\b|\bai\b|watermark|sso|export format|custom size|selection export|hd png/i;
+  assert.ok(SHIPPED_PRO_BENEFITS.length >= 1);
+  for (const b of SHIPPED_PRO_BENEFITS) {
+    assert.equal(typeof b, "string");
+    assert.ok(b.length > 0);
+    assert.equal(FORBIDDEN.test(b), false, `benefit advertises an unbuilt feature: "${b}"`);
+  }
+  // The primary claim must be backed by a real, wired entitlement.
+  assert.equal(limitOf("pro", "cloudCanvasLimit"), Number.POSITIVE_INFINITY);
+  assert.ok(SHIPPED_PRO_BENEFITS.some((b) => /unlimited cloud/i.test(b)));
+});
+
+test("SHIPPED_FREE_BENEFITS reflects the real Free tier (3 cloud, PNG, unlimited local)", () => {
+  assert.equal(limitOf("free", "cloudCanvasLimit"), 3);
+  assert.equal(can("free", "standardPNG"), true);
+  assert.ok(SHIPPED_FREE_BENEFITS.some((b) => /3 cloud/i.test(b)));
+  assert.ok(SHIPPED_FREE_BENEFITS.some((b) => /unlimited local/i.test(b)));
 });

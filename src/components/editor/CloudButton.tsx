@@ -42,6 +42,7 @@ export function CloudButton({
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [upgradeOpen, setUpgradeOpen] = useState(false);
+  const [atLimit, setAtLimit] = useState(false);
 
   useEffect(() => onAuthChange((u) => setSignedIn(!!u)), []);
   useEffect(() => getCloudEngine().subscribe(() => force((n) => n + 1)), []);
@@ -62,12 +63,13 @@ export function CloudButton({
     setBusy(false);
     setOpen(false);
     if (!res.ok) {
-      if (res.kind === "limit") {
-        onNotice("You already have 3 cloud canvases. Local canvases stay unlimited.");
-        // Offer the upgrade at the moment they hit the Free limit (§43).
-        if (!isPro) setUpgradeOpen(true);
+      if (res.kind === "limit" && !isPro) {
+        // The strongest intent moment: show ONE focused upgrade state, never a
+        // toast covered by a modal (§13B).
+        setAtLimit(true);
+        setUpgradeOpen(true);
       } else {
-        onNotice(res.message);
+        onNotice(res.kind === "limit" ? "You're at 3 cloud canvases." : res.message);
       }
     }
   }
@@ -150,7 +152,7 @@ export function CloudButton({
               Cloud canvases…
             </MenuItem>
             {!isPro && (
-              <MenuItem icon={<Sparkles size={16} className="text-nd-accent" />} onClick={() => { setOpen(false); setUpgradeOpen(true); }}>
+              <MenuItem icon={<Sparkles size={16} className="text-nd-accent" />} onClick={() => { setOpen(false); setAtLimit(false); setUpgradeOpen(true); }}>
                 Upgrade to Pro
               </MenuItem>
             )}
@@ -159,7 +161,14 @@ export function CloudButton({
       )}
 
       {upgradeOpen && (
-        <UpgradeDialog onClose={() => setUpgradeOpen(false)} onNotice={onNotice} />
+        <UpgradeDialog
+          atLimit={atLimit}
+          onClose={() => {
+            setUpgradeOpen(false);
+            setAtLimit(false);
+          }}
+          onNotice={onNotice}
+        />
       )}
     </div>
   );
