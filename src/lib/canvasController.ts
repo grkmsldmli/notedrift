@@ -68,6 +68,9 @@ import {
   sceneBoundsOf,
   type Pt,
 } from "./connectors";
+import { outputPixels, resolveScale } from "./export/scale";
+import type { RasterRequest, RasterResult } from "./export/types";
+import { dataUrlToBlob } from "./export/download";
 import type {
   Anchor,
   ArrowHead,
@@ -3435,6 +3438,93 @@ export class CanvasController {
     document.body.appendChild(a);
     a.click();
     a.remove();
+  }
+
+  /** The content (or selection) size in logical px at 1× — used to seed the
+   *  custom-size UI. null when scope="selection" and nothing is selected. */
+  getExportContentSize(scope: "canvas" | "selection"): { width: number; height: number } | null {
+    const objects =
+      scope === "selection" ? this.canvas.getActiveObjects() : this.canvas.getObjects();
+    if (scope === "selection" && objects.length === 0) return null;
+    const pad = scope === "selection" ? 24 : 48;
+    if (objects.length === 0) {
+      return { width: Math.round(this.canvas.getWidth()), height: Math.round(this.canvas.getHeight()) };
+    }
+    const b = this.contentBounds(objects);
+    return { width: Math.max(1, Math.ceil(b.width + pad * 2)), height: Math.max(1, Math.ceil(b.height + pad * 2)) };
+  }
+
+  /** The one low-level raster export primitive. Renders the whole canvas or just
+   *  the current selection at a requested size/background to a PNG Blob, then
+   *  RESTORES the live canvas exactly (dimensions, viewport, background, object
+   *  visibility, grid) — even if rendering throws. Never mutates object positions.
+   *  Returns null on failure or an empty selection. */
+  async exportRasterBlob(req: RasterRequest): Promise<RasterResult | null> {
+    const c = this.canvas;
+    const selection = req.scope === "selection";
+    const targets = selection ? c.getActiveObjects() : c.getObjects();
+    if (selection && targets.length === 0) return null;
+
+    const prevVpt = [...c.viewportTransform] as fabric.TMat2D;
+    const prevBg = c.backgroundColor;
+    const prevW = c.getWidth();
+    const prevH = c.getHeight();
+    const hidden: fabric.FabricObject[] = [];
+
+    c.discardActiveObject();
+    this.activeGuides = [];
+    this.anchorHost = null;
+
+    // Selection export: temporarily hide everything not selected (never move it).
+    if (selection) {
+      const keep = new Set(targets);
+      for (const o of c.getObjects()) {
+        if (!keep.has(o) && o.visible !== false) {
+          o.visible = false;
+          hidden.push(o);
+        }
+      }
+    }
+
+    const pad = req.padding ?? (selection ? 24 : 48);
+    let result: RasterResult | null = null;
+    try {
+      let boundsLeft = 0;
+      let boundsTop = 0;
+      let rawW: number;
+      let rawH: number;
+      if (targets.length === 0) {
+        // Empty canvas: a blank page the size the user currently sees.
+        rawW = prevW;
+        rawH = prevH;
+      } else {
+        const b = this.contentBounds(targets);
+        boundsLeft = b.left - pad;
+        boundsTop = b.top - pad;
+        rawW = b.width + pad * 2;
+        rawH = b.height + pad * 2;
+      }
+
+      const scale = resolveScale(rawW, rawH, req);
+      const { width, height } = outputPixels(rawW, rawH, scale);
+
+      c.setDimensions({ width, height });
+      c.setViewportTransform([scale, 0, 0, scale, -boundsLeft * scale, -boundsTop * scale]);
+      c.backgroundColor = req.background === "white" ? "#ffffff" : "";
+      c.renderAll();
+      const dataUrl = c.toDataURL({ format: "png", multiplier: 1, enableRetinaScaling: false });
+      result = { blob: dataUrlToBlob(dataUrl), width, height };
+    } catch {
+      result = null;
+    } finally {
+      for (const o of hidden) o.visible = true;
+      c.setDimensions({ width: prevW, height: prevH });
+      c.setViewportTransform(prevVpt);
+      c.backgroundColor = prevBg;
+      this.updateGrid();
+      c.renderAll();
+    }
+    return result;
   }
 
   private contentBounds(objects: fabric.FabricObject[]) {

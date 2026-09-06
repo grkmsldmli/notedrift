@@ -16,19 +16,36 @@ import {
 } from "@/lib/plans";
 import { startCheckout } from "@/lib/billing/client";
 import type { BillingInterval } from "@/lib/billing/types";
+import type { UpgradeContext } from "@/lib/export/types";
 
 const money = (n: number) => `$${n.toFixed(2)}`;
+
+/** The one short opening line, by where the upgrade was triggered. */
+const CONTEXT_LINE: Record<UpgradeContext, string> = {
+  general: "",
+  "cloud-limit": "You've reached the Free cloud limit.",
+  "hd-export": "Export crisp high-resolution images with Pro.",
+  "transparent-export": "Export a transparent background with Pro.",
+  "svg-export": "Export scalable SVG with Pro.",
+  "selection-export": "Export just your selection with Pro.",
+  "multi-page-pdf": "Export all your pages in one PDF with Pro.",
+  "custom-size": "Export at a custom size with Pro.",
+};
 
 export function UpgradeDialog({
   onClose,
   onNotice,
   atLimit = false,
+  context = "general",
 }: {
   onClose: () => void;
   onNotice: (msg: string) => void;
   /** Opened at the Free 3-cloud-canvas limit — leads with an earned headline. */
   atLimit?: boolean;
+  /** Where the upgrade was triggered — steers only the opening line. */
+  context?: UpgradeContext;
 }) {
+  const opening = atLimit ? CONTEXT_LINE["cloud-limit"] : CONTEXT_LINE[context];
   const [interval, setInterval] = useState<BillingInterval>("yearly");
   const [busy, setBusy] = useState(false);
   const titleId = "nd-upgrade-title";
@@ -82,9 +99,9 @@ export function UpgradeDialog({
           <X size={16} />
         </button>
 
-        {atLimit && (
+        {opening && (
           <p className="mb-3 rounded-lg bg-nd-accent/10 px-3 py-2 text-sm font-medium text-nd-text">
-            You&apos;ve used your 3 free cloud canvases.
+            {opening}
           </p>
         )}
 

@@ -20,6 +20,7 @@ import {
   Wrench,
 } from "lucide-react";
 import type { PageMeta } from "@/lib/types";
+import type { ExportItem, ExportKind } from "@/lib/export/types";
 import { IconButton } from "../ui/IconButton";
 import { AccountButton } from "../auth/AccountButton";
 import { NavArrows, BrandHome } from "@/components/nav/HeaderNav";
@@ -41,7 +42,10 @@ interface TopBarProps {
   onNewPage: () => void;
   onUndo: () => void;
   onRedo: () => void;
-  onExport: () => void;
+  /** Resolved export menu rows (locked/disabled computed from the plan). */
+  exportItems: ExportItem[];
+  onExport: (kind: ExportKind) => void;
+  exporting: boolean;
   onSwitchPage: (id: string) => void;
   onDeletePage: (id: string) => void;
   onRenamePage: (id: string, title: string) => void;
@@ -70,7 +74,9 @@ export const TopBar = memo(function TopBar(props: TopBarProps) {
     onNewPage,
     onUndo,
     onRedo,
+    exportItems,
     onExport,
+    exporting,
     onSwitchPage,
     onDeletePage,
     onRenamePage,
@@ -79,6 +85,7 @@ export const TopBar = memo(function TopBar(props: TopBarProps) {
   const [pagesOpen, setPagesOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [confirmId, setConfirmId] = useState<string | null>(null);
@@ -87,18 +94,50 @@ export const TopBar = memo(function TopBar(props: TopBarProps) {
     setPagesOpen(false);
     setMenuOpen(false);
     setToolsOpen(false);
+    setExportOpen(false);
     setConfirmId(null);
   };
 
-  // Escape closes the Tools dropdown (its outside click is handled by an overlay).
+  /** Shared export-menu rows (used by the desktop dropdown and the mobile More
+   *  menu). Locked Pro rows stay visible with a Pro badge and open the contextual
+   *  upgrade sheet; a disabled row (e.g. selection export with nothing selected)
+   *  is non-interactive. */
+  const exportRows = (extraClass = "") =>
+    exportItems.map((it) => (
+      <button
+        key={it.kind}
+        type="button"
+        role="menuitem"
+        disabled={it.disabled}
+        onClick={() => {
+          onExport(it.kind);
+          closeAll();
+        }}
+        className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-nd-text transition-colors hover:bg-white/5 disabled:pointer-events-none disabled:opacity-40 ${extraClass}`}
+      >
+        <Download size={16} className="text-nd-muted" />
+        <span className="flex-1 text-left">{it.label}</span>
+        {it.hint && <span className="text-[11px] text-nd-muted">{it.hint}</span>}
+        {it.locked && (
+          <span className="nd-gradient rounded px-1.5 py-0.5 text-[10px] font-semibold text-white">
+            Pro
+          </span>
+        )}
+      </button>
+    ));
+
+  // Escape closes the Tools / Export dropdowns (outside click handled by overlays).
   useEffect(() => {
-    if (!toolsOpen) return;
+    if (!toolsOpen && !exportOpen) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setToolsOpen(false);
+      if (e.key === "Escape") {
+        setToolsOpen(false);
+        setExportOpen(false);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [toolsOpen]);
+  }, [toolsOpen, exportOpen]);
 
   const startEditing = () => {
     closeAll();
@@ -341,15 +380,37 @@ export const TopBar = memo(function TopBar(props: TopBarProps) {
             disabled={!canRedo}
           />
         </span>
-        {/* Redundant with the "More" menu's Export — hide on phones so the
-            account control fits without crowding the title (see Phase 1.6H). */}
-        <span className="hidden sm:block">
+        {/* Export dropdown (desktop/tablet). On phones the same rows live in the
+            More menu so the header stays uncrowded. */}
+        <div className="relative hidden sm:block">
           <IconButton
             icon={<Download size={18} />}
-            label="Export PNG"
-            onClick={onExport}
+            label="Export"
+            active={exportOpen}
+            onClick={() => {
+              setPagesOpen(false);
+              setMenuOpen(false);
+              setToolsOpen(false);
+              setConfirmId(null);
+              setExportOpen((o) => !o);
+            }}
           />
-        </span>
+          {exportOpen && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={closeAll} />
+              <div
+                role="menu"
+                className="nd-scroll absolute right-0 top-full z-50 mt-1.5 max-h-[70vh] w-60 overflow-y-auto rounded-xl border border-nd-border bg-nd-surface p-1 shadow-2xl"
+              >
+                <div className="flex items-center justify-between px-2.5 py-1.5 text-[11px] font-medium uppercase tracking-wider text-nd-muted">
+                  <span>Export</span>
+                  {exporting && <span className="text-nd-accent">Preparing…</span>}
+                </div>
+                {exportRows()}
+              </div>
+            </>
+          )}
+        </div>
 
         <div className="relative">
           <IconButton
@@ -400,17 +461,13 @@ export const TopBar = memo(function TopBar(props: TopBarProps) {
                   <Pencil size={16} className="text-nd-muted" />
                   <span className="flex-1 text-left">Rename page</span>
                 </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    onExport();
-                    closeAll();
-                  }}
-                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-nd-text transition-colors hover:bg-white/5"
-                >
-                  <Download size={16} className="text-nd-muted" />
-                  <span className="flex-1 text-left">Export PNG</span>
-                </button>
+                {/* Export rows — phones only (desktop/tablet use the Export
+                    dropdown in the header). */}
+                <div className="my-1 h-px bg-nd-border sm:hidden" />
+                <div className="px-2.5 pb-1 pt-1 text-[11px] font-medium uppercase tracking-wider text-nd-muted sm:hidden">
+                  Export{exporting ? " · Preparing…" : ""}
+                </div>
+                {exportRows("sm:hidden")}
                 <Link
                   href="/tools/edit-pdf"
                   onClick={closeAll}

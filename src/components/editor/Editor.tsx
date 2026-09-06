@@ -35,6 +35,19 @@ import { DRAW_TOOLS } from "@/lib/brush/materials";
 import { ensureCanvasFonts } from "@/lib/fonts";
 import { getCloudEngine } from "@/lib/cloud/engine";
 import { onAuthChange } from "@/lib/auth/client";
+import { useAuth } from "../auth/AuthProvider";
+import { UpgradeDialog } from "../billing/UpgradeDialog";
+import { can } from "@/lib/plans";
+import { downloadBlob } from "@/lib/export/download";
+import { exportSinglePagePdf } from "@/lib/export/pdf";
+import {
+  EXPORT_CAPABILITY,
+  EXPORT_MENU,
+  KIND_UPGRADE_CONTEXT,
+  type ExportItem,
+  type ExportKind,
+  type UpgradeContext,
+} from "@/lib/export/types";
 import { CloudButton } from "./CloudButton";
 import { CloudCanvasesDialog } from "./CloudCanvasesDialog";
 import { CheckoutActivation } from "../billing/CheckoutActivation";
@@ -61,6 +74,10 @@ const INITIAL_STATE: EditorState = {
   eraserMode: "object",
   isEmpty: true,
 };
+
+// Export kinds that are actually wired. Grows as each professional export lands;
+// the menu only ever shows implemented exports so nothing offered can fail.
+const IMPLEMENTED_EXPORTS = new Set<ExportKind>(["png-standard", "pdf-standard"]);
 
 const TOOL_KEYS: Record<string, Tool> = {
   v: "select",
@@ -609,12 +626,63 @@ export default function Editor() {
   const onZoomOut = useCallback(() => controllerRef.current?.zoomOut(), []);
   const onReset = useCallback(() => controllerRef.current?.resetZoom(), []);
 
-  const onExport = useCallback(() => {
-    const title =
-      pagesRef.current.find((p) => p.id === currentIdRef.current)?.title ??
-      "notedrift";
-    controllerRef.current?.exportPNG(slugify(title));
-  }, []);
+  /* --------------------------------- export --------------------------------- */
+
+  const { plan } = useAuth();
+  const [exporting, setExporting] = useState(false);
+  const [exportUpgrade, setExportUpgrade] = useState<UpgradeContext | null>(null);
+
+  const exportBase = useCallback(
+    () => slugify(pagesRef.current.find((p) => p.id === currentIdRef.current)?.title ?? "notedrift"),
+    [],
+  );
+
+  // Run an already-entitlement-checked export. Restores canvas state internally.
+  const runExport = useCallback(
+    async (kind: ExportKind) => {
+      const c = controllerRef.current;
+      if (!c || exporting) return;
+      c.flush();
+      setExporting(true);
+      try {
+        const base = exportBase();
+        if (kind === "png-standard") {
+          const r = await c.exportRasterBlob({ scope: "canvas", background: "white", scale: 2 });
+          if (!r) showNotice("Couldn't export — the canvas may be too large.");
+          else downloadBlob(r.blob, `${base}.png`);
+        } else if (kind === "pdf-standard") {
+          const r = await c.exportRasterBlob({ scope: "canvas", background: "white", scale: 2 });
+          if (!r) showNotice("Couldn't create the PDF — the canvas may be too large.");
+          else await exportSinglePagePdf(r, base);
+        }
+      } catch {
+        showNotice("Couldn't export. Please try again.");
+      } finally {
+        setExporting(false);
+      }
+    },
+    [exporting, exportBase, showNotice],
+  );
+
+  // Entry point from the menu: run when entitled, else open the contextual upgrade.
+  const onExportKind = useCallback(
+    (kind: ExportKind) => {
+      if (!can(plan, EXPORT_CAPABILITY[kind])) {
+        setExportUpgrade(KIND_UPGRADE_CONTEXT[kind]);
+        return;
+      }
+      void runExport(kind);
+    },
+    [plan, runExport],
+  );
+
+  const exportItems: ExportItem[] = EXPORT_MENU.filter((m) => IMPLEMENTED_EXPORTS.has(m.kind)).map(
+    (m) => ({
+      ...m,
+      locked: m.pro && !can(plan, EXPORT_CAPABILITY[m.kind]),
+      disabled: m.kind === "png-selection" && !state.hasSelection,
+    }),
+  );
 
   const onSetPageStyle = useCallback((style: CanvasStyle) => {
     const id = currentIdRef.current;
@@ -788,7 +856,9 @@ export default function Editor() {
         onNewPage={handleNewPage}
         onUndo={onUndo}
         onRedo={onRedo}
-        onExport={onExport}
+        exportItems={exportItems}
+        onExport={onExportKind}
+        exporting={exporting}
         onSwitchPage={handleSwitchPage}
         onDeletePage={handleDeletePage}
         onRenamePage={handleRenamePage}
@@ -920,6 +990,14 @@ export default function Editor() {
             setCloudDialogOpen(false);
             void openCloudCanvas(cloudId);
           }}
+          onNotice={showNotice}
+        />
+      )}
+
+      {exportUpgrade && (
+        <UpgradeDialog
+          context={exportUpgrade}
+          onClose={() => setExportUpgrade(null)}
           onNotice={showNotice}
         />
       )}
