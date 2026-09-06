@@ -62,6 +62,7 @@ import { ObjectToolbar, type LayerOp } from "./ObjectToolbar";
 import { CropBar } from "./CropBar";
 import { NodeQuickAdd } from "./NodeQuickAdd";
 import { EmptyCanvasHint, QuickStart } from "./FirstRun";
+import { CustomSizeDialog } from "./CustomSizeDialog";
 import { Logo } from "./Logo";
 
 const INITIAL_STATE: EditorState = {
@@ -86,6 +87,8 @@ const IMPLEMENTED_EXPORTS = new Set<ExportKind>([
   "png-4k",
   "png-transparent",
   "png-selection",
+  "svg",
+  "custom",
 ]);
 
 // Raster (PNG) export requests per kind. HD/4K target a longest edge; transparent
@@ -658,6 +661,7 @@ export default function Editor() {
   const { plan } = useAuth();
   const [exporting, setExporting] = useState(false);
   const [exportUpgrade, setExportUpgrade] = useState<UpgradeContext | null>(null);
+  const [customSize, setCustomSize] = useState<{ width: number; height: number } | null>(null);
 
   const exportBase = useCallback(
     () => slugify(pagesRef.current.find((p) => p.id === currentIdRef.current)?.title ?? "notedrift"),
@@ -677,6 +681,10 @@ export default function Editor() {
           const r = await c.exportRasterBlob({ scope: "canvas", background: "white", scale: 2 });
           if (!r) showNotice("Couldn't create the PDF — the canvas may be too large.");
           else await exportSinglePagePdf(r, base);
+        } else if (kind === "svg") {
+          const svg = c.exportSvgString("canvas");
+          if (!svg) showNotice("Couldn't export the SVG. Please try again.");
+          else downloadBlob(new Blob([svg], { type: "image/svg+xml" }), `${base}.svg`);
         } else {
           const req = RASTER_REQUEST[kind];
           if (!req) return;
@@ -700,11 +708,43 @@ export default function Editor() {
     [exporting, exportBase, showNotice],
   );
 
+  // Custom size: render at explicit pixels (may stretch), then download.
+  const runCustomExport = useCallback(
+    async (width: number, height: number, transparent: boolean) => {
+      const c = controllerRef.current;
+      if (!c || exporting) return;
+      c.flush();
+      setCustomSize(null);
+      setExporting(true);
+      try {
+        const r = await c.exportRasterBlob({
+          scope: "canvas",
+          background: transparent ? "transparent" : "white",
+          targetWidth: width,
+          targetHeight: height,
+        });
+        if (!r) showNotice("Export is too large for this device. Try a smaller size.");
+        else downloadBlob(r.blob, `${exportBase()}-${width}x${height}.png`);
+      } catch {
+        showNotice("Couldn't export. Please try again.");
+      } finally {
+        setExporting(false);
+      }
+    },
+    [exporting, exportBase, showNotice],
+  );
+
   // Entry point from the menu: run when entitled, else open the contextual upgrade.
+  // "custom" opens the size sheet rather than exporting immediately.
   const onExportKind = useCallback(
     (kind: ExportKind) => {
       if (!can(plan, EXPORT_CAPABILITY[kind])) {
         setExportUpgrade(KIND_UPGRADE_CONTEXT[kind]);
+        return;
+      }
+      if (kind === "custom") {
+        const size = controllerRef.current?.getExportContentSize("canvas");
+        if (size) setCustomSize(size);
         return;
       }
       void runExport(kind);
@@ -1035,6 +1075,14 @@ export default function Editor() {
           context={exportUpgrade}
           onClose={() => setExportUpgrade(null)}
           onNotice={showNotice}
+        />
+      )}
+
+      {customSize && (
+        <CustomSizeDialog
+          content={customSize}
+          onExport={(w, h, transparent) => void runCustomExport(w, h, transparent)}
+          onClose={() => setCustomSize(null)}
         />
       )}
 

@@ -5,6 +5,7 @@ import {
   MAX_EXPORT_EDGE,
   PNG_TARGET_LONG_EDGE,
   clampDimension,
+  fitPixelBudget,
   outputPixels,
   pairedDimension,
   resolveScale,
@@ -50,6 +51,14 @@ test("clampDimension: safe range + garbage handling", () => {
   assert.equal(clampDimension(0), 1);
   assert.equal(clampDimension(999999), MAX_EXPORT_EDGE);
   assert.equal(clampDimension(NaN), 1);
+});
+
+test("fitPixelBudget: passes small sizes through, scales huge ones under budget", () => {
+  assert.deepEqual(fitPixelBudget(1000, 800), { width: 1000, height: 800 });
+  const big = fitPixelBudget(12000, 12000); // 144M > 80M budget
+  assert.ok(big.width * big.height <= 80_000_000 + 1);
+  // ratio preserved (square stays square)
+  assert.equal(big.width, big.height);
 });
 
 test("pairedDimension: maintains aspect ratio both ways", () => {

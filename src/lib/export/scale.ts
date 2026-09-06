@@ -58,6 +58,16 @@ export function clampDimension(px: number): number {
   return clampInt(px, 1, MAX_EXPORT_EDGE);
 }
 
+/** Scale an explicit width×height down (preserving its ratio) so the total pixel
+ *  count stays within budget. Used for custom-size exports, which may stretch. */
+export function fitPixelBudget(width: number, height: number): { width: number; height: number } {
+  const w = clampDimension(width);
+  const h = clampDimension(height);
+  if (w * h <= MAX_EXPORT_PIXELS) return { width: w, height: h };
+  const factor = Math.sqrt(MAX_EXPORT_PIXELS / (w * h));
+  return { width: clampInt(w * factor, 1, MAX_EXPORT_EDGE), height: clampInt(h * factor, 1, MAX_EXPORT_EDGE) };
+}
+
 /** Given a content aspect (rawW/rawH) and a locked edit to width or height,
  *  compute the paired dimension when aspect is maintained. */
 export function pairedDimension(

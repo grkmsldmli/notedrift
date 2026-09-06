@@ -68,7 +68,7 @@ import {
   sceneBoundsOf,
   type Pt,
 } from "./connectors";
-import { outputPixels, resolveScale } from "./export/scale";
+import { clampDimension, fitPixelBudget, outputPixels, resolveScale } from "./export/scale";
 import type { RasterRequest, RasterResult } from "./export/types";
 import { dataUrlToBlob } from "./export/download";
 import type {
@@ -3505,11 +3505,25 @@ export class CanvasController {
         rawH = b.height + pad * 2;
       }
 
-      const scale = resolveScale(rawW, rawH, req);
-      const { width, height } = outputPixels(rawW, rawH, scale);
+      let width: number;
+      let height: number;
+      let sx: number;
+      let sy: number;
+      if (req.targetWidth && req.targetHeight) {
+        // Custom size: explicit output pixels; may stretch (non-uniform) when the
+        // requested ratio differs from the content's.
+        ({ width, height } = fitPixelBudget(clampDimension(req.targetWidth), clampDimension(req.targetHeight)));
+        sx = width / rawW;
+        sy = height / rawH;
+      } else {
+        const scale = resolveScale(rawW, rawH, req);
+        ({ width, height } = outputPixels(rawW, rawH, scale));
+        sx = scale;
+        sy = scale;
+      }
 
       c.setDimensions({ width, height });
-      c.setViewportTransform([scale, 0, 0, scale, -boundsLeft * scale, -boundsTop * scale]);
+      c.setViewportTransform([sx, 0, 0, sy, -boundsLeft * sx, -boundsTop * sy]);
       c.backgroundColor = req.background === "white" ? "#ffffff" : "";
       c.renderAll();
       const dataUrl = c.toDataURL({ format: "png", multiplier: 1, enableRetinaScaling: false });
@@ -3525,6 +3539,57 @@ export class CanvasController {
       c.renderAll();
     }
     return result;
+  }
+
+  /** SVG of the whole canvas or the current selection, cropped to a tight viewBox.
+   *  Vector objects stay vector; embedded raster images stay embedded. Restores
+   *  object visibility afterward. Returns null on an empty selection or failure. */
+  exportSvgString(scope: "canvas" | "selection"): string | null {
+    const c = this.canvas;
+    const selection = scope === "selection";
+    const targets = selection ? c.getActiveObjects() : c.getObjects();
+    if (selection && targets.length === 0) return null;
+
+    const hidden: fabric.FabricObject[] = [];
+    c.discardActiveObject();
+    this.activeGuides = [];
+    this.anchorHost = null;
+    if (selection) {
+      const keep = new Set(targets);
+      for (const o of c.getObjects()) {
+        if (!keep.has(o) && o.visible !== false) {
+          o.visible = false;
+          hidden.push(o);
+        }
+      }
+    }
+
+    const pad = selection ? 24 : 48;
+    let svg: string | null = null;
+    try {
+      let x = 0;
+      let y = 0;
+      let w = c.getWidth();
+      let h = c.getHeight();
+      if (targets.length > 0) {
+        const b = this.contentBounds(targets);
+        x = b.left - pad;
+        y = b.top - pad;
+        w = b.width + pad * 2;
+        h = b.height + pad * 2;
+      }
+      svg = c.toSVG({
+        viewBox: { x, y, width: Math.round(w), height: Math.round(h) },
+        width: `${Math.round(w)}`,
+        height: `${Math.round(h)}`,
+      });
+    } catch {
+      svg = null;
+    } finally {
+      for (const o of hidden) o.visible = true;
+      c.renderAll();
+    }
+    return svg;
   }
 
   private contentBounds(objects: fabric.FabricObject[]) {
