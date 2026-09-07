@@ -380,7 +380,12 @@ export class CanvasController {
   private lastDist = 1;
   private canvasRect: DOMRect | null = null;
   private penSeen = false; // a stylus has been used → treat fingers as navigation
-  private fingerPan: { id: number; last: Pt } | null = null;
+  // A dedicated single-pointer pan of the viewport. Used by the Hand tool (for a
+  // finger OR a stylus) and by the finger-after-stylus palm-rejection path in a
+  // drawing tool. Named `pointerPan` (not `fingerPan`) because it now serves pen
+  // and touch alike. While it is active the pointer is captured and its events are
+  // fully intercepted from Fabric, so a pan can NEVER select/move/erase/draw.
+  private pointerPan: { id: number; last: Pt } | null = null;
 
   // Connectors
   private anchorHost: fabric.FabricObject | null = null;
@@ -3326,7 +3331,7 @@ export class CanvasController {
     this.connectDrag = null;
     this.pendingConnect = null;
     this.pendingReassign = null;
-    this.fingerPan = null;
+    this.pointerPan = null;
   }
 
   loadDoc(doc: CanvasDoc | undefined): Promise<void> {
@@ -3970,35 +3975,91 @@ export class CanvasController {
     this.abortActiveInteraction();
   }
 
-  private onDomPointerDown = (e: PointerEvent): void => {
-    if (e.pointerType === "pen") {
-      this.penSeen = true;
-      return; // let Fabric draw/select with the stylus
+  /** Begin a dedicated single-pointer viewport pan, fully owning the pointer via
+   *  capture so Fabric never sees it. Works for a finger OR a stylus. */
+  private startPointerPan(e: PointerEvent): void {
+    e.stopPropagation();
+    e.preventDefault();
+    // Capture on the element the pointer listeners live on (paperEl), so a pan
+    // keeps receiving move/up even if the finger/stylus leaves the canvas bounds.
+    try {
+      this.paperEl.setPointerCapture(e.pointerId);
+    } catch {
+      /* pointer capture is best-effort */
     }
-    if (e.pointerType !== "touch") return; // mouse → unchanged desktop path
+    this.pointerPan = { id: e.pointerId, last: { x: e.clientX, y: e.clientY } };
+  }
 
-    this.touchPoints.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  /** Tear down any active single-pointer pan and release its capture. */
+  private endActivePointerPan(): void {
+    if (!this.pointerPan) return;
+    const id = this.pointerPan.id;
+    this.pointerPan = null;
+    try {
+      this.paperEl.releasePointerCapture(id);
+    } catch {
+      /* capture may already be gone */
+    }
+  }
 
-    if (this.touchPoints.size >= 2) {
-      // Second finger → intercept before Fabric engages it, start pan/pinch.
+  private onDomPointerDown = (e: PointerEvent): void => {
+    // Mouse keeps the existing desktop path: Fabric's mouse:down owns Hand-pan,
+    // space-pan and middle-button pan. Only touch + pen are routed here.
+    if (e.pointerType === "mouse") return;
+
+    const touch = e.pointerType === "touch";
+    if (e.pointerType === "pen") this.penSeen = true;
+    if (touch) this.touchPoints.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    // A second finger upgrades to the two-finger pinch/pan gesture. Cancel any
+    // in-progress single-pointer pan first so it can't fight the gesture.
+    if (touch && this.touchPoints.size >= 2) {
       e.stopPropagation();
       e.preventDefault();
+      this.endActivePointerPan();
       this.beginGesture();
       return;
     }
 
-    // Single finger. In any drawing mode, once a stylus has been seen, a finger
-    // navigates (pans) instead of drawing — the best web-safe palm rejection.
-    if (isDrawTool(this.tool) && this.penSeen) {
-      e.stopPropagation();
-      e.preventDefault();
-      this.fingerPan = { id: e.pointerId, last: { x: e.clientX, y: e.clientY } };
+    // HAND tool = viewport navigation ONLY, for a finger OR a stylus. Intercept
+    // the pointer BEFORE Fabric can treat it as object interaction, so it can
+    // never select / move / erase / draw / mutate history — it can only pan.
+    if (this.tool === "hand") {
+      this.startPointerPan(e);
+      return;
     }
-    // Otherwise Fabric handles the single touch per the active tool.
+
+    // In a drawing tool, once a stylus has been seen a bare finger navigates
+    // (pans) rather than draws — the best web-safe palm rejection. The stylus
+    // itself keeps drawing (falls through to Fabric below).
+    if (touch && isDrawTool(this.tool) && this.penSeen) {
+      this.startPointerPan(e);
+      return;
+    }
+    // Otherwise Fabric handles the single pointer per the active tool (a stylus
+    // draws/selects; a finger in select/eraser/etc. acts as that tool).
   };
 
   private onDomPointerMove = (e: PointerEvent): void => {
-    if (e.pointerType !== "touch") return;
+    if (e.pointerType === "mouse") return;
+
+    // Active single-pointer pan (Hand tool, or finger-after-stylus). The pointer
+    // is captured, so this fires for touch AND pen until it lifts.
+    if (this.pointerPan && e.pointerId === this.pointerPan.id) {
+      e.stopPropagation();
+      e.preventDefault();
+      const vpt = this.canvas.viewportTransform;
+      vpt[4] += e.clientX - this.pointerPan.last.x;
+      vpt[5] += e.clientY - this.pointerPan.last.y;
+      this.canvas.setViewportTransform(vpt);
+      this.pointerPan.last = { x: e.clientX, y: e.clientY };
+      this.updateGrid();
+      this.emit();
+      return;
+    }
+
+    if (e.pointerType !== "touch") return; // a drawing stylus → Fabric
+
     if (this.touchPoints.has(e.pointerId)) {
       this.touchPoints.set(e.pointerId, { x: e.clientX, y: e.clientY });
     }
@@ -4032,19 +4093,6 @@ export class CanvasController {
       return;
     }
 
-    if (this.fingerPan && e.pointerId === this.fingerPan.id) {
-      e.stopPropagation();
-      e.preventDefault();
-      const vpt = this.canvas.viewportTransform;
-      vpt[4] += e.clientX - this.fingerPan.last.x;
-      vpt[5] += e.clientY - this.fingerPan.last.y;
-      this.canvas.setViewportTransform(vpt);
-      this.fingerPan.last = { x: e.clientX, y: e.clientY };
-      this.updateGrid();
-      this.emit();
-      return;
-    }
-
     if (this.gestureLatch) {
       e.stopPropagation();
       e.preventDefault();
@@ -4052,14 +4100,18 @@ export class CanvasController {
   };
 
   private onDomPointerUp = (e: PointerEvent): void => {
-    if (e.pointerType !== "touch") return;
-    this.touchPoints.delete(e.pointerId);
+    if (e.pointerType === "mouse") return;
 
-    if (this.fingerPan && e.pointerId === this.fingerPan.id) {
-      this.fingerPan = null;
+    // End a single-pointer pan (touch OR pen) — also fires on pointercancel.
+    if (this.pointerPan && e.pointerId === this.pointerPan.id) {
       e.stopPropagation();
       e.preventDefault();
+      this.endActivePointerPan();
     }
+
+    if (e.pointerType !== "touch") return; // pen → Fabric owns the rest
+
+    this.touchPoints.delete(e.pointerId);
 
     if (this.gestureActive && this.touchPoints.size < 2) {
       this.gestureActive = false;
