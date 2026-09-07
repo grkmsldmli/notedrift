@@ -118,7 +118,7 @@ export function GoogleSignInButton({
 
   return (
     <div
-      className={`mt-4 flex min-h-[40px] justify-center transition-opacity ${
+      className={`nd-gsi mt-4 flex min-h-[40px] justify-center transition-opacity ${
         disabled ? "pointer-events-none opacity-50" : ""
       }`}
       aria-busy={state === "loading"}

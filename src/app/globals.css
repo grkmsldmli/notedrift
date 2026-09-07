@@ -187,3 +187,15 @@ textarea {
   border: 2px solid var(--nd-accent);
   cursor: pointer;
 }
+
+/* Google Identity Services (GIS) sign-in button: on some browsers — notably
+   Safari — GIS paints an OPAQUE WHITE background on the button's own wrapper
+   elements, which shows as a white frame around the blue button on NoteDrift's
+   dark sign-in dialog. Force those wrappers transparent. Class-agnostic structural
+   selectors that target ONLY the two wrapper levels above the button — the blue
+   button itself (deeper) and its small white Google "G" chip are untouched — so
+   this is a no-op on browsers that already render the wrappers transparent. */
+.nd-gsi > div > div,
+.nd-gsi > div > div > div {
+  background-color: transparent !important;
+}
