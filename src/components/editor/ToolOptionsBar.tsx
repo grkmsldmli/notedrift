@@ -293,7 +293,7 @@ export const ToolOptionsBar = memo(function ToolOptionsBar({
           aria-expanded={false}
           aria-label={`${summary.label} settings`}
           title={`${summary.label} settings`}
-          className="flex items-center gap-2 rounded-xl border border-nd-border bg-nd-surface/95 px-2.5 py-1.5 shadow-xl backdrop-blur transition-colors hover:bg-nd-surface"
+          className="nd-hit flex items-center gap-2 rounded-xl border border-nd-border bg-nd-surface/95 px-2.5 py-1.5 shadow-xl backdrop-blur transition-colors hover:bg-nd-surface"
         >
           <span
             className="h-4 w-4 shrink-0 rounded-full border border-white/25"

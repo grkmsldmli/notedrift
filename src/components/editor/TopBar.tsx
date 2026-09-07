@@ -84,7 +84,6 @@ export const TopBar = memo(function TopBar(props: TopBarProps) {
 
   const [pagesOpen, setPagesOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [toolsOpen, setToolsOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -93,7 +92,6 @@ export const TopBar = memo(function TopBar(props: TopBarProps) {
   const closeAll = () => {
     setPagesOpen(false);
     setMenuOpen(false);
-    setToolsOpen(false);
     setExportOpen(false);
     setConfirmId(null);
   };
@@ -126,18 +124,15 @@ export const TopBar = memo(function TopBar(props: TopBarProps) {
       </button>
     ));
 
-  // Escape closes the Tools / Export dropdowns (outside click handled by overlays).
+  // Escape closes the Export dropdown (outside click handled by overlays).
   useEffect(() => {
-    if (!toolsOpen && !exportOpen) return;
+    if (!exportOpen) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setToolsOpen(false);
-        setExportOpen(false);
-      }
+      if (e.key === "Escape") setExportOpen(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [toolsOpen, exportOpen]);
+  }, [exportOpen]);
 
   const startEditing = () => {
     closeAll();
@@ -158,12 +153,6 @@ export const TopBar = memo(function TopBar(props: TopBarProps) {
         {/* Back/forward: hidden on phones so the tight 375px header can't overflow. */}
         <NavArrows className="hidden sm:flex" />
         <BrandHome size={26} wordmarkClassName="hidden sm:inline" />
-        {/* Decorative tagline — desktop only (≥xl). Hidden through the whole
-            tablet band so it never competes with core actions for width. */}
-        <span className="ml-1 hidden text-xs text-nd-muted xl:inline">
-          Open. <span className="nd-gradient-text font-semibold">Think.</span>{" "}
-          Create.
-        </span>
 
         <div className="relative ml-1">
           {editing ? (
@@ -285,75 +274,10 @@ export const TopBar = memo(function TopBar(props: TopBarProps) {
 
       {/* Right: actions */}
       <div className="flex shrink-0 items-center gap-1">
-        {/* Secondary nav — desktop only (≥xl). Across the whole tablet band these
-            move into the More menu, keeping the compact one-row header collision-
-            free. Everything here has a matching entry in More below xl. */}
-        <Link
-          href="/tools/edit-pdf"
-          className="nd-hit hidden items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm text-nd-muted transition-colors hover:bg-white/5 hover:text-nd-text xl:inline-flex"
-        >
-          <FileText size={15} />
-          Edit PDF Files
-        </Link>
-        <Link
-          href="/tools"
-          className="nd-hit mr-0.5 hidden items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm text-nd-muted transition-colors hover:bg-white/5 hover:text-nd-text xl:inline-flex"
-        >
-          <Wrench size={15} />
-          Convert Files
-        </Link>
-
-        {/* Tools dropdown — surfaces the audio utilities. Secondary treatment (not a
-            CTA); hidden below xl, where its items move into the More menu. */}
-        <div className="relative hidden xl:block">
-          <button
-            type="button"
-            aria-haspopup="menu"
-            aria-expanded={toolsOpen}
-            onClick={() => {
-              setPagesOpen(false);
-              setMenuOpen(false);
-              setConfirmId(null);
-              setToolsOpen((o) => !o);
-            }}
-            className="nd-hit inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-sm text-nd-muted transition-colors hover:bg-white/5 hover:text-nd-text"
-          >
-            Tools
-            <ChevronDown size={14} />
-          </button>
-          {toolsOpen && (
-            <>
-              <div className="fixed inset-0 z-40" onClick={closeAll} />
-              <div
-                role="menu"
-                className="absolute right-0 top-full z-50 mt-1.5 w-56 rounded-xl border border-nd-border bg-nd-surface p-1 shadow-2xl"
-              >
-                {AUDIO_LINKS.map(({ href, label, Icon }) => (
-                  <Link
-                    key={href}
-                    href={href}
-                    role="menuitem"
-                    onClick={closeAll}
-                    className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-nd-text transition-colors hover:bg-white/5"
-                  >
-                    <Icon size={16} className="text-nd-muted" />
-                    <span className="flex-1">{label}</span>
-                  </Link>
-                ))}
-                <div className="my-1 h-px bg-nd-border" />
-                <Link
-                  href="/tools"
-                  role="menuitem"
-                  onClick={closeAll}
-                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-nd-text transition-colors hover:bg-white/5"
-                >
-                  <LayoutGrid size={16} className="text-nd-muted" />
-                  <span className="flex-1">View All Tools</span>
-                </Link>
-              </div>
-            </>
-          )}
-        </div>
+        {/* Secondary nav (Edit PDF Files, Convert Files, audio Tools, View All
+            Tools) lives entirely in the More menu — at EVERY width — so the header
+            stays one calm, compact row on tablet and desktop alike. Crossing 1280px
+            no longer re-expands header chrome; a large desktop just gets more canvas. */}
 
         <button
           type="button"
@@ -394,7 +318,6 @@ export const TopBar = memo(function TopBar(props: TopBarProps) {
             onClick={() => {
               setPagesOpen(false);
               setMenuOpen(false);
-              setToolsOpen(false);
               setConfirmId(null);
               setExportOpen((o) => !o);
             }}
@@ -475,7 +398,7 @@ export const TopBar = memo(function TopBar(props: TopBarProps) {
                 <Link
                   href="/tools/edit-pdf"
                   onClick={closeAll}
-                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-nd-text transition-colors hover:bg-white/5 xl:hidden"
+                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-nd-text transition-colors hover:bg-white/5"
                 >
                   <FileText size={16} className="text-nd-muted" />
                   <span className="flex-1 text-left">Edit PDF Files</span>
@@ -483,7 +406,7 @@ export const TopBar = memo(function TopBar(props: TopBarProps) {
                 <Link
                   href="/tools"
                   onClick={closeAll}
-                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-nd-text transition-colors hover:bg-white/5 xl:hidden"
+                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-nd-text transition-colors hover:bg-white/5"
                 >
                   <Wrench size={16} className="text-nd-muted" />
                   <span className="flex-1 text-left">Convert Files</span>
@@ -491,8 +414,8 @@ export const TopBar = memo(function TopBar(props: TopBarProps) {
 
                 {/* Audio tools — here only when the header Tools dropdown is hidden
                     (below xl); flat, no nested submenu. */}
-                <div className="my-1 h-px bg-nd-border xl:hidden" />
-                <div className="px-2.5 pb-1 pt-1 text-[11px] font-medium uppercase tracking-wider text-nd-muted xl:hidden">
+                <div className="my-1 h-px bg-nd-border" />
+                <div className="px-2.5 pb-1 pt-1 text-[11px] font-medium uppercase tracking-wider text-nd-muted">
                   Tools
                 </div>
                 {AUDIO_LINKS.map(({ href, label, Icon }) => (
@@ -500,7 +423,7 @@ export const TopBar = memo(function TopBar(props: TopBarProps) {
                     key={href}
                     href={href}
                     onClick={closeAll}
-                    className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-nd-text transition-colors hover:bg-white/5 xl:hidden"
+                    className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-nd-text transition-colors hover:bg-white/5"
                   >
                     <Icon size={16} className="text-nd-muted" />
                     <span className="flex-1 text-left">{label}</span>
@@ -509,7 +432,7 @@ export const TopBar = memo(function TopBar(props: TopBarProps) {
                 <Link
                   href="/tools"
                   onClick={closeAll}
-                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-nd-text transition-colors hover:bg-white/5 xl:hidden"
+                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-nd-text transition-colors hover:bg-white/5"
                 >
                   <LayoutGrid size={16} className="text-nd-muted" />
                   <span className="flex-1 text-left">View All Tools</span>
