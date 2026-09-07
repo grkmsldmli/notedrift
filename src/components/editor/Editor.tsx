@@ -59,6 +59,7 @@ import { Toolbar } from "./Toolbar";
 import { TopBar } from "./TopBar";
 import { ZoomControls } from "./ZoomControls";
 import { ToolOptionsBar } from "./ToolOptionsBar";
+import { TouchDebugPanel } from "./TouchDebugPanel";
 import { ObjectToolbar, type LayerOp } from "./ObjectToolbar";
 import { CropBar } from "./CropBar";
 import { NodeQuickAdd } from "./NodeQuickAdd";
@@ -147,6 +148,12 @@ export default function Editor() {
   const paperRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const controllerRef = useRef<CanvasController | null>(null);
+  // TEMP real-device diagnostics — mounted only with `?touchdebug=1`.
+  const [touchDebug] = useState(
+    () =>
+      typeof window !== "undefined" &&
+      /[?&]touchdebug=1\b/.test(window.location.search),
+  );
   const currentIdRef = useRef<string | null>(null);
   const pagesRef = useRef<PageMeta[]>([]);
   // Monotonic token guarding async page loads. Every page operation (switch /
@@ -1129,6 +1136,7 @@ export default function Editor() {
       <CheckoutActivation />
       <AuthNotice />
       <QuickStart />
+      {touchDebug && <TouchDebugPanel controllerRef={controllerRef} />}
     </div>
   );
 }

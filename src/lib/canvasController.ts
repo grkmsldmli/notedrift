@@ -41,6 +41,7 @@ import {
 import { History } from "./history";
 import { FreehandBrush } from "./brush/freehand";
 import { DRAW_TOOLS, materialFor } from "./brush/materials";
+import { canEraseWithTool, shouldClaimAsPan } from "./editor/pointerGuards";
 import { brushSpecFor } from "./tools/registry";
 import { makeStickyNote, styleArrow } from "./shapes";
 import { NdLine, makeNdLine } from "./shapes/ndline";
@@ -387,6 +388,12 @@ export class CanvasController {
   // fully intercepted from Fabric, so a pan can NEVER select/move/erase/draw.
   private pointerPan: { id: number; last: Pt } | null = null;
 
+  // Real-device touch diagnostics, opt-in via `?touchdebug=1`. Off by default so
+  // normal builds never log. See logTouch()/debugSnapshot() + TouchDebugPanel.
+  private debugTouch = false;
+  private touchLog: { t: number; msg: string }[] = [];
+  private lastMoveLogT = 0;
+
   // Connectors
   private anchorHost: fabric.FabricObject | null = null;
   private hoverTarget: { objId: string; anchor: Anchor; point: Pt } | null = null;
@@ -448,6 +455,12 @@ export class CanvasController {
     this.resize();
     this.watchDevicePixelRatio();
     this.setCanvasStyle(style);
+    if (typeof window !== "undefined") {
+      this.debugTouch = /[?&]touchdebug=1\b/.test(window.location.search);
+      // Only under the explicit debug flag: expose the controller so the owner can
+      // inspect live state on-device from the console. Never present otherwise.
+      if (this.debugTouch) (window as unknown as { __nd?: unknown }).__nd = this;
+    }
     this.wireEvents();
     this.attachTouchHandlers();
     if (typeof window !== "undefined") {
@@ -1674,11 +1687,20 @@ export class CanvasController {
     // and commits any in-progress text edit — no stale mode carries over.
     if (this.cropState && tool !== "select") this.cancelCrop();
     if (this.isEditing()) this.exitEditing();
-    // Abandon any half-finished draft/stroke/lasso/guide so a gesture interrupted
-    // by a tool-shortcut keypress can't bleed a phantom object into the new tool.
+    // ATOMIC transition. Finish the previous pointer/gesture mode BEFORE enabling
+    // the new tool, so a late pointerup/pointercancel from the old tool (routine
+    // on Safari) can neither mutate nor disable the new one:
+    //   1. release pointer capture + drop ALL DOM gesture bookkeeping,
+    //   2. cancel any stale in-progress Fabric transform,
+    //   3. abandon any half-finished draft/stroke/lasso/guide.
+    // Only then does this.tool change and applyToolMode re-enable the canvas.
+    this.resetPointerGestureState("tool:" + tool);
+    this.cancelFabricTransform();
     this.resetTransientInteraction();
     this.tool = tool;
     this.applyToolMode();
+    this.logTouch("tool-changed", { to: tool });
+    this.canvas.requestRenderAll();
     this.emit();
   }
 
@@ -1779,6 +1801,7 @@ export class CanvasController {
       this.hoverTarget = null;
     }
     c.requestRenderAll();
+    this.logTouch("applyToolMode");
   }
 
   /* ------------------------------- styling -------------------------------- */
@@ -2541,6 +2564,10 @@ export class CanvasController {
    *  only removes freehand strokes (never images/shapes/smart connectors); in
    *  "object" mode removes the whole object and cascades its connectors. */
   private eraseObject(o: fabric.FabricObject): void {
+    // HARD GUARD: erasing is reachable ONLY while the Eraser tool is active. If a
+    // stale pointer sequence completes after the tool has already become Hand/Pen,
+    // this becomes a no-op — Hand can never delete an object through any path.
+    if (!canEraseWithTool(this.tool)) return;
     if (isLocked(o)) return;
     if (this.eraserMode === "stroke" && !isFreehandStroke(o)) return;
     const ids = this.eraserMode === "object" ? this.allIdsIn(o) : [];
@@ -2599,6 +2626,8 @@ export class CanvasController {
     el.style.backgroundImage = image;
     this.paperSpacings = spacings;
     this.updateGrid();
+    // Appearance only — this must NOT touch tool, isDrawingMode, or gesture state.
+    this.logTouch("canvas-style", { style });
     this.emit();
   }
 
@@ -3933,9 +3962,23 @@ export class CanvasController {
       passive: false,
     });
     el.addEventListener("pointerup", this.onDomPointerUp, { capture: true });
-    el.addEventListener("pointercancel", this.onDomPointerUp, { capture: true });
+    // pointercancel is NOT routed through onDomPointerUp: Safari abandons whole
+    // gestures with a single cancel, so it gets its own hard-recovery handler.
+    el.addEventListener("pointercancel", this.onDomPointerCancel, { capture: true });
+    // Capture can be granted/revoked by the engine (Safari revokes mid-gesture);
+    // recover cleanly when it is lost so state never leaks into the next tool.
+    el.addEventListener("gotpointercapture", this.onGotPointerCapture, { capture: true });
+    el.addEventListener("lostpointercapture", this.onLostPointerCapture, { capture: true });
     // Hide hover anchors the instant the pointer leaves the canvas — no stale circles.
     el.addEventListener("pointerleave", this.onDomPointerLeave);
+    // Backgrounding / focus loss can strand a gesture (no terminating pointerup on
+    // Safari) — reset and restore the tool's mode on return.
+    if (typeof window !== "undefined") {
+      window.addEventListener("blur", this.onWindowBlur);
+    }
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", this.onVisibilityChange);
+    }
   }
 
   private detachTouchHandlers(): void {
@@ -3944,8 +3987,16 @@ export class CanvasController {
     el.removeEventListener("pointerdown", this.onDomPointerDown, opts);
     el.removeEventListener("pointermove", this.onDomPointerMove, opts);
     el.removeEventListener("pointerup", this.onDomPointerUp, opts);
-    el.removeEventListener("pointercancel", this.onDomPointerUp, opts);
+    el.removeEventListener("pointercancel", this.onDomPointerCancel, opts);
+    el.removeEventListener("gotpointercapture", this.onGotPointerCapture, opts);
+    el.removeEventListener("lostpointercapture", this.onLostPointerCapture, opts);
     el.removeEventListener("pointerleave", this.onDomPointerLeave);
+    if (typeof window !== "undefined") {
+      window.removeEventListener("blur", this.onWindowBlur);
+    }
+    if (typeof document !== "undefined") {
+      document.removeEventListener("visibilitychange", this.onVisibilityChange);
+    }
   }
 
   private onDomPointerLeave = (): void => {
@@ -3973,6 +4024,140 @@ export class CanvasController {
     this.gestureActive = true;
     this.gestureLatch = true;
     this.abortActiveInteraction();
+    this.logTouch("gesture-begin");
+  }
+
+  /** Hard-reset the DOM touch/pointer gesture layer and release any held pointer
+   *  capture. For mode/tool transitions and lifecycle interruptions (blur,
+   *  visibility loss, pointercancel, lostpointercapture). DISTINCT from
+   *  resetTransientInteraction (Fabric transient) and deliberately NOT called from
+   *  beginGesture/abortActiveInteraction, whose live two-finger touchPoints must
+   *  survive. */
+  private resetPointerGestureState(reason: string): void {
+    if (this.pointerPan) {
+      try {
+        this.paperEl.releasePointerCapture(this.pointerPan.id);
+      } catch {
+        /* capture may already be gone */
+      }
+    }
+    for (const id of this.touchPoints.keys()) {
+      try {
+        this.paperEl.releasePointerCapture(id);
+      } catch {
+        /* capture may already be gone */
+      }
+    }
+    this.pointerPan = null;
+    this.touchPoints.clear();
+    this.gestureActive = false;
+    this.gestureLatch = false;
+    this.canvasRect = null;
+    this.isPanning = false;
+    this.lastPan = { x: 0, y: 0 };
+    this.logTouch("reset-gesture", { reason });
+  }
+
+  /** Authoritative recovery from an abandoned interaction (Safari cancel, window
+   *  blur, tab hidden). Clears gesture + transient state, cancels any stale Fabric
+   *  transform / freehand stroke, then restores the mode the CURRENT tool expects
+   *  so the very next pointer works. Invariant afterward:
+   *  canvas.isDrawingMode === isDrawTool(tool). */
+  private recoverInputState(reason: string): void {
+    this.resetPointerGestureState(reason);
+    this.cancelFabricTransform();
+    this.resetTransientInteraction();
+    this.canvas.isDrawingMode = isDrawTool(this.tool);
+    if (isDrawTool(this.tool)) this.configureBrush();
+    this.canvas.defaultCursor = this.baseCursor();
+    this.canvas.requestRenderAll();
+    this.logTouch("recover", { reason });
+    this.emit();
+  }
+
+  private onGotPointerCapture = (e: PointerEvent): void => {
+    this.logTouch("gotpointercapture", { pointerId: e.pointerId });
+  };
+
+  /** Safari can revoke pointer capture mid-gesture. Drop the affected pointer's
+   *  bookkeeping (capture is already gone — nothing to release) and, if that ends
+   *  a live gesture, restore the current tool's drawing mode. */
+  private onLostPointerCapture = (e: PointerEvent): void => {
+    let changed = false;
+    if (this.pointerPan && e.pointerId === this.pointerPan.id) {
+      this.pointerPan = null;
+      changed = true;
+    }
+    if (this.touchPoints.delete(e.pointerId)) changed = true;
+    if (
+      changed &&
+      this.touchPoints.size < 2 &&
+      (this.gestureActive || this.gestureLatch)
+    ) {
+      this.gestureActive = false;
+      this.gestureLatch = false;
+      this.canvasRect = null;
+      this.canvas.isDrawingMode = isDrawTool(this.tool);
+    }
+    this.logTouch("lostpointercapture", { pointerId: e.pointerId, changed });
+  };
+
+  private onWindowBlur = (): void => {
+    if (
+      this.pointerPan ||
+      this.touchPoints.size > 0 ||
+      this.gestureActive ||
+      this.gestureLatch ||
+      this.isPanning
+    ) {
+      this.recoverInputState("window-blur");
+    }
+  };
+
+  private onVisibilityChange = (): void => {
+    if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+      this.onWindowBlur();
+    }
+  };
+
+  /** Append a diagnostic line when `?touchdebug=1`. No-op otherwise (normal builds
+   *  never log). Ring-buffered so it can't grow without bound. */
+  private logTouch(msg: string, data?: Record<string, unknown>): void {
+    if (!this.debugTouch) return;
+    const line =
+      `${msg} · tool=${this.tool} draw=${this.canvas.isDrawingMode} ` +
+      `pan=${this.pointerPan ? this.pointerPan.id : "-"} pts=${this.touchPoints.size} ` +
+      `gAct=${this.gestureActive} gLatch=${this.gestureLatch} ` +
+      `isPan=${this.isPanning} isEra=${this.isErasing}` +
+      (data ? " · " + JSON.stringify(data) : "");
+    this.touchLog.push({ t: Date.now(), msg: line });
+    if (this.touchLog.length > 400) this.touchLog.shift();
+  }
+
+  /** Live state + recent event log for the `?touchdebug=1` panel. */
+  debugSnapshot(): {
+    enabled: boolean;
+    state: Record<string, string | number | boolean | null>;
+    log: string[];
+  } {
+    return {
+      enabled: this.debugTouch,
+      state: {
+        tool: this.tool,
+        isDrawingMode: this.canvas.isDrawingMode,
+        pointerPan: this.pointerPan ? this.pointerPan.id : null,
+        touchPoints: this.touchPoints.size,
+        gestureActive: this.gestureActive,
+        gestureLatch: this.gestureLatch,
+        isPanning: this.isPanning,
+        isErasing: this.isErasing,
+        penSeen: this.penSeen,
+        spaceDown: this.spaceDown,
+      },
+      log: this.touchLog.map(
+        (e) => `${new Date(e.t).toISOString().slice(11, 23)} ${e.msg}`,
+      ),
+    };
   }
 
   /** Begin a dedicated single-pointer viewport pan, fully owning the pointer via
@@ -4010,6 +4195,10 @@ export class CanvasController {
     const touch = e.pointerType === "touch";
     if (e.pointerType === "pen") this.penSeen = true;
     if (touch) this.touchPoints.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    this.logTouch("pointerdown", {
+      pointerId: e.pointerId,
+      pointerType: e.pointerType,
+    });
 
     // A second finger upgrades to the two-finger pinch/pan gesture. Cancel any
     // in-progress single-pointer pan first so it can't fight the gesture.
@@ -4021,27 +4210,30 @@ export class CanvasController {
       return;
     }
 
-    // HAND tool = viewport navigation ONLY, for a finger OR a stylus. Intercept
-    // the pointer BEFORE Fabric can treat it as object interaction, so it can
-    // never select / move / erase / draw / mutate history — it can only pan.
-    if (this.tool === "hand") {
+    // Claim a single finger/stylus as a dedicated, capture-owned viewport pan when
+    // the tool calls for it (Hand = always; a drawing tool after a stylus = palm
+    // rejection). Intercepted BEFORE Fabric, so Hand can never select/move/erase/
+    // draw/mutate. Otherwise Fabric handles the single pointer per the active tool
+    // (a stylus draws/selects; a finger in select/eraser/etc. acts as that tool).
+    if (shouldClaimAsPan(this.tool, e.pointerType, this.penSeen)) {
       this.startPointerPan(e);
       return;
     }
-
-    // In a drawing tool, once a stylus has been seen a bare finger navigates
-    // (pans) rather than draws — the best web-safe palm rejection. The stylus
-    // itself keeps drawing (falls through to Fabric below).
-    if (touch && isDrawTool(this.tool) && this.penSeen) {
-      this.startPointerPan(e);
-      return;
-    }
-    // Otherwise Fabric handles the single pointer per the active tool (a stylus
-    // draws/selects; a finger in select/eraser/etc. acts as that tool).
   };
 
   private onDomPointerMove = (e: PointerEvent): void => {
     if (e.pointerType === "mouse") return;
+
+    if (this.debugTouch) {
+      const now = Date.now();
+      if (now - this.lastMoveLogT > 120) {
+        this.lastMoveLogT = now;
+        this.logTouch("pointermove", {
+          pointerId: e.pointerId,
+          pointerType: e.pointerType,
+        });
+      }
+    }
 
     // Active single-pointer pan (Hand tool, or finger-after-stylus). The pointer
     // is captured, so this fires for touch AND pen until it lifts.
@@ -4109,7 +4301,8 @@ export class CanvasController {
   private onDomPointerUp = (e: PointerEvent): void => {
     if (e.pointerType === "mouse") return;
 
-    // End a single-pointer pan (touch OR pen) — also fires on pointercancel.
+    this.logTouch("pointerup", { pointerId: e.pointerId, pointerType: e.pointerType });
+    // End a single-pointer pan (touch OR pen).
     if (this.pointerPan && e.pointerId === this.pointerPan.id) {
       e.stopPropagation();
       e.preventDefault();
@@ -4131,11 +4324,26 @@ export class CanvasController {
         this.gestureLatch = false;
         // Restore the drawing mode the active tool expects.
         this.canvas.isDrawingMode = isDrawTool(this.tool);
+        this.canvasRect = null;
       }
     } else if (this.gestureLatch) {
       e.stopPropagation();
       e.preventDefault();
     }
+  };
+
+  /** pointercancel is Safari's "this gesture is over, abnormally" signal. It may
+   *  arrive for one finger and never the other, so rather than bookkeep finger by
+   *  finger we hard-recover: release capture, drop all gesture state, cancel stale
+   *  transforms, and restore the current tool's drawing mode. */
+  private onDomPointerCancel = (e: PointerEvent): void => {
+    this.logTouch("pointercancel", {
+      pointerId: e.pointerId,
+      pointerType: e.pointerType,
+    });
+    if (e.pointerType === "mouse") return;
+    e.stopPropagation();
+    this.recoverInputState("pointercancel");
   };
 
   /** Forgiving hit radius for touch/pen input, tight for mouse. */
