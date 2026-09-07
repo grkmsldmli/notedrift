@@ -74,14 +74,31 @@ export const PdfContextToolbar = forwardRef<
   // workspace) collapses it again — the canvas-first model from commit 4165729.
   // Desktop (>=md) always shows the full strip regardless of this flag.
   const [expanded, setExpanded] = useState(false);
+  const shellRef = useRef<HTMLDivElement>(null);
   useImperativeHandle(ref, () => ({ collapse: () => setExpanded(false) }), []);
+  // While expanded (only possible on mobile — the pill is md:hidden), Escape and an
+  // outside tap both collapse. A tap INSIDE the toolbar shell, or inside a portaled
+  // colour/fill popover, is an interaction WITH the settings and must NOT close it.
+  // The listener never stops/prevents the event, so nothing is swallowed.
   useEffect(() => {
     if (!expanded) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setExpanded(false);
     };
+    const onDown = (e: PointerEvent) => {
+      const t = e.target;
+      if (shellRef.current && t instanceof Node && shellRef.current.contains(t)) return;
+      if (t instanceof Element && t.closest("[data-nd-context-popover]")) return;
+      setExpanded(false);
+    };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    document.addEventListener("pointerdown", onDown, { capture: true });
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onDown, {
+        capture: true,
+      } as EventListenerOptions);
+    };
   }, [expanded]);
 
   const pctOpacity = Math.round(values.opacity * 100);
@@ -103,7 +120,7 @@ export const PdfContextToolbar = forwardRef<
 
   return (
     // Outer shell keeps overflow visible so portaled popovers are never clipped.
-    <div className="pointer-events-none absolute inset-x-0 top-3 z-20 flex justify-center px-3">
+    <div ref={shellRef} className="pointer-events-none absolute inset-x-0 top-3 z-20 flex justify-center px-3">
       {/* Mobile collapsed summary pill — canvas-first: the full settings never
           cover the page until you tap to expand. */}
       {hasSummary && (
@@ -304,6 +321,7 @@ function Popover({
     <div
       ref={ref}
       role="dialog"
+      data-nd-context-popover=""
       style={{ position: "fixed", left: pos.left, top: pos.top, transform: "translateX(-50%)", zIndex: 60 }}
       className="rounded-xl border border-nd-border bg-nd-surface p-2 shadow-2xl"
     >

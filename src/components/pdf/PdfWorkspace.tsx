@@ -272,12 +272,14 @@ export function PdfWorkspace() {
     return () => document.removeEventListener("visibilitychange", onVisible);
   }, []);
 
-  // Canvas-first: collapse the mobile context-settings pill the instant a real
-  // PDF-page pointer-down begins. Capture-phase on the viewport and it NEVER
+  // Canvas-first: collapse the mobile context-settings pill on any PDF-VIEWPORT
+  // pointer-down (a stroke/placement on the page, and also a tap on empty viewport
+  // space — that is acceptable). Capture-phase on the viewport and it NEVER
   // stops/prevents the event, so the same pointer flows straight into the overlay
   // tool — the first pen stroke / text placement / shape is not swallowed. The
   // context toolbar is a SIBLING of the viewport, so interacting WITH the settings
-  // (or a portaled popover) never reaches this listener.
+  // (or a portaled popover) never reaches this listener; a general outside-tap
+  // close lives inside PdfContextToolbar.
   useEffect(() => {
     const vp = viewportRef.current;
     if (!vp) return;
@@ -399,6 +401,9 @@ export function PdfWorkspace() {
   }, []);
 
   const chooseTool = useCallback((t: PdfTool) => {
+    // A tool switch must never inherit the previous tool's expanded context
+    // settings — start every tool collapsed (canvas-first).
+    contextRef.current?.collapse();
     if (t === "image") { imageInputRef.current?.click(); return; }
     if (t === "signature") { setSigOpen(true); return; }
     setTool(t);
@@ -633,7 +638,12 @@ export function PdfWorkspace() {
                         if (c) c.init(pagesRef.current);
                       }}
                       onDoc={onDoc}
-                      onSelection={setSelection}
+                      onSelection={(sel) => {
+                        setSelection(sel);
+                        // A newly active selection shows its object's context —
+                        // start it collapsed too, never inheriting a stale state.
+                        if (sel) contextRef.current?.collapse();
+                      }}
                       onToolReset={() => setTool("select")}
                     />
                   </div>
