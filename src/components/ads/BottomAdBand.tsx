@@ -8,17 +8,14 @@
 // the ad. When ineligible (Pro, loading, ad-free) it renders nothing at all — no
 // blank placeholder — and the canvas reclaims the full height.
 //
-// Lifecycle (via Google's data-ad-status on our OWN <ins class="adsbygoogle">):
-//   • PENDING (no status yet): the <ins> is mounted at full, non-zero size so
-//     Google can make a valid request — but a dark cover sits over it so the user
-//     never sees Google's white loading iframe flash on the dark UI.
-//   • FILLED: the cover is removed instantly so the real ad is fully visible and
-//     never obscured; the band stays exactly as intended.
-//   • UNFILLED: collapse our outer band so the canvas/PDF workspace reclaims the
-//     height (no blank/white rectangle).
-// We never touch Google's iframe, never re-push/refresh, never hide a filled ad.
-// If Google never sets the attribute, the cover simply stays (dark, no ad shown)
-// and the canvas keeps working — a safe default.
+// The band mounts at full height (non-zero) so Google can make a valid ad request.
+// A MutationObserver watches OUR OWN <ins class="adsbygoogle"> for the ad status
+// Google sets:
+//   • data-ad-status="filled"   → keep the band exactly as intended.
+//   • data-ad-status="unfilled" → collapse the band so the canvas reclaims the
+//     height (no giant blank rectangle). We only touch our own container — never
+//     Google's iframe, and we never re-push/refresh the ad.
+// If Google never sets the attribute, the band stays visible (safe default).
 
 import { useEffect, useRef, useState } from "react";
 import { adsenseSlotEditorBottom, adsenseSlotToolPage } from "@/lib/ads/config";
@@ -54,20 +51,16 @@ export function BottomAdBand({ variant }: { variant: "editor" | "tool-page" }) {
   // Google requested and returned no ad — reclaim the height for the canvas.
   if (adStatus === "unfilled") return null;
 
-  const filled = adStatus === "filled";
-
   return (
     <aside
       ref={asideRef}
       aria-label="Advertisement"
       className="relative shrink-0 border-t border-nd-border bg-nd-bg"
     >
-      {filled && (
-        <span className="pointer-events-none absolute left-2.5 top-1 z-10 text-[9px] font-medium uppercase tracking-wider text-nd-muted/60">
-          Advertisement
-        </span>
-      )}
-      <div className="relative mx-auto flex h-[62px] w-full max-w-5xl items-center justify-center overflow-hidden px-2 sm:h-[96px]">
+      <span className="pointer-events-none absolute left-2.5 top-1 z-10 text-[9px] font-medium uppercase tracking-wider text-nd-muted/60">
+        Advertisement
+      </span>
+      <div className="mx-auto flex h-[62px] w-full max-w-5xl items-center justify-center overflow-hidden px-2 sm:h-[96px]">
         <AdSlot
           slot={slot}
           placement={variant === "editor" ? "editor-bottom" : "tool-page"}
@@ -75,10 +68,6 @@ export function BottomAdBand({ variant }: { variant: "editor" | "tool-page" }) {
           responsive={false}
           style={{ width: "100%", height: "100%" }}
         />
-        {/* Dark cover over the slot until Google reports "filled" — hides the
-            white loading iframe. pointer-events-none, and removed on fill so the
-            real ad is never obscured or blocked. */}
-        {!filled && <div aria-hidden className="pointer-events-none absolute inset-0 bg-nd-bg" />}
       </div>
     </aside>
   );
