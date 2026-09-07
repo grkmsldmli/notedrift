@@ -4048,6 +4048,13 @@ export class CanvasController {
     if (this.pointerPan && e.pointerId === this.pointerPan.id) {
       e.stopPropagation();
       e.preventDefault();
+      // Keep this finger's tracked position current even while it is solo-panning,
+      // so if a second finger lands and upgrades to a two-finger gesture,
+      // beginGesture() reads its true position (not the stale pointerdown one) and
+      // the pinch/pan starts without a jump. (Pen is never in touchPoints.)
+      if (e.pointerType === "touch" && this.touchPoints.has(e.pointerId)) {
+        this.touchPoints.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      }
       const vpt = this.canvas.viewportTransform;
       vpt[4] += e.clientX - this.pointerPan.last.x;
       vpt[5] += e.clientY - this.pointerPan.last.y;
