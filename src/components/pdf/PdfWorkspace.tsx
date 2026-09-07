@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Copy,
@@ -775,26 +776,160 @@ function Toolbar({
   onZoomOut: () => void; onZoomIn: () => void; onFitPage: () => void; onFitWidth: () => void;
 }) {
   const pct = Math.round(session.scale * 100);
+  const [open, setOpen] = useState(false);
+  // Escape closes the sheet (outside tap handled by the transient overlay).
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
+  // One-shot page/fit actions close the sheet; page/zoom steppers keep it open.
+  const act = (fn: () => void) => () => {
+    fn();
+    setOpen(false);
+  };
+
   return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-4 z-10 flex justify-center px-3">
-      <div className="nd-hidescroll pointer-events-auto flex max-w-full items-center gap-0.5 overflow-x-auto rounded-xl border border-nd-border bg-nd-surface/95 p-1 shadow-xl shadow-black/40 backdrop-blur">
-        <IconBtn label="Previous page" onClick={onPrev} disabled={session.page <= 1}><ChevronLeft size={16} /></IconBtn>
-        <span className="whitespace-nowrap px-1.5 text-xs tabular-nums text-nd-muted">{session.page} / {session.numPages}</span>
-        <IconBtn label="Next page" onClick={onNext} disabled={session.page >= session.numPages}><ChevronRight size={16} /></IconBtn>
-        <Divider />
-        <IconBtn label="Rotate page left" onClick={onRotateLeft}><RotateCcw size={15} /></IconBtn>
-        <IconBtn label="Rotate page right" onClick={onRotateRight}><RotateCw size={15} /></IconBtn>
-        <IconBtn label="Duplicate page" onClick={onDuplicate}><Copy size={15} /></IconBtn>
-        <IconBtn label="Delete page" onClick={onDeletePage} disabled={!canDelete}><Trash2 size={15} /></IconBtn>
-        <Divider />
-        <IconBtn label="Zoom out" onClick={onZoomOut} disabled={pct <= 25}><Minus size={16} /></IconBtn>
-        <span className="w-11 text-center text-xs tabular-nums text-nd-text">{pct}%</span>
-        <IconBtn label="Zoom in" onClick={onZoomIn} disabled={pct >= 400}><Plus size={16} /></IconBtn>
-        <Divider />
-        <TextBtn onClick={onFitPage} active={session.fitMode === "page"}>Fit</TextBtn>
-        <TextBtn onClick={onFitWidth} active={session.fitMode === "width"}>Width</TextBtn>
+    <>
+      {/* MOBILE (<md): ONE compact page/zoom pill (bottom-left) opening an upward
+          sheet, mirroring the main editor's ZoomControls. The tool rail stays the
+          only bottom dock — no second persistent bottom bar. It is an ABSOLUTE
+          overlay, so it never changes the scroll container's size (no refit thrash). */}
+      <div className="pointer-events-none absolute bottom-[max(1rem,env(safe-area-inset-bottom))] left-3 z-10 md:hidden">
+        <div className="pointer-events-auto relative">
+          <button
+            type="button"
+            onClick={() => setOpen((o) => !o)}
+            aria-haspopup="menu"
+            aria-expanded={open}
+            title="Page & zoom"
+            className="nd-hit flex h-9 items-center gap-1.5 rounded-xl border border-nd-border bg-nd-surface/95 px-3 text-xs font-medium tabular-nums text-nd-text shadow-xl shadow-black/40 backdrop-blur"
+          >
+            <span>
+              {session.page}/{session.numPages}
+            </span>
+            <span className="text-nd-muted">·</span>
+            <span>{pct}%</span>
+            <ChevronDown
+              size={14}
+              className={`text-nd-muted transition-transform ${open ? "rotate-180" : ""}`}
+            />
+          </button>
+
+          {open && (
+            <>
+              {/* Transient overlay: outside tap closes the sheet. */}
+              <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+              <div
+                role="menu"
+                className="absolute bottom-full left-0 z-50 mb-2 w-60 max-w-[calc(100vw-1.5rem)] rounded-xl border border-nd-border bg-nd-surface p-2 shadow-2xl"
+              >
+                <div className="px-1 pb-1 text-[10px] font-medium uppercase tracking-wider text-nd-muted">
+                  Page
+                </div>
+                <div className="flex items-center gap-1">
+                  <SheetIcon label="Previous page" onClick={onPrev} disabled={session.page <= 1}>
+                    <ChevronLeft size={18} />
+                  </SheetIcon>
+                  <span className="flex-1 text-center text-sm tabular-nums text-nd-text">
+                    {session.page} / {session.numPages}
+                  </span>
+                  <SheetIcon label="Next page" onClick={onNext} disabled={session.page >= session.numPages}>
+                    <ChevronRight size={18} />
+                  </SheetIcon>
+                </div>
+
+                <div className="my-1.5 h-px bg-nd-border" />
+                <div className="grid grid-cols-2 gap-1">
+                  <SheetItem onClick={act(onRotateLeft)}>
+                    <RotateCcw size={16} />Rotate left
+                  </SheetItem>
+                  <SheetItem onClick={act(onRotateRight)}>
+                    <RotateCw size={16} />Rotate right
+                  </SheetItem>
+                  <SheetItem onClick={act(onDuplicate)}>
+                    <Copy size={16} />Duplicate
+                  </SheetItem>
+                  <SheetItem onClick={act(onDeletePage)} disabled={!canDelete} danger>
+                    <Trash2 size={16} />Delete
+                  </SheetItem>
+                </div>
+
+                <div className="my-1.5 h-px bg-nd-border" />
+                <div className="px-1 pb-1 text-[10px] font-medium uppercase tracking-wider text-nd-muted">
+                  Zoom
+                </div>
+                <div className="flex items-center gap-1">
+                  <SheetIcon label="Zoom out" onClick={onZoomOut} disabled={pct <= 25}>
+                    <Minus size={18} />
+                  </SheetIcon>
+                  <span className="flex-1 text-center text-sm tabular-nums text-nd-text">{pct}%</span>
+                  <SheetIcon label="Zoom in" onClick={onZoomIn} disabled={pct >= 400}>
+                    <Plus size={18} />
+                  </SheetIcon>
+                </div>
+                <div className="mt-1 grid grid-cols-2 gap-1">
+                  <SheetToggle onClick={act(onFitPage)} active={session.fitMode === "page"}>
+                    Fit page
+                  </SheetToggle>
+                  <SheetToggle onClick={act(onFitWidth)} active={session.fitMode === "width"}>
+                    Fit width
+                  </SheetToggle>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
       </div>
-    </div>
+
+      {/* DESKTOP / TABLET (>=md): the richer horizontal toolbar, unchanged. */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-4 z-10 hidden justify-center px-3 md:flex">
+        <div className="nd-hidescroll pointer-events-auto flex max-w-full items-center gap-0.5 overflow-x-auto rounded-xl border border-nd-border bg-nd-surface/95 p-1 shadow-xl shadow-black/40 backdrop-blur">
+          <IconBtn label="Previous page" onClick={onPrev} disabled={session.page <= 1}><ChevronLeft size={16} /></IconBtn>
+          <span className="whitespace-nowrap px-1.5 text-xs tabular-nums text-nd-muted">{session.page} / {session.numPages}</span>
+          <IconBtn label="Next page" onClick={onNext} disabled={session.page >= session.numPages}><ChevronRight size={16} /></IconBtn>
+          <Divider />
+          <IconBtn label="Rotate page left" onClick={onRotateLeft}><RotateCcw size={15} /></IconBtn>
+          <IconBtn label="Rotate page right" onClick={onRotateRight}><RotateCw size={15} /></IconBtn>
+          <IconBtn label="Duplicate page" onClick={onDuplicate}><Copy size={15} /></IconBtn>
+          <IconBtn label="Delete page" onClick={onDeletePage} disabled={!canDelete}><Trash2 size={15} /></IconBtn>
+          <Divider />
+          <IconBtn label="Zoom out" onClick={onZoomOut} disabled={pct <= 25}><Minus size={16} /></IconBtn>
+          <span className="w-11 text-center text-xs tabular-nums text-nd-text">{pct}%</span>
+          <IconBtn label="Zoom in" onClick={onZoomIn} disabled={pct >= 400}><Plus size={16} /></IconBtn>
+          <Divider />
+          <TextBtn onClick={onFitPage} active={session.fitMode === "page"}>Fit</TextBtn>
+          <TextBtn onClick={onFitWidth} active={session.fitMode === "width"}>Width</TextBtn>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function SheetIcon({ label, onClick, disabled, children }: { label: string; onClick: () => void; disabled?: boolean; children: React.ReactNode }) {
+  return (
+    <button type="button" aria-label={label} title={label} onClick={onClick} disabled={disabled} className="nd-hit flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-nd-muted transition-colors hover:bg-white/5 hover:text-nd-text disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-nd-muted">
+      {children}
+    </button>
+  );
+}
+
+function SheetItem({ onClick, disabled, danger, children }: { onClick: () => void; disabled?: boolean; danger?: boolean; children: React.ReactNode }) {
+  return (
+    <button type="button" role="menuitem" onClick={onClick} disabled={disabled} className={`nd-hit flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm transition-colors disabled:opacity-35 disabled:hover:bg-transparent ${danger ? "text-nd-text hover:bg-red-500/15 hover:text-red-400" : "text-nd-text hover:bg-white/5"}`}>
+      {children}
+    </button>
+  );
+}
+
+function SheetToggle({ onClick, active, children }: { onClick: () => void; active?: boolean; children: React.ReactNode }) {
+  return (
+    <button type="button" onClick={onClick} className={`nd-hit flex h-9 items-center justify-center rounded-lg text-sm transition-colors ${active ? "bg-nd-accent/15 text-nd-accent" : "text-nd-muted hover:bg-white/5 hover:text-nd-text"}`}>
+      {children}
+    </button>
   );
 }
 

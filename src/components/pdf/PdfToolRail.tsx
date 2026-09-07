@@ -49,7 +49,7 @@ export function PdfToolRail({
 
   return (
     <div
-      className="nd-hidescroll pointer-events-auto absolute left-1/2 bottom-[4.5rem] z-20 flex max-w-[calc(100vw-1.5rem)] -translate-x-1/2 flex-row items-center gap-0.5 overflow-x-auto rounded-xl border border-nd-border bg-nd-surface/95 p-1 shadow-xl shadow-black/40 backdrop-blur md:left-3 md:top-1/2 md:bottom-auto md:max-w-none md:-translate-x-0 md:-translate-y-1/2 md:flex-col md:overflow-visible"
+      className="nd-hidescroll pointer-events-auto absolute left-1/2 bottom-[max(4.5rem,calc(env(safe-area-inset-bottom)+3.75rem))] z-20 flex max-w-[calc(100vw-1.5rem)] -translate-x-1/2 flex-row items-center gap-0.5 overflow-x-auto rounded-xl border border-nd-border bg-nd-surface/95 p-1 shadow-xl shadow-black/40 backdrop-blur md:left-3 md:top-1/2 md:bottom-auto md:max-w-none md:-translate-x-0 md:-translate-y-1/2 md:flex-col md:overflow-visible"
       role="toolbar"
       aria-label="PDF tools"
     >
