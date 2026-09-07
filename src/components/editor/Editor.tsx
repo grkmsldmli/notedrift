@@ -61,7 +61,7 @@ import { AuthNotice } from "../auth/AuthNotice";
 import { Toolbar } from "./Toolbar";
 import { TopBar } from "./TopBar";
 import { ZoomControls } from "./ZoomControls";
-import { ToolOptionsBar } from "./ToolOptionsBar";
+import { ToolOptionsBar, type ToolOptionsBarHandle } from "./ToolOptionsBar";
 import { TouchDebugPanel } from "./TouchDebugPanel";
 import { ObjectToolbar, type LayerOp } from "./ObjectToolbar";
 import { CropBar } from "./CropBar";
@@ -150,6 +150,9 @@ export default function Editor() {
   const paperRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const controllerRef = useRef<CanvasController | null>(null);
+  // Collapse the expanded tool-settings panel the moment a real canvas
+  // interaction begins (canvas-first). Driven from the paper pointer-down path.
+  const toolOptionsRef = useRef<ToolOptionsBarHandle | null>(null);
   // TEMP real-device diagnostics — mounted only with `?touchdebug=1`.
   const [touchDebug] = useState(
     () =>
@@ -244,6 +247,16 @@ export default function Editor() {
     const canvasEl = canvasRef.current;
     const paperEl = paperRef.current;
     if (!canvasEl || !paperEl) return;
+
+    // Canvas-first: collapse the expanded tool-settings panel the instant a real
+    // paper/canvas interaction begins. Capture-phase and registered BEFORE the
+    // controller so it always runs (even for gestures the controller intercepts);
+    // it NEVER stops/prevents the event, so the SAME pointer-down flows straight
+    // into Fabric and the first stroke/tap begins uninterrupted. The floating
+    // toolbars/popovers are siblings of the paper (not descendants), so this
+    // never fires for interactions WITH the settings controls.
+    const collapseToolSettings = () => toolOptionsRef.current?.collapse();
+    paperEl.addEventListener("pointerdown", collapseToolSettings, { capture: true });
 
     let list = loadPages();
     let curId = getCurrentPageId();
@@ -354,6 +367,9 @@ export default function Editor() {
 
     return () => {
       ro.disconnect();
+      paperEl.removeEventListener("pointerdown", collapseToolSettings, {
+        capture: true,
+      } as EventListenerOptions);
       vv?.removeEventListener("resize", onViewport);
       vv?.removeEventListener("scroll", onViewport);
       document.documentElement.style.removeProperty("--nd-kb-inset");
@@ -1052,6 +1068,7 @@ export default function Editor() {
         {toolDefaults && (
           <ToolOptionsBar
             key={state.tool}
+            ref={toolOptionsRef}
             tool={state.tool}
             defaults={toolDefaults}
             onSetDefault={applyDefaults}

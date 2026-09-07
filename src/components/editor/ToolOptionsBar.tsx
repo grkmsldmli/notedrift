@@ -1,6 +1,12 @@
 "use client";
 
-import { memo, useEffect, useState } from "react";
+import {
+  forwardRef,
+  memo,
+  useEffect,
+  useImperativeHandle,
+  useState,
+} from "react";
 import { ChevronDown, ChevronUp, PenTool } from "lucide-react";
 import { OUTLINE_WIDTHS } from "@/lib/constants";
 import { DRAW_TOOLS, materialFor } from "@/lib/brush/materials";
@@ -72,16 +78,25 @@ function summaryFor(
   return null;
 }
 
-export const ToolOptionsBar = memo(function ToolOptionsBar({
-  tool,
-  defaults,
-  onSetDefault,
-  onSetDrawPref,
-}: ToolOptionsBarProps) {
+/** Imperative handle so the Editor can collapse the panel the instant a real
+ *  canvas interaction begins (canvas-first). */
+export interface ToolOptionsBarHandle {
+  collapse: () => void;
+}
+
+export const ToolOptionsBar = memo(
+  forwardRef<ToolOptionsBarHandle, ToolOptionsBarProps>(function ToolOptionsBar(
+    { tool, defaults, onSetDefault, onSetDrawPref },
+    ref,
+  ) {
   // Canvas-first: the panel starts COLLAPSED (a compact pill) so the tool is
   // usable immediately without a big card covering the canvas. The parent keys
   // this component by tool, so switching tools resets it to collapsed.
   const [expanded, setExpanded] = useState(false);
+  // Collapse on a real paper/canvas pointer-down (driven by the Editor). Calling
+  // setExpanded(false) when already collapsed is a no-op React bails out of, so
+  // this stays flicker-free stroke after stroke.
+  useImperativeHandle(ref, () => ({ collapse: () => setExpanded(false) }), []);
   useEffect(() => {
     if (!expanded) return;
     const onKey = (e: KeyboardEvent) => {
@@ -326,4 +341,5 @@ export const ToolOptionsBar = memo(function ToolOptionsBar({
       </button>
     </div>
   );
-});
+  }),
+);
