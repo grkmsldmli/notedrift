@@ -353,7 +353,7 @@ export const TopBar = memo(function TopBar(props: TopBarProps) {
           {menuOpen && (
             <>
               <div className="fixed inset-0 z-40" onClick={closeAll} />
-              <div className="absolute right-0 top-full z-50 mt-1.5 w-52 rounded-xl border border-nd-border bg-nd-surface p-1 shadow-2xl">
+              <div className="nd-scroll absolute right-0 top-full z-50 mt-1.5 max-h-[calc(100dvh-5rem)] w-[min(20rem,calc(100vw-1rem))] touch-pan-y overflow-y-auto overscroll-contain rounded-xl border border-nd-border bg-nd-surface p-1 shadow-2xl sm:w-52">
                 {/* Undo/Redo live here on phones (inline on ≥sm). */}
                 <button
                   type="button"
