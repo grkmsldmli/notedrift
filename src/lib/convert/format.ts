@@ -1,7 +1,22 @@
 // Pure formatting + dimension math shared by every tool. No browser APIs here,
 // so these are unit-tested directly with node's test runner.
 
-import type { ConverterKind } from "./types.ts";
+import type { ConverterKind, RasterOutput } from "./types.ts";
+
+/** Which encoder the compressor/resizer should use for a given input. Format-
+ *  PRESERVING: JPEG stays JPEG, WebP stays WebP, and everything else (PNG, and any
+ *  unsupported input) encodes as PNG — a transparency-capable input is NEVER
+ *  flattened to JPEG. Pure (reads only the file's declared type), so the
+ *  no-silent-conversion guarantee is unit-tested directly. */
+export function compressOutputFor(file: File): {
+  output: RasterOutput | "webp";
+  ext: string;
+} {
+  const t = file.type;
+  if (t === "image/jpeg") return { output: "jpeg", ext: "jpg" };
+  if (t === "image/webp") return { output: "webp", ext: "webp" };
+  return { output: "png", ext: "png" };
+}
 
 /** Human display label for a produced file's format, derived from its ACTUAL MIME
  *  (falling back to the filename extension). The compressor/resizer are

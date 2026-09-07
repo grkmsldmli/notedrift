@@ -12,12 +12,12 @@ import {
   formatBytes,
   formatDimensions,
   formatLabel,
-  qualityAppliesToMime,
   resizeDims,
 } from "@/lib/convert/format";
+import { defaultTargetKb, validateTargetKb } from "@/lib/convert/target";
 import { outputName } from "@/lib/convert/filenames";
 import {
-  compressImage,
+  compressImageToTarget,
   compressOutputFor,
   convertRaster,
   readImageDimensions,
@@ -41,9 +41,18 @@ export function ToolConverter({ tool }: { tool: ToolDef }) {
   const [error, setError] = useState<string | null>(null);
   const [meta, setMeta] = useState<ImageMeta | null>(null);
   const [results, setResults] = useState<ConvertResult[]>([]);
+  // Compress-to-target extras (set only for the compress flow).
+  const [compressInfo, setCompressInfo] = useState<{
+    targetBytes: number;
+    reachedTarget: boolean;
+  } | null>(null);
+  const [alreadyUnder, setAlreadyUnder] = useState<{
+    targetBytes: number;
+    originalBytes: number;
+  } | null>(null);
 
   // Options
-  const [quality, setQuality] = useState(80);
+  const [targetKb, setTargetKb] = useState<number | "">("");
   const [width, setWidth] = useState<number | "">("");
   const [height, setHeight] = useState<number | "">("");
   const [lockAspect, setLockAspect] = useState(true);
@@ -70,6 +79,9 @@ export function ToolConverter({ tool }: { tool: ToolDef }) {
     setError(null);
     setMeta(null);
     setResults([]);
+    setCompressInfo(null);
+    setAlreadyUnder(null);
+    setTargetKb("");
     setWidth("");
     setHeight("");
     setPreviewFor(null);
@@ -99,6 +111,8 @@ export function ToolConverter({ tool }: { tool: ToolDef }) {
           setMeta({ width: dims.width, height: dims.height, bytes: chosen[0].size });
           setWidth(dims.width);
           setHeight(dims.height);
+          // Default the compress target to a useful ~half the original size.
+          setTargetKb(defaultTargetKb(chosen[0].size));
         }
         setPreviewFor(chosen[0]);
         setStatus("ready");
@@ -131,8 +145,31 @@ export function ToolConverter({ tool }: { tool: ToolDef }) {
           break;
         }
         case "compress": {
+          const originalBytes = file.size;
+          const target =
+            typeof targetKb === "number" ? targetKb : defaultTargetKb(originalBytes);
+          const v = validateTargetKb(target, originalBytes);
+          if (!v.valid) {
+            setError(v.error ?? "Enter a valid target size.");
+            setStatus("ready");
+            return;
+          }
+          if (v.alreadyUnder) {
+            // The original already meets the target — never wastefully re-encode.
+            setAlreadyUnder({ targetBytes: target * 1024, originalBytes });
+            setCompressInfo(null);
+            setResults([]);
+            setStatus("done");
+            return;
+          }
           const { ext } = compressOutputFor(file);
-          const r = await compressImage(file, quality / 100, outputName(file.name, ext, "-compressed"));
+          const r = await compressImageToTarget(
+            file,
+            target * 1024,
+            outputName(file.name, ext, "-compressed"),
+          );
+          setCompressInfo({ targetBytes: r.targetBytes, reachedTarget: r.reachedTarget });
+          setAlreadyUnder(null);
           out = [r];
           break;
         }
@@ -178,7 +215,7 @@ export function ToolConverter({ tool }: { tool: ToolDef }) {
       setError(e instanceof Error ? e.message : "Conversion failed. Please try a different file.");
       setStatus("error");
     }
-  }, [files, tool, quality, width, height, lockAspect, meta]);
+  }, [files, tool, targetKb, width, height, lockAspect, meta]);
 
   const acceptAttr = tool.accept.join(",");
   const busy = status === "working" || status === "reading";
@@ -242,9 +279,9 @@ export function ToolConverter({ tool }: { tool: ToolDef }) {
       {(status === "ready" || status === "working") && (
         <Options
           tool={tool}
-          inputMime={files[0]?.type ?? ""}
-          quality={quality}
-          setQuality={setQuality}
+          targetKb={targetKb}
+          setTargetKb={setTargetKb}
+          originalBytes={meta?.bytes ?? files[0]?.size ?? 0}
           width={width}
           setWidth={setWidth}
           height={height}
@@ -262,15 +299,25 @@ export function ToolConverter({ tool }: { tool: ToolDef }) {
           disabled={busy}
           className="nd-gradient inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {converterCtaLabel(tool.kind, status === "working", tool.outputExt)}
+          {tool.kind === "compress" && status === "working"
+            ? `Compressing to ${typeof targetKb === "number" ? targetKb : ""} KB…`
+            : converterCtaLabel(tool.kind, status === "working", tool.outputExt)}
         </button>
       )}
 
-      {status === "done" && results.length > 0 && (
+      {status === "done" && alreadyUnder && (
+        <AlreadyUnderTarget
+          originalBytes={alreadyUnder.originalBytes}
+          targetBytes={alreadyUnder.targetBytes}
+          onReset={reset}
+        />
+      )}
+      {status === "done" && !alreadyUnder && results.length > 0 && (
         <Results
           tool={tool}
           result={results[0]}
           originalBytes={meta?.bytes ?? files.reduce((s, f) => s + f.size, 0)}
+          compressInfo={compressInfo}
           onReset={reset}
         />
       )}
@@ -282,9 +329,9 @@ export function ToolConverter({ tool }: { tool: ToolDef }) {
 
 interface OptionsProps {
   tool: ToolDef;
-  inputMime: string;
-  quality: number;
-  setQuality: (n: number) => void;
+  targetKb: number | "";
+  setTargetKb: (n: number | "") => void;
+  originalBytes: number;
   width: number | "";
   setWidth: (n: number | "") => void;
   height: number | "";
@@ -297,43 +344,51 @@ interface OptionsProps {
 function Options(p: OptionsProps) {
   const { tool } = p;
   if (tool.kind === "compress") {
-    // PNG (and any lossless input) ignores quality, so never show a slider that
-    // does nothing — show a truthful "Lossless PNG" note instead. JPEG/WebP get a
-    // real quality control.
-    const qualityApplies = qualityAppliesToMime(p.inputMime);
+    // Target FILE SIZE is the whole interaction — no quality percentage to reason
+    // about. Presets are capped just under the original (a target ≥ original is a
+    // no-op). Format is always preserved.
+    const presets = [100, 200, 500, 1024].filter((kb) => kb * 1024 < p.originalBytes);
     return (
       <div className="rounded-2xl border border-nd-border bg-nd-surface/60 p-4">
-        {qualityApplies ? (
-          <>
-            <label htmlFor="nd-quality" className="flex items-center justify-between text-sm text-nd-text">
-              <span>Quality</span>
-              <span className="tabular-nums text-nd-muted">{p.quality}%</span>
-            </label>
-            <input
-              id="nd-quality"
-              type="range"
-              min={10}
-              max={100}
-              value={p.quality}
-              onChange={(e) => p.setQuality(Number(e.target.value))}
-              className="mt-2 w-full accent-nd-accent"
-            />
-            <p className="mt-1 text-xs text-nd-muted">
-              Higher quality = larger file · Lower quality = smaller file.
-            </p>
-          </>
-        ) : (
-          <div className="flex items-start gap-2">
-            <span className="mt-0.5 shrink-0 rounded-md bg-white/5 px-2 py-0.5 text-[11px] font-medium text-nd-text">
-              Lossless PNG
-            </span>
-            <p className="text-xs text-nd-muted">
-              PNG is lossless, so there&apos;s no quality setting — we re-encode it
-              without any quality loss. If the file is already efficiently encoded,
-              the savings may be small or none.
-            </p>
+        <label htmlFor="nd-target" className="block text-sm text-nd-text">
+          Target file size
+        </label>
+        <div className="mt-2 flex items-center gap-2">
+          <input
+            id="nd-target"
+            type="number"
+            inputMode="numeric"
+            min={10}
+            value={p.targetKb}
+            onChange={(e) =>
+              p.setTargetKb(e.target.value === "" ? "" : Math.max(1, Math.round(Number(e.target.value))))
+            }
+            className="w-28 rounded-lg border border-nd-border bg-nd-bg px-3 py-2 text-sm tabular-nums text-nd-text outline-none focus:ring-1 focus:ring-nd-accent/50"
+          />
+          <span className="text-sm text-nd-muted">KB</span>
+        </div>
+        {presets.length > 0 && (
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            {presets.map((kb) => (
+              <button
+                key={kb}
+                type="button"
+                onClick={() => p.setTargetKb(kb)}
+                className={`nd-hit rounded-lg border px-2.5 py-1 text-xs transition-colors ${
+                  p.targetKb === kb
+                    ? "border-nd-accent/40 bg-nd-accent/15 text-nd-accent"
+                    : "border-nd-border text-nd-muted hover:bg-white/5 hover:text-nd-text"
+                }`}
+              >
+                {kb >= 1024 ? "1 MB" : `${kb} KB`}
+              </button>
+            ))}
           </div>
         )}
+        <p className="mt-2 text-xs text-nd-muted">
+          We keep the highest quality and resolution that fits at or below your
+          target. The format stays the same.
+        </p>
       </div>
     );
   }
@@ -423,11 +478,13 @@ function Results({
   tool,
   result,
   originalBytes,
+  compressInfo,
   onReset,
 }: {
   tool: ToolDef;
   result: ConvertResult;
   originalBytes: number;
+  compressInfo: { targetBytes: number; reachedTarget: boolean } | null;
   onReset: () => void;
 }) {
   // Format ALWAYS comes from the produced file (MIME → extension fallback), never
@@ -453,31 +510,33 @@ function Results({
     </Link>
   );
 
-  if (tool.kind === "compress") {
-    const { improved, savedBytes, percent } = compressionOutcome(originalBytes, result.bytes);
+  if (tool.kind === "compress" && compressInfo) {
+    const { savedBytes, percent } = compressionOutcome(originalBytes, result.bytes);
+    const targetKb = Math.round(compressInfo.targetBytes / 1024);
 
-    // An equal or larger output is NOT a successful compression — never present it
-    // as "Done ✓ / 0% smaller", and don't offer the non-smaller file for download.
-    if (!improved) {
-      const isPng = result.mime === "image/png";
+    // Target unreachable: never claim success. Show the closest result honestly and
+    // let the user decide — the download is offered but labelled as above target.
+    if (!compressInfo.reachedTarget) {
       return (
         <div className="rounded-2xl border border-nd-border bg-nd-surface/60 p-4">
-          <p className="text-sm font-semibold text-nd-text">Already optimized</p>
+          <p className="text-sm font-semibold text-nd-text">
+            Couldn&apos;t reach {targetKb} KB while keeping this image usable.
+          </p>
           <div className="mt-2 space-y-1.5 text-sm text-nd-muted">
-            <p>We couldn&apos;t make this image smaller at the current settings.</p>
+            <p>Here&apos;s the closest we could get without breaking the image:</p>
             <div className="grid w-max grid-cols-[auto_1fr] gap-x-6 gap-y-0.5 tabular-nums">
-              <span>Original</span>
-              <span className="text-right text-nd-text">{formatBytes(originalBytes)}</span>
-              <span>Attempted</span>
+              <span>Target</span>
+              <span className="text-right text-nd-text">{formatBytes(compressInfo.targetBytes)}</span>
+              <span>Closest result</span>
               <span className="text-right text-nd-text">{formatBytes(result.bytes)}</span>
             </div>
-            <p>
-              {isPng
-                ? "PNG is lossless and this file is already efficiently encoded."
-                : "Try a lower quality to reduce the size."}
+            <p className="pt-0.5">
+              {fmt}
+              {dims ? ` · ${dims}` : ""}
             </p>
           </div>
           <div className="mt-4 flex flex-wrap items-center gap-2">
+            {downloadBtn}
             <button
               type="button"
               onClick={onReset}
@@ -487,11 +546,14 @@ function Results({
             </button>
             {homeLink}
           </div>
+          <p className="mt-2 text-xs text-nd-muted">
+            This file is above your {targetKb} KB target.
+          </p>
         </div>
       );
     }
 
-    // Real savings.
+    // Target reached — the result is at or below the requested size.
     return (
       <div className="rounded-2xl border border-nd-accent/30 bg-nd-accent/[0.06] p-4">
         <p className="text-sm font-semibold text-nd-text">Done ✓</p>
@@ -499,12 +561,18 @@ function Results({
           <div className="grid w-max grid-cols-[auto_1fr] gap-x-6 gap-y-0.5 tabular-nums">
             <span>Original</span>
             <span className="text-right text-nd-text">{formatBytes(originalBytes)}</span>
+            <span>Target</span>
+            <span className="text-right text-nd-text">{formatBytes(compressInfo.targetBytes)}</span>
             <span>Compressed</span>
             <span className="text-right text-nd-text">{formatBytes(result.bytes)}</span>
-            <span>Saved</span>
-            <span className="text-right text-emerald-400">
-              {formatBytes(savedBytes)} ({percent}%)
-            </span>
+            {savedBytes > 0 && (
+              <>
+                <span>Saved</span>
+                <span className="text-right text-emerald-400">
+                  {formatBytes(savedBytes)} ({percent}%)
+                </span>
+              </>
+            )}
           </div>
           <p className="pt-0.5">
             {fmt}
@@ -515,6 +583,9 @@ function Results({
           {downloadBtn}
           {homeLink}
         </div>
+        <p className="mt-2 text-xs text-nd-muted">
+          Optimized to stay under your {targetKb} KB target.
+        </p>
       </div>
     );
   }
@@ -533,6 +604,54 @@ function Results({
       <div className="mt-4 flex flex-wrap items-center gap-2">
         {downloadBtn}
         {homeLink}
+      </div>
+    </div>
+  );
+}
+
+/** Shown when the requested target is already ≥ the original size — there is
+ *  nothing to gain by re-encoding, so we don't. */
+function AlreadyUnderTarget({
+  originalBytes,
+  targetBytes,
+  onReset,
+}: {
+  originalBytes: number;
+  targetBytes: number;
+  onReset: () => void;
+}) {
+  const targetKb = Math.round(targetBytes / 1024);
+  return (
+    <div className="rounded-2xl border border-nd-border bg-nd-surface/60 p-4">
+      <p className="text-sm font-semibold text-nd-text">
+        This image is already under your target size.
+      </p>
+      <div className="mt-2 space-y-1.5 text-sm text-nd-muted">
+        <p>
+          It&apos;s already smaller than {targetKb} KB, so there&apos;s nothing to
+          compress — using the original keeps the best quality.
+        </p>
+        <div className="grid w-max grid-cols-[auto_1fr] gap-x-6 gap-y-0.5 tabular-nums">
+          <span>Original</span>
+          <span className="text-right text-nd-text">{formatBytes(originalBytes)}</span>
+          <span>Target</span>
+          <span className="text-right text-nd-text">{formatBytes(targetBytes)}</span>
+        </div>
+      </div>
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={onReset}
+          className="inline-flex items-center gap-1.5 rounded-xl border border-nd-border px-4 py-2.5 text-sm text-nd-text transition-colors hover:bg-white/5"
+        >
+          <RotateCcw size={15} /> Start over
+        </button>
+        <Link
+          href="/"
+          className="inline-flex items-center gap-1.5 rounded-xl border border-nd-border px-4 py-2.5 text-sm text-nd-muted transition-colors hover:bg-white/5 hover:text-nd-text"
+        >
+          Open NoteDrift <ArrowRight size={15} />
+        </Link>
       </div>
     </div>
   );

@@ -93,7 +93,7 @@ export const TOOLS: readonly ToolDef[] = [
     title: "Compress Image",
     seoTitle: "Compress Image — Free Browser Image Compressor | NoteDrift",
     description:
-      "Shrink JPG, PNG, and WebP images in your browser with a simple quality control. Free and private.",
+      "Compress JPG, PNG, and WebP images to a target file size such as 100 KB, 200 KB, or 500 KB — right in your browser. Free and private.",
     category: "image-utility",
     kind: "compress",
     accept: [JPG, PNG, WEBP],

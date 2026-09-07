@@ -8,7 +8,11 @@ import {
   MAX_CANVAS_EDGE,
   checkMegapixels,
 } from "./limits";
+import { compressOutputFor } from "./format";
+import { estimateDownscale, pickBestCandidate } from "./target";
 import type { ConvertResult, RasterOutput } from "./types";
+
+export { compressOutputFor };
 
 interface Decoded {
   readonly width: number;
@@ -179,18 +183,6 @@ export async function convertRaster(
   };
 }
 
-/** Which encoder the compressor should use for a given input (format-preserving,
- *  except unsupported inputs fall back to PNG). */
-export function compressOutputFor(file: File): {
-  output: RasterOutput | "webp";
-  ext: string;
-} {
-  const t = file.type;
-  if (t === "image/jpeg") return { output: "jpeg", ext: "jpg" };
-  if (t === "image/webp") return { output: "webp", ext: "webp" };
-  return { output: "png", ext: "png" };
-}
-
 export async function compressImage(
   file: File,
   quality: number,
@@ -206,6 +198,137 @@ export async function compressImage(
     width: r.width,
     height: r.height,
   };
+}
+
+export interface TargetCompressResult extends ConvertResult {
+  /** JPEG/WebP encoder quality of the chosen candidate (absent for PNG). */
+  readonly quality?: number;
+  readonly targetBytes: number;
+  /** True when the chosen result is at or below the target size. */
+  readonly reachedTarget: boolean;
+}
+
+/** Never shrink the long edge below this — a smaller image stops being usable. */
+const MIN_TARGET_DIM = 24;
+
+/** Compress to AT MOST `targetBytes`, preserving format. Decodes the source ONCE
+ *  and re-encodes candidates from it: JPEG/WebP use a bounded quality binary
+ *  search at full resolution, then dimension reduction if quality alone can't
+ *  reach the target; PNG (no quality control) uses a bounded dimension binary
+ *  search, preserving PNG + alpha. Returns the best candidate ≤ target (highest
+ *  resolution, then quality); if the target is unreachable it returns the closest
+ *  smaller-than-attempted result with reachedTarget=false. */
+export async function compressImageToTarget(
+  file: File,
+  targetBytes: number,
+  filename: string,
+): Promise<TargetCompressResult> {
+  const { output } = compressOutputFor(file);
+  const mime = MIME[output];
+  const isPng = output === "png";
+  const dec = await decodeImageFile(file);
+  try {
+    const mpErr = checkMegapixels(dec.width, dec.height);
+    if (mpErr) throw new Error(mpErr);
+    const srcW = dec.width;
+    const srcH = dec.height;
+    const minScale = MIN_TARGET_DIM / Math.max(srcW, srcH);
+
+    const kept: { blob: Blob; width: number; height: number; quality?: number }[] = [];
+    const encode = async (scale: number, quality?: number) => {
+      let w = Math.max(1, Math.round(srcW * scale));
+      let h = Math.max(1, Math.round(srcH * scale));
+      if (w > MAX_CANVAS_EDGE || h > MAX_CANVAS_EDGE) {
+        const s = MAX_CANVAS_EDGE / Math.max(w, h);
+        w = Math.max(1, Math.round(w * s));
+        h = Math.max(1, Math.round(h * s));
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("Your browser could not create a drawing canvas.");
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+      // JPEG can't carry alpha — flatten onto white. PNG/WebP keep transparency.
+      if (output === "jpeg") {
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, w, h);
+      }
+      dec.draw(ctx, w, h);
+      const blob = await canvasToBlob(canvas, mime, isPng ? undefined : quality);
+      releaseCanvas(canvas); // free the backing store; the blob is retained
+      const cand = { blob, width: w, height: h, quality: isPng ? undefined : quality };
+      kept.push(cand);
+      return cand;
+    };
+
+    if (isPng) {
+      const full = await encode(1);
+      if (full.blob.size > targetBytes) {
+        // Largest scale whose PNG is ≤ target (binary search on dimensions).
+        let lo = minScale;
+        let hi = 1;
+        for (let i = 0; i < 9; i++) {
+          const s = (lo + hi) / 2;
+          const c = await encode(s);
+          if (c.blob.size <= targetBytes) lo = s;
+          else hi = s;
+        }
+      }
+    } else {
+      // Highest quality ≤ target at a given scale (binary search on quality).
+      const qualitySearch = async (scale: number): Promise<{ ok: boolean; lowBytes: number }> => {
+        let lo = 0.1;
+        let hi = 0.95;
+        let ok = false;
+        let lowBytes = Infinity;
+        for (let i = 0; i < 8; i++) {
+          const q = (lo + hi) / 2;
+          const c = await encode(scale, q);
+          lowBytes = Math.min(lowBytes, c.blob.size);
+          if (c.blob.size <= targetBytes) {
+            ok = true;
+            lo = q; // room to raise quality and still fit
+          } else {
+            hi = q;
+          }
+        }
+        return { ok, lowBytes };
+      };
+
+      const full = await qualitySearch(1);
+      if (!full.ok) {
+        // Even lowest quality at full res is over target — reduce dimensions.
+        let scale = estimateDownscale(targetBytes, full.lowBytes) * 0.97;
+        for (let pass = 0; pass < 5; pass++) {
+          scale = Math.min(0.98, Math.max(minScale, scale));
+          const r = await qualitySearch(scale);
+          if (r.ok || scale <= minScale) break;
+          scale *= 0.75;
+        }
+      }
+    }
+
+    const pick = pickBestCandidate(
+      kept.map((c) => ({ bytes: c.blob.size, width: c.width, height: c.height, quality: c.quality })),
+      targetBytes,
+    );
+    const chosen = kept[pick ? pick.index : kept.length - 1];
+    return {
+      blob: chosen.blob,
+      filename,
+      mime,
+      bytes: chosen.blob.size,
+      width: chosen.width,
+      height: chosen.height,
+      quality: chosen.quality,
+      targetBytes,
+      reachedTarget: pick ? pick.reachedTarget : false,
+    };
+  } finally {
+    dec.close();
+  }
 }
 
 /** Resize, preserving the input format (jpg stays jpg, png stays png, …). */
