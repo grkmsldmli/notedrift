@@ -60,7 +60,7 @@ export function BottomAdBand({ variant }: { variant: "editor" | "tool-page" }) {
       <span className="pointer-events-none absolute left-2.5 top-1 z-10 text-[9px] font-medium uppercase tracking-wider text-nd-muted/60">
         Advertisement
       </span>
-      <div className="mx-auto flex h-[62px] w-full max-w-5xl items-center justify-center overflow-hidden px-2 sm:h-[96px]">
+      <div className="mx-auto flex h-[48px] w-full max-w-5xl items-center justify-center overflow-hidden px-2 sm:h-[60px]">
         <AdSlot
           slot={slot}
           placement={variant === "editor" ? "editor-bottom" : "tool-page"}
