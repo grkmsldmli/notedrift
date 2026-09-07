@@ -65,7 +65,6 @@ import { CropBar } from "./CropBar";
 import { NodeQuickAdd } from "./NodeQuickAdd";
 import { EmptyCanvasHint, QuickStart } from "./FirstRun";
 import { CustomSizeDialog } from "./CustomSizeDialog";
-import { Logo } from "./Logo";
 import { BottomAdBand } from "../ads/BottomAdBand";
 import { notifyLifecycle } from "@/lib/email/notify";
 
@@ -1078,15 +1077,6 @@ export default function Editor() {
           onFitSelection={onFitSelection}
           onSetStyle={onSetPageStyle}
         />
-
-        {!ready && (
-          <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-            <div className="flex flex-col items-center gap-3 opacity-70">
-              <Logo size={40} />
-              <span className="text-sm text-nd-muted">Loading canvas…</span>
-            </div>
-          </div>
-        )}
 
         <EmptyCanvasHint isEmpty={state.isEmpty} ready={ready} />
       </div>
