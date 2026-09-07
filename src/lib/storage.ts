@@ -33,6 +33,8 @@ const DB_VERSION = 1;
 
 const PAGES_KEY = "notedrift:pages";
 const CURRENT_KEY = "notedrift:current";
+// Per-browser-session marker (sessionStorage) — see anonymousSessionStarted().
+const ANON_SESSION_KEY = "notedrift:anonymous-session-started";
 const PREFS_KEY = "notedrift:prefs";
 
 export interface Prefs {
@@ -187,6 +189,31 @@ export function setCurrentPageId(id: string): void {
     window.localStorage.setItem(CURRENT_KEY, id);
   } catch {
     /* ignore */
+  }
+}
+
+/* --------------------------- anonymous session ---------------------------- */
+
+// Backed by sessionStorage so it resets on a genuinely NEW browser session (new
+// tab/window with no session restore) but survives a same-session refresh. Used
+// only to decide whether a signed-out visitor starts on a fresh blank page —
+// never to detect private/incognito mode.
+
+export function anonymousSessionStarted(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.sessionStorage.getItem(ANON_SESSION_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function markAnonymousSessionStarted(): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(ANON_SESSION_KEY, "1");
+  } catch {
+    /* ignore — sessionStorage may be unavailable */
   }
 }
 

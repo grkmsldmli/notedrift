@@ -3,12 +3,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CanvasController } from "@/lib/canvasController";
 import {
+  anonymousSessionStarted,
   deleteCanvasDoc,
   getCurrentPageId,
   loadCanvasDoc,
   loadPages,
   loadPrefs,
   loadToolDefaults,
+  markAnonymousSessionStarted,
   savePages,
   savePrefs,
   saveCanvasDoc,
@@ -17,6 +19,7 @@ import {
   uid,
   type Prefs,
 } from "@/lib/storage";
+import { planStartup } from "@/lib/editor/startup";
 import type {
   CanvasDoc,
   CanvasStyle,
@@ -153,6 +156,11 @@ export default function Editor() {
       typeof window !== "undefined" &&
       /[?&]touchdebug=1\b/.test(window.location.search),
   );
+  // Identity gates startup: the FIRST page is resolved only once auth status is
+  // "ready" (billing is NOT waited on). anonInitRef is a StrictMode belt for the
+  // sessionStorage guard so a fresh anonymous session never creates two pages.
+  const { plan, status: authStatus, user: authUser } = useAuth();
+  const anonInitRef = useRef(false);
   const currentIdRef = useRef<string | null>(null);
   const pagesRef = useRef<PageMeta[]>([]);
   // Monotonic token guarding async page loads. Every page operation (switch /
@@ -227,8 +235,12 @@ export default function Editor() {
     [showNotice],
   );
 
-  // One-time editor bootstrap.
+  // One-time editor bootstrap — runs once identity is resolved.
   useEffect(() => {
+    // Identity must resolve before we decide the FIRST page: never restore (or
+    // replace) a canvas before we know if the visitor is signed in or anonymous.
+    // Only identity is awaited here — billing is NOT.
+    if (authStatus === "loading") return;
     const canvasEl = canvasRef.current;
     const paperEl = paperRef.current;
     if (!canvasEl || !paperEl) return;
@@ -240,6 +252,30 @@ export default function Editor() {
     setPinnedSlots(prefs.pinnedSlots);
     const defaults = loadToolDefaults();
     setToolDefaults(defaults);
+
+    // Anonymous fresh-session rule: a signed-out visitor beginning a NEW browser
+    // session opens a fresh blank page instead of auto-restoring a previous
+    // anonymous canvas. Old anonymous pages are KEPT in the list (still reachable
+    // from the page switcher) — nothing is deleted. Signed-in users, and a
+    // same-session refresh, restore as before. Deterministic on identity +
+    // sessionStorage (never incognito detection); the sessionStorage marker plus
+    // anonInitRef also stop React StrictMode from creating two blank pages.
+    if (
+      planStartup({
+        authStatus,
+        signedIn: authUser !== null,
+        anonSessionStarted: anonymousSessionStarted(),
+      }).kind === "new-blank" &&
+      !anonInitRef.current
+    ) {
+      anonInitRef.current = true;
+      markAnonymousSessionStarted();
+      const blank = newPageMeta(prefs.defaultStyle);
+      list = [...list, blank];
+      curId = blank.id;
+      savePages(list);
+      setCurrentPageId(curId);
+    }
 
     if (list.length === 0) {
       const first = newPageMeta(prefs.defaultStyle);
@@ -324,8 +360,11 @@ export default function Editor() {
       controller.dispose();
       controllerRef.current = null;
     };
+    // Runs once identity is ready; authUser is intentionally read as a snapshot
+    // at that moment and must not re-trigger the bootstrap (a later sign-in must
+    // not recreate the controller).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [authStatus]);
 
   // Keyboard shortcuts.
   useEffect(() => {
@@ -668,7 +707,6 @@ export default function Editor() {
 
   /* --------------------------------- export --------------------------------- */
 
-  const { plan } = useAuth();
   const [exporting, setExporting] = useState(false);
   const [exportUpgrade, setExportUpgrade] = useState<UpgradeContext | null>(null);
   const [customSize, setCustomSize] = useState<{ width: number; height: number } | null>(null);
