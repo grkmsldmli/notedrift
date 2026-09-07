@@ -46,3 +46,28 @@ export function shouldClaimAsPan(
   if (pointerType === "touch" && isDrawingTool(tool) && penSeen) return true;
   return false;
 }
+
+/** ONE POINTER = ONE OWNER. Whether Fabric's mouse lifecycle must HARD-IGNORE an
+ *  event because the DOM navigation layer already owns that physical pointer.
+ *  Real-device iPad Safari delivers a single touch to BOTH the DOM pointer layer
+ *  and Fabric's synthesized-mouse path, so stopPropagation is not enough — Fabric
+ *  itself must drop these. A touch/pen is dropped when: its id is DOM-owned (an
+ *  active pointerPan), OR the Hand tool is active (viewport-only, defensive even
+ *  if Safari mutates the id), OR a live two-finger gesture owns it. A bare mouse
+ *  event (no pointerType) is dropped only while a DOM-owned touch/pen pan is live
+ *  (Safari can synthesize a typeless event from a touch). A genuine desktop mouse
+ *  always passes, so mouse Hand keeps Fabric's isPanning path. */
+export function shouldFabricIgnorePointer(args: {
+  pointerType: string | undefined;
+  tool: Tool;
+  isOwned: boolean;
+  gestureActive: boolean;
+  domPanActive: boolean;
+}): boolean {
+  const { pointerType, tool, isOwned, gestureActive, domPanActive } = args;
+  if (pointerType === "touch" || pointerType === "pen") {
+    return isOwned || isViewportOnlyTool(tool) || gestureActive;
+  }
+  if (pointerType === undefined) return domPanActive;
+  return false; // genuine mouse → desktop path unchanged
+}

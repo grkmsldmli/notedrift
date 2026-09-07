@@ -11,7 +11,18 @@ import {
   canEraseWithTool,
   isViewportOnlyTool,
   shouldClaimAsPan,
+  shouldFabricIgnorePointer,
 } from "./pointerGuards.ts";
+
+const ign = (o: Partial<Parameters<typeof shouldFabricIgnorePointer>[0]>) =>
+  shouldFabricIgnorePointer({
+    pointerType: "touch",
+    tool: "hand",
+    isOwned: false,
+    gestureActive: false,
+    domPanActive: false,
+    ...o,
+  });
 
 const NON_DRAW: Tool[] = [
   "select",
@@ -90,4 +101,44 @@ test("no tool ever claims a mouse pointer as a touch-pan", () => {
     assert.equal(shouldClaimAsPan(t, "mouse", false), false, t);
     assert.equal(shouldClaimAsPan(t, "mouse", true), false, `${t} +penSeen`);
   }
+});
+
+/* ------------------------- shouldFabricIgnorePointer ---------------------- */
+// ONE POINTER = ONE OWNER: Fabric must hard-ignore DOM-owned touch/pen so a
+// single iPad-Safari touch can't be processed twice (the isPanning=true smoking
+// gun). Mouse always passes so desktop Hand keeps Fabric's isPanning path.
+
+test("a DOM-owned touch/pen is always ignored by Fabric", () => {
+  assert.equal(ign({ pointerType: "touch", isOwned: true, tool: "pen" }), true);
+  assert.equal(ign({ pointerType: "pen", isOwned: true, tool: "select" }), true);
+});
+
+test("touch/pen while Hand is active is ignored even if unowned (defensive)", () => {
+  assert.equal(ign({ pointerType: "touch", tool: "hand", isOwned: false }), true);
+  assert.equal(ign({ pointerType: "pen", tool: "hand", isOwned: false }), true);
+});
+
+test("a live two-finger gesture makes Fabric ignore its touches (any tool)", () => {
+  assert.equal(ign({ pointerType: "touch", tool: "select", gestureActive: true }), true);
+  assert.equal(ign({ pointerType: "touch", tool: "pen", gestureActive: true }), true);
+});
+
+test("an unowned stylus/finger in a drawing/select tool still reaches Fabric", () => {
+  // A legit pencil stroke must draw; a select touch must select.
+  assert.equal(ign({ pointerType: "pen", tool: "pen", isOwned: false }), false);
+  assert.equal(ign({ pointerType: "touch", tool: "pen", isOwned: false }), false);
+  assert.equal(ign({ pointerType: "touch", tool: "select", isOwned: false }), false);
+  assert.equal(ign({ pointerType: "touch", tool: "eraser", isOwned: false }), false);
+});
+
+test("a genuine mouse always passes — desktop Hand keeps Fabric's isPanning path", () => {
+  assert.equal(ign({ pointerType: "mouse", tool: "hand" }), false);
+  assert.equal(ign({ pointerType: "mouse", tool: "select" }), false);
+});
+
+test("a typeless (bare-MouseEvent) pointer is ignored ONLY while a DOM pan is live", () => {
+  // Safari can synthesize a typeless event from a touch mid-pan.
+  assert.equal(ign({ pointerType: undefined, domPanActive: true, tool: "hand" }), true);
+  // No DOM pan → it is a genuine mouse → passes (desktop mouse Hand unaffected).
+  assert.equal(ign({ pointerType: undefined, domPanActive: false, tool: "hand" }), false);
 });

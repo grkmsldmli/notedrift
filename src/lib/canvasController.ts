@@ -41,7 +41,11 @@ import {
 import { History } from "./history";
 import { FreehandBrush } from "./brush/freehand";
 import { DRAW_TOOLS, materialFor } from "./brush/materials";
-import { canEraseWithTool, shouldClaimAsPan } from "./editor/pointerGuards";
+import {
+  canEraseWithTool,
+  shouldClaimAsPan,
+  shouldFabricIgnorePointer,
+} from "./editor/pointerGuards";
 import { brushSpecFor } from "./tools/registry";
 import { makeStickyNote, styleArrow } from "./shapes";
 import { NdLine, makeNdLine } from "./shapes/ndline";
@@ -393,6 +397,12 @@ export class CanvasController {
   private debugTouch = false;
   private touchLog: { t: number; msg: string }[] = [];
   private lastMoveLogT = 0;
+
+  // ONE POINTER = ONE OWNER. Physical iPad Safari delivers a single touch to BOTH
+  // the DOM pointer layer AND Fabric's mouse lifecycle. Pointer ids the DOM
+  // navigation layer has claimed (a pointerPan) live here; Fabric's mouse handlers
+  // hard-ignore them so one touch can never be processed twice.
+  private domOwnedPointerIds = new Set<number>();
 
   // Connectors
   private anchorHost: fabric.FabricObject | null = null;
@@ -4048,8 +4058,16 @@ export class CanvasController {
         /* capture may already be gone */
       }
     }
+    for (const id of this.domOwnedPointerIds) {
+      try {
+        this.paperEl.releasePointerCapture(id);
+      } catch {
+        /* capture may already be gone */
+      }
+    }
     this.pointerPan = null;
     this.touchPoints.clear();
+    this.domOwnedPointerIds.clear();
     this.gestureActive = false;
     this.gestureLatch = false;
     this.canvasRect = null;
@@ -4088,6 +4106,7 @@ export class CanvasController {
       this.pointerPan = null;
       changed = true;
     }
+    if (this.domOwnedPointerIds.delete(e.pointerId)) changed = true;
     if (this.touchPoints.delete(e.pointerId)) changed = true;
     if (
       changed &&
@@ -4126,8 +4145,8 @@ export class CanvasController {
     if (!this.debugTouch) return;
     const line =
       `${msg} · tool=${this.tool} draw=${this.canvas.isDrawingMode} ` +
-      `pan=${this.pointerPan ? this.pointerPan.id : "-"} pts=${this.touchPoints.size} ` +
-      `gAct=${this.gestureActive} gLatch=${this.gestureLatch} ` +
+      `pan=${this.pointerPan ? this.pointerPan.id : "-"} owned=${this.domOwnedPointerIds.size} ` +
+      `pts=${this.touchPoints.size} gAct=${this.gestureActive} gLatch=${this.gestureLatch} ` +
       `isPan=${this.isPanning} isEra=${this.isErasing}` +
       (data ? " · " + JSON.stringify(data) : "");
     this.touchLog.push({ t: Date.now(), msg: line });
@@ -4146,6 +4165,7 @@ export class CanvasController {
         tool: this.tool,
         isDrawingMode: this.canvas.isDrawingMode,
         pointerPan: this.pointerPan ? this.pointerPan.id : null,
+        domOwned: this.domOwnedPointerIds.size,
         touchPoints: this.touchPoints.size,
         gestureActive: this.gestureActive,
         gestureLatch: this.gestureLatch,
@@ -4173,13 +4193,18 @@ export class CanvasController {
       /* pointer capture is best-effort */
     }
     this.pointerPan = { id: e.pointerId, last: { x: e.clientX, y: e.clientY } };
+    // Claim exclusive DOM ownership of this physical pointer and make sure Fabric's
+    // parallel mouse-pan state can never be considered live for it.
+    this.domOwnedPointerIds.add(e.pointerId);
+    this.isPanning = false;
   }
 
-  /** Tear down any active single-pointer pan and release its capture. */
+  /** Tear down any active single-pointer pan and release its capture + ownership. */
   private endActivePointerPan(): void {
     if (!this.pointerPan) return;
     const id = this.pointerPan.id;
     this.pointerPan = null;
+    this.domOwnedPointerIds.delete(id);
     try {
       this.paperEl.releasePointerCapture(id);
     } catch {
@@ -4302,6 +4327,8 @@ export class CanvasController {
     if (e.pointerType === "mouse") return;
 
     this.logTouch("pointerup", { pointerId: e.pointerId, pointerType: e.pointerType });
+    // This physical pointer is done — drop any DOM ownership it held.
+    this.domOwnedPointerIds.delete(e.pointerId);
     // End a single-pointer pan (touch OR pen).
     if (this.pointerPan && e.pointerId === this.pointerPan.id) {
       e.stopPropagation();
@@ -4459,7 +4486,32 @@ export class CanvasController {
     });
   }
 
+  /** ONE POINTER = ONE OWNER. True when a Fabric mouse-lifecycle event must be
+   *  dropped because the DOM navigation layer already owns that physical pointer
+   *  — iPad Safari delivers one touch to BOTH systems, so stopPropagation is not
+   *  enough and Fabric itself has to bow out. Logs the skip under ?touchdebug=1. */
+  private fabricIgnore(opt: PointerInfo, phase: string): boolean {
+    const ev = opt.e as { pointerType?: string; pointerId?: number };
+    const ignore = shouldFabricIgnorePointer({
+      pointerType: ev.pointerType,
+      tool: this.tool,
+      isOwned:
+        typeof ev.pointerId === "number" &&
+        this.domOwnedPointerIds.has(ev.pointerId),
+      gestureActive: this.gestureActive,
+      domPanActive: this.pointerPan !== null,
+    });
+    if (ignore) {
+      this.logTouch(`fabric-${phase}-skipped-dom-owned`, {
+        pointerId: ev.pointerId,
+        pointerType: ev.pointerType,
+      });
+    }
+    return ignore;
+  }
+
   private onMouseDownBefore = (opt: PointerInfo): void => {
+    if (this.fabricIgnore(opt, "downbefore")) return;
     this.pendingConnect = null;
     this.pendingReassign = null;
     if (this.tool !== "select" || this.spaceDown) return;
@@ -4514,6 +4566,9 @@ export class CanvasController {
   };
 
   private onMouseDown = (opt: PointerInfo): void => {
+    // A DOM-owned touch/pen (Hand-pan, gesture) must never enter Fabric's mouse
+    // lifecycle — otherwise one iPad-Safari touch drives two pan systems at once.
+    if (this.fabricIgnore(opt, "down")) return;
     const e = opt.e as MouseEvent;
 
     if (this.spaceDown || this.tool === "hand" || e.button === 1) {
@@ -4614,6 +4669,7 @@ export class CanvasController {
   };
 
   private onMouseMove = (opt: PointerInfo): void => {
+    if (this.fabricIgnore(opt, "move")) return;
     const e = opt.e as MouseEvent;
 
     if (this.isPanning) {
@@ -4698,6 +4754,13 @@ export class CanvasController {
   };
 
   private onMouseUp = (): void => {
+    // Fabric gives us no event here, but if the DOM navigation layer owns a live
+    // pan (touch/pen), a paired Fabric mouse:up is a phantom from the same touch —
+    // ignore it so it can't tear down state the DOM layer is still driving.
+    if (this.pointerPan) {
+      this.logTouch("fabric-up-skipped-dom-owned");
+      return;
+    }
     if (this.cropState) {
       if (this.cropState.drag) this.cropState.drag = null;
       return;
