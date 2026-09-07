@@ -99,8 +99,8 @@ export const TOOLS: readonly ToolDef[] = [
     accept: [JPG, PNG, WEBP],
     acceptExts: ["jpg", "jpeg", "png", "webp"],
     acceptLabel: "JPG, PNG or WebP",
-    output: "jpeg",
-    outputExt: "jpg",
+    // Format-preserving: no fixed output. Result format comes from the produced
+    // file's MIME (jpg→jpg, png→png, webp→webp).
     related: ["image-resizer", "png-to-jpg", "webp-to-jpg"],
   },
   {
@@ -114,8 +114,7 @@ export const TOOLS: readonly ToolDef[] = [
     accept: [JPG, PNG, WEBP],
     acceptExts: ["jpg", "jpeg", "png", "webp"],
     acceptLabel: "JPG, PNG or WebP",
-    output: "png",
-    outputExt: "png",
+    // Format-preserving: no fixed output (result format = the produced file's MIME).
     related: ["image-compressor", "png-to-jpg", "svg-to-png"],
   },
 

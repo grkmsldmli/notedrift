@@ -6,7 +6,15 @@ import { ArrowRight, Download, ImageIcon, RotateCcw } from "lucide-react";
 import type { ConvertResult, ToolDef } from "@/lib/convert/types";
 import { accepts, acceptError } from "@/lib/convert/mime";
 import { checkFileSize } from "@/lib/convert/limits";
-import { formatBytes, formatDimensions, resizeDims, savingsPercent } from "@/lib/convert/format";
+import {
+  compressionOutcome,
+  converterCtaLabel,
+  formatBytes,
+  formatDimensions,
+  formatLabel,
+  qualityAppliesToMime,
+  resizeDims,
+} from "@/lib/convert/format";
 import { outputName } from "@/lib/convert/filenames";
 import {
   compressImage,
@@ -114,7 +122,7 @@ export function ToolConverter({ tool }: { tool: ToolDef }) {
           const useW = tool.slug === "svg-to-png" && typeof width === "number" ? width : undefined;
           const useH = tool.slug === "svg-to-png" && typeof height === "number" ? height : undefined;
           const r = await convertRaster(file, tool.output === "jpeg" ? "jpeg" : "png", {
-            filename: outputName(file.name, tool.outputExt),
+            filename: outputName(file.name, tool.outputExt ?? "png"),
             quality: 0.92,
             width: useW,
             height: useH,
@@ -234,6 +242,7 @@ export function ToolConverter({ tool }: { tool: ToolDef }) {
       {(status === "ready" || status === "working") && (
         <Options
           tool={tool}
+          inputMime={files[0]?.type ?? ""}
           quality={quality}
           setQuality={setQuality}
           width={width}
@@ -253,7 +262,7 @@ export function ToolConverter({ tool }: { tool: ToolDef }) {
           disabled={busy}
           className="nd-gradient inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {status === "working" ? "Converting…" : `Convert to ${tool.outputExt.toUpperCase()}`}
+          {converterCtaLabel(tool.kind, status === "working", tool.outputExt)}
         </button>
       )}
 
@@ -262,6 +271,7 @@ export function ToolConverter({ tool }: { tool: ToolDef }) {
           tool={tool}
           result={results[0]}
           originalBytes={meta?.bytes ?? files.reduce((s, f) => s + f.size, 0)}
+          onReset={reset}
         />
       )}
     </div>
@@ -272,6 +282,7 @@ export function ToolConverter({ tool }: { tool: ToolDef }) {
 
 interface OptionsProps {
   tool: ToolDef;
+  inputMime: string;
   quality: number;
   setQuality: (n: number) => void;
   width: number | "";
@@ -286,24 +297,43 @@ interface OptionsProps {
 function Options(p: OptionsProps) {
   const { tool } = p;
   if (tool.kind === "compress") {
+    // PNG (and any lossless input) ignores quality, so never show a slider that
+    // does nothing — show a truthful "Lossless PNG" note instead. JPEG/WebP get a
+    // real quality control.
+    const qualityApplies = qualityAppliesToMime(p.inputMime);
     return (
       <div className="rounded-2xl border border-nd-border bg-nd-surface/60 p-4">
-        <label htmlFor="nd-quality" className="flex items-center justify-between text-sm text-nd-text">
-          <span>Quality</span>
-          <span className="tabular-nums text-nd-muted">{p.quality}%</span>
-        </label>
-        <input
-          id="nd-quality"
-          type="range"
-          min={10}
-          max={100}
-          value={p.quality}
-          onChange={(e) => p.setQuality(Number(e.target.value))}
-          className="mt-2 w-full accent-nd-accent"
-        />
-        <p className="mt-1 text-xs text-nd-muted">
-          Lower quality = smaller file. PNG stays lossless (quality has no effect).
-        </p>
+        {qualityApplies ? (
+          <>
+            <label htmlFor="nd-quality" className="flex items-center justify-between text-sm text-nd-text">
+              <span>Quality</span>
+              <span className="tabular-nums text-nd-muted">{p.quality}%</span>
+            </label>
+            <input
+              id="nd-quality"
+              type="range"
+              min={10}
+              max={100}
+              value={p.quality}
+              onChange={(e) => p.setQuality(Number(e.target.value))}
+              className="mt-2 w-full accent-nd-accent"
+            />
+            <p className="mt-1 text-xs text-nd-muted">
+              Higher quality = larger file · Lower quality = smaller file.
+            </p>
+          </>
+        ) : (
+          <div className="flex items-start gap-2">
+            <span className="mt-0.5 shrink-0 rounded-md bg-white/5 px-2 py-0.5 text-[11px] font-medium text-nd-text">
+              Lossless PNG
+            </span>
+            <p className="text-xs text-nd-muted">
+              PNG is lossless, so there&apos;s no quality setting — we re-encode it
+              without any quality loss. If the file is already efficiently encoded,
+              the savings may be small or none.
+            </p>
+          </div>
+        )}
       </div>
     );
   }
@@ -393,45 +423,116 @@ function Results({
   tool,
   result,
   originalBytes,
+  onReset,
 }: {
   tool: ToolDef;
   result: ConvertResult;
   originalBytes: number;
+  onReset: () => void;
 }) {
-  const saving = tool.kind === "compress" ? savingsPercent(originalBytes, result.bytes) : null;
+  // Format ALWAYS comes from the produced file (MIME → extension fallback), never
+  // from fixed tool metadata — so a PNG result reads "PNG", not the tool's slug.
+  const fmt = formatLabel(result.mime, result.filename);
+  const dims = result.width ? formatDimensions(result.width, result.height ?? 0) : null;
 
+  const downloadBtn = (
+    <button
+      type="button"
+      onClick={() => triggerDownload(result.blob, result.filename)}
+      className="nd-gradient inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-white transition hover:opacity-90"
+    >
+      <Download size={16} /> Download
+    </button>
+  );
+  const homeLink = (
+    <Link
+      href="/"
+      className="inline-flex items-center gap-1.5 rounded-xl border border-nd-border px-4 py-2.5 text-sm text-nd-muted transition-colors hover:bg-white/5 hover:text-nd-text"
+    >
+      Open NoteDrift <ArrowRight size={15} />
+    </Link>
+  );
+
+  if (tool.kind === "compress") {
+    const { improved, savedBytes, percent } = compressionOutcome(originalBytes, result.bytes);
+
+    // An equal or larger output is NOT a successful compression — never present it
+    // as "Done ✓ / 0% smaller", and don't offer the non-smaller file for download.
+    if (!improved) {
+      const isPng = result.mime === "image/png";
+      return (
+        <div className="rounded-2xl border border-nd-border bg-nd-surface/60 p-4">
+          <p className="text-sm font-semibold text-nd-text">Already optimized</p>
+          <div className="mt-2 space-y-1.5 text-sm text-nd-muted">
+            <p>We couldn&apos;t make this image smaller at the current settings.</p>
+            <div className="grid w-max grid-cols-[auto_1fr] gap-x-6 gap-y-0.5 tabular-nums">
+              <span>Original</span>
+              <span className="text-right text-nd-text">{formatBytes(originalBytes)}</span>
+              <span>Attempted</span>
+              <span className="text-right text-nd-text">{formatBytes(result.bytes)}</span>
+            </div>
+            <p>
+              {isPng
+                ? "PNG is lossless and this file is already efficiently encoded."
+                : "Try a lower quality to reduce the size."}
+            </p>
+          </div>
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={onReset}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-nd-border px-4 py-2.5 text-sm text-nd-text transition-colors hover:bg-white/5"
+            >
+              <RotateCcw size={15} /> Start over
+            </button>
+            {homeLink}
+          </div>
+        </div>
+      );
+    }
+
+    // Real savings.
+    return (
+      <div className="rounded-2xl border border-nd-accent/30 bg-nd-accent/[0.06] p-4">
+        <p className="text-sm font-semibold text-nd-text">Done ✓</p>
+        <div className="mt-2 space-y-1 text-sm text-nd-muted">
+          <div className="grid w-max grid-cols-[auto_1fr] gap-x-6 gap-y-0.5 tabular-nums">
+            <span>Original</span>
+            <span className="text-right text-nd-text">{formatBytes(originalBytes)}</span>
+            <span>Compressed</span>
+            <span className="text-right text-nd-text">{formatBytes(result.bytes)}</span>
+            <span>Saved</span>
+            <span className="text-right text-emerald-400">
+              {formatBytes(savedBytes)} ({percent}%)
+            </span>
+          </div>
+          <p className="pt-0.5">
+            {fmt}
+            {dims ? ` · ${dims}` : ""}
+          </p>
+        </div>
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          {downloadBtn}
+          {homeLink}
+        </div>
+      </div>
+    );
+  }
+
+  // Non-compress tools (raster / resize / images-to-pdf / png-to-ico).
   return (
     <div className="rounded-2xl border border-nd-accent/30 bg-nd-accent/[0.06] p-4">
       <p className="text-sm font-semibold text-nd-text">Done ✓</p>
       <div className="mt-2 space-y-1 text-sm text-nd-muted">
         <p className="truncate text-nd-text">{result.filename}</p>
         <p>
-          {tool.outputExt.toUpperCase()} · {formatBytes(result.bytes)}
-          {result.width ? ` · ${formatDimensions(result.width, result.height ?? 0)}` : ""}
+          {fmt} · {formatBytes(result.bytes)}
+          {dims ? ` · ${dims}` : ""}
         </p>
-        {saving != null && (
-          <p className={saving >= 0 ? "text-emerald-400" : "text-amber-400"}>
-            {saving >= 0
-              ? `${saving}% smaller (${formatBytes(originalBytes)} → ${formatBytes(result.bytes)})`
-              : "The compressed version is larger than the original — the original may already be well compressed."}
-          </p>
-        )}
       </div>
-
       <div className="mt-4 flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onClick={() => triggerDownload(result.blob, result.filename)}
-          className="nd-gradient inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-white transition hover:opacity-90"
-        >
-          <Download size={16} /> Download
-        </button>
-        <Link
-          href="/"
-          className="inline-flex items-center gap-1.5 rounded-xl border border-nd-border px-4 py-2.5 text-sm text-nd-muted transition-colors hover:bg-white/5 hover:text-nd-text"
-        >
-          Open NoteDrift <ArrowRight size={15} />
-        </Link>
+        {downloadBtn}
+        {homeLink}
       </div>
     </div>
   );

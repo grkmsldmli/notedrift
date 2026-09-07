@@ -91,9 +91,14 @@ export default async function ToolPage({
         </h2>
         <p>
           Choose or drop a {tool.acceptLabel} file above. It&apos;s read straight
-          into your browser&apos;s memory, converted to{" "}
-          {tool.outputExt.toUpperCase()} on this page, and offered back to you as a
-          download. No account is needed and the file never leaves your device.
+          into your browser&apos;s memory,{" "}
+          {tool.kind === "compress"
+            ? "compressed"
+            : tool.kind === "resize"
+              ? "resized"
+              : `converted to ${(tool.outputExt ?? "").toUpperCase()}`}{" "}
+          on this page, and offered back to you as a download. No account is needed
+          and the file never leaves your device.
         </p>
       </section>
 

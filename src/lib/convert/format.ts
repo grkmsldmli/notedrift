@@ -1,6 +1,99 @@
 // Pure formatting + dimension math shared by every tool. No browser APIs here,
 // so these are unit-tested directly with node's test runner.
 
+import type { ConverterKind } from "./types.ts";
+
+/** Human display label for a produced file's format, derived from its ACTUAL MIME
+ *  (falling back to the filename extension). The compressor/resizer are
+ *  format-preserving, so the real output MIME — never a fixed tool-metadata value
+ *  — is the source of truth for what to show. */
+export function formatLabel(mime: string, filename?: string): string {
+  switch (mime) {
+    case "image/png":
+      return "PNG";
+    case "image/jpeg":
+    case "image/jpg":
+      return "JPG";
+    case "image/webp":
+      return "WebP";
+    case "image/gif":
+      return "GIF";
+    case "image/svg+xml":
+      return "SVG";
+    case "application/pdf":
+      return "PDF";
+    case "image/x-icon":
+    case "image/vnd.microsoft.icon":
+      return "ICO";
+  }
+  const ext = filename?.split(".").pop()?.toLowerCase();
+  if (ext) {
+    // Map known extensions to the SAME canonical labels as the MIME branch, so a
+    // file's mime-derived and extension-derived labels always agree.
+    switch (ext) {
+      case "jpg":
+      case "jpeg":
+        return "JPG";
+      case "png":
+        return "PNG";
+      case "webp":
+        return "WebP";
+      case "gif":
+        return "GIF";
+      case "svg":
+        return "SVG";
+      case "pdf":
+        return "PDF";
+      case "ico":
+        return "ICO";
+    }
+    return ext.toUpperCase();
+  }
+  const sub = mime.split("/").pop();
+  return sub ? sub.toUpperCase() : "FILE";
+}
+
+/** Whether a JPEG/WebP-style quality control actually affects this format's
+ *  encoder. PNG (and any lossless format) ignores quality, so a functional
+ *  quality slider must never be shown for it. */
+export function qualityAppliesToMime(mime: string): boolean {
+  return mime === "image/jpeg" || mime === "image/webp";
+}
+
+/** The outcome of a compression attempt. `improved` is true ONLY when the result
+ *  is strictly smaller — an equal or larger output is never a success. */
+export function compressionOutcome(
+  originalBytes: number,
+  resultBytes: number,
+): { improved: boolean; savedBytes: number; percent: number } {
+  const savedBytes = originalBytes - resultBytes;
+  return {
+    improved: savedBytes > 0,
+    savedBytes,
+    percent: savingsPercent(originalBytes, resultBytes),
+  };
+}
+
+/** The primary action-button label for a converter tool. Compress/resize are
+ *  format-preserving actions (never "Convert to X"). */
+export function converterCtaLabel(
+  kind: ConverterKind,
+  working: boolean,
+  outputExt?: string,
+): string {
+  if (kind === "compress") return working ? "Compressing…" : "Compress Image";
+  if (kind === "resize") return working ? "Resizing…" : "Resize Image";
+  return working ? "Converting…" : `Convert to ${(outputExt ?? "").toUpperCase()}`;
+}
+
+/** The short "output" badge for tool listings / page copy. Format-preserving
+ *  tools describe the action, not a (nonexistent) fixed target format. */
+export function toolOutputLabel(kind: ConverterKind, outputExt?: string): string {
+  if (kind === "compress") return "Compressed";
+  if (kind === "resize") return "Resized";
+  return outputExt ? outputExt.toUpperCase() : "";
+}
+
 export function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes < 0) return "—";
   if (bytes < 1024) return `${bytes} B`;

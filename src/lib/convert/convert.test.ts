@@ -82,7 +82,14 @@ test("registry integrity", () => {
     slugs.add(t.slug);
     assert.ok(t.title && t.seoTitle && t.description, `${t.slug} has copy`);
     assert.ok(t.accept.length > 0 && t.acceptExts.length > 0, `${t.slug} accepts`);
-    assert.ok(t.outputExt.length > 0, `${t.slug} outputExt`);
+    // Format-preserving tools (compress/resize) must NOT lie about a fixed output;
+    // every format-CHANGING tool must declare one.
+    if (t.kind === "compress" || t.kind === "resize") {
+      assert.equal(t.outputExt, undefined, `${t.slug} format-preserving: no outputExt`);
+      assert.equal(t.output, undefined, `${t.slug} format-preserving: no output`);
+    } else {
+      assert.ok(t.outputExt && t.outputExt.length > 0, `${t.slug} outputExt`);
+    }
     assert.ok(CATEGORY_ORDER.includes(t.category), `${t.slug} known category`);
     // every related slug resolves to a real tool
     for (const r of t.related) assert.ok(getTool(r), `${t.slug} related ${r} exists`);

@@ -14,6 +14,7 @@ import {
 } from "@/lib/tools/factory";
 import { InlineAd } from "@/components/ads/InlineAd";
 import { JsonLd } from "@/components/seo/JsonLd";
+import { toolOutputLabel } from "@/lib/convert/format";
 import { breadcrumbList } from "@/lib/seo/structured-data";
 
 export const metadata: Metadata = {
@@ -152,7 +153,7 @@ export default function ToolsLanding() {
                         {t.title}
                       </span>
                       <span className="mt-0.5 block truncate text-xs text-nd-muted">
-                        {t.acceptLabel} → {t.outputExt.toUpperCase()}
+                        {t.acceptLabel} → {toolOutputLabel(t.kind, t.outputExt)}
                       </span>
                     </span>
                     <ArrowRight

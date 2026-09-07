@@ -31,9 +31,13 @@ export interface ToolDef {
   readonly acceptExts: readonly string[];
   /** Friendly label for accepted input, e.g. "PNG", "PNG or JPG", "PDF". */
   readonly acceptLabel: string;
-  readonly output: OutputKind;
-  /** Output file extension (no dot), e.g. "jpg", "png", "pdf", "ico". */
-  readonly outputExt: string;
+  /** Fixed output format, for tools that change format (raster/pdf/ico). OMITTED
+   *  for format-preserving tools (compress/resize) — those never have one fixed
+   *  output, so their result format is derived from the produced file's MIME. */
+  readonly output?: OutputKind;
+  /** Output file extension (no dot), e.g. "jpg", "png", "pdf", "ico". Omitted for
+   *  format-preserving tools (see `output`). */
+  readonly outputExt?: string;
   /** Slugs of related tools shown at the bottom of the page. */
   readonly related: readonly string[];
 }
