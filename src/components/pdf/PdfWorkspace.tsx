@@ -25,7 +25,12 @@ import { PdfThumbnailRail } from "./PdfThumbnailRail";
 import { PdfToolRail } from "./PdfToolRail";
 import { PdfOverlayCanvas } from "./PdfOverlayCanvas";
 import { PdfSignatureDialog } from "./PdfSignatureDialog";
-import { PdfContextToolbar, type ContextPatch, type ContextValues } from "./PdfContextToolbar";
+import {
+  PdfContextToolbar,
+  type ContextPatch,
+  type ContextValues,
+  type PdfContextToolbarHandle,
+} from "./PdfContextToolbar";
 import { PdfRenderer, type PdfErrorCode } from "@/lib/pdf/renderer";
 import { checkPdfFile } from "@/lib/pdf/limits";
 import { clampZoom, fitPageScale, fitWidthScale } from "@/lib/pdf/geometry";
@@ -72,6 +77,9 @@ export function PdfWorkspace() {
 
   const rendererRef = useRef<PdfRenderer | null>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
+  // Collapse the mobile context-settings pill the instant a real PDF-page
+  // interaction begins (canvas-first).
+  const contextRef = useRef<PdfContextToolbarHandle | null>(null);
   const pageWrapRef = useRef<HTMLDivElement>(null);
   const pageCanvasRef = useRef<HTMLCanvasElement>(null);
   const controllerRef = useRef<PdfOverlayController | null>(null);
@@ -262,6 +270,23 @@ export function PdfWorkspace() {
     }
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
+  }, []);
+
+  // Canvas-first: collapse the mobile context-settings pill the instant a real
+  // PDF-page pointer-down begins. Capture-phase on the viewport and it NEVER
+  // stops/prevents the event, so the same pointer flows straight into the overlay
+  // tool — the first pen stroke / text placement / shape is not swallowed. The
+  // context toolbar is a SIBLING of the viewport, so interacting WITH the settings
+  // (or a portaled popover) never reaches this listener.
+  useEffect(() => {
+    const vp = viewportRef.current;
+    if (!vp) return;
+    const collapse = () => contextRef.current?.collapse();
+    vp.addEventListener("pointerdown", collapse, { capture: true });
+    return () =>
+      vp.removeEventListener("pointerdown", collapse, {
+        capture: true,
+      } as EventListenerOptions);
   }, []);
 
   useEffect(() => {
@@ -622,6 +647,7 @@ export function PdfWorkspace() {
 
         {showContextBar && (
           <PdfContextToolbar
+            ref={contextRef}
             controls={contextControls}
             values={contextValues}
             onChange={onContextChange}

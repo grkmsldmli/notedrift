@@ -1,12 +1,21 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 import {
   AlignCenter,
   AlignLeft,
   AlignRight,
   Bold,
+  ChevronDown,
+  ChevronUp,
   Italic,
   Minus,
   Monitor,
@@ -43,24 +52,108 @@ export interface ContextPatch {
   align?: TextAlign;
 }
 
-export function PdfContextToolbar({
-  controls,
-  values,
-  onChange,
-  onDelete,
-  onEyedropper,
-}: {
-  controls: ToolControls;
-  values: ContextValues;
-  onChange: (patch: ContextPatch) => void;
-  onDelete?: () => void;
-  onEyedropper?: (target: "color" | "fill") => void;
-}) {
+export interface PdfContextToolbarHandle {
+  collapse: () => void;
+}
+
+export const PdfContextToolbar = forwardRef<
+  PdfContextToolbarHandle,
+  {
+    controls: ToolControls;
+    values: ContextValues;
+    onChange: (patch: ContextPatch) => void;
+    onDelete?: () => void;
+    onEyedropper?: (target: "color" | "fill") => void;
+  }
+>(function PdfContextToolbar(
+  { controls, values, onChange, onDelete, onEyedropper },
+  ref,
+) {
+  // Mobile (<md): the strip starts COLLAPSED as a compact summary pill; tapping it
+  // expands the full settings, and a real PDF-page interaction (driven from the
+  // workspace) collapses it again — the canvas-first model from commit 4165729.
+  // Desktop (>=md) always shows the full strip regardless of this flag.
+  const [expanded, setExpanded] = useState(false);
+  useImperativeHandle(ref, () => ({ collapse: () => setExpanded(false) }), []);
+  useEffect(() => {
+    if (!expanded) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setExpanded(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [expanded]);
+
+  const pctOpacity = Math.round(values.opacity * 100);
+  const isOpacityOnly =
+    controls.opacity &&
+    !controls.color &&
+    !controls.highlight &&
+    !controls.strokeWidth &&
+    !controls.text;
+  const showOpacity = controls.opacity && (pctOpacity < 100 || isOpacityOnly);
+  // A summary pill only exists when there is a meaningful control to fold away; an
+  // already-minimal strip (e.g. just a Delete button) stays a plain strip.
+  const hasSummary =
+    controls.color ||
+    controls.highlight ||
+    controls.strokeWidth ||
+    controls.text ||
+    controls.opacity;
+
   return (
-    // Outer shell keeps overflow visible so portaled popovers are never clipped;
-    // the inner strip scrolls horizontally with the scrollbar hidden.
+    // Outer shell keeps overflow visible so portaled popovers are never clipped.
     <div className="pointer-events-none absolute inset-x-0 top-3 z-20 flex justify-center px-3">
-      <div className="nd-hidescroll pointer-events-auto flex max-w-full items-center gap-1 overflow-x-auto rounded-xl border border-nd-border bg-nd-surface/95 p-1 shadow-xl shadow-black/40 backdrop-blur">
+      {/* Mobile collapsed summary pill — canvas-first: the full settings never
+          cover the page until you tap to expand. */}
+      {hasSummary && (
+        <button
+          type="button"
+          onClick={() => setExpanded(true)}
+          aria-expanded={false}
+          aria-label="Tool settings"
+          title="Tool settings"
+          className={`nd-hit pointer-events-auto items-center gap-2 rounded-xl border border-nd-border bg-nd-surface/95 px-2.5 py-1.5 shadow-xl shadow-black/40 backdrop-blur ${
+            expanded ? "hidden" : "flex md:hidden"
+          }`}
+        >
+          {controls.text ? (
+            <>
+              <span className="text-sm font-semibold leading-none" style={{ color: values.color }}>
+                Aa
+              </span>
+              <span className="text-xs tabular-nums text-nd-muted">{values.fontSize}</span>
+            </>
+          ) : (
+            <>
+              {(controls.color || controls.highlight) && (
+                <span
+                  className="h-4 w-4 shrink-0 rounded-full border border-white/25"
+                  style={{ background: values.color }}
+                />
+              )}
+              {controls.strokeWidth && (
+                <span className="text-xs font-medium tabular-nums text-nd-muted">
+                  {values.strokeWidth}
+                </span>
+              )}
+            </>
+          )}
+          {showOpacity && (
+            <span className="text-xs font-medium tabular-nums text-nd-muted">{pctOpacity}%</span>
+          )}
+          <ChevronDown size={14} className="text-nd-muted" />
+        </button>
+      )}
+
+      {/* Full settings strip — always on desktop; on mobile only when expanded (or
+          when there is no summary to collapse into). Stays within the 375px
+          viewport and scrolls horizontally only if it must. */}
+      <div
+        className={`nd-hidescroll pointer-events-auto max-w-[calc(100vw-1.5rem)] items-center gap-1 overflow-x-auto rounded-xl border border-nd-border bg-nd-surface/95 p-1 shadow-xl shadow-black/40 backdrop-blur ${
+          !hasSummary || expanded ? "flex" : "hidden md:flex"
+        }`}
+      >
         {(controls.color || controls.highlight) && (
           <ColorControl
             label={controls.highlight ? "Highlight color" : "Color"}
@@ -137,10 +230,25 @@ export function PdfContextToolbar({
             </button>
           </>
         )}
+        {/* Mobile-only collapse control (desktop always shows the full strip). */}
+        {hasSummary && (
+          <>
+            <Divider />
+            <button
+              type="button"
+              onClick={() => setExpanded(false)}
+              aria-label="Collapse settings"
+              title="Collapse"
+              className="nd-hit flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-nd-muted transition-colors hover:bg-white/5 hover:text-nd-text md:hidden"
+            >
+              <ChevronUp size={15} />
+            </button>
+          </>
+        )}
       </div>
     </div>
   );
-}
+});
 
 /* --------------------------------- pieces -------------------------------- */
 
