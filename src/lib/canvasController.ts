@@ -2924,6 +2924,10 @@ export class CanvasController {
 
   /** Restore normal selection/target-finding and re-select the image after crop. */
   private restoreAfterCrop(img: fabric.FabricImage): void {
+    // Crop is over — wipe any crop overlay pixels so nothing lingers on the top
+    // canvas before Fabric redraws the image's normal selection controls.
+    const ctx = this.overlayCtx();
+    if (ctx) this.clearOverlayTop(ctx);
     this.canvas.selection = this.tool === "select";
     this.canvas.skipTargetFind = !(this.tool === "select" || this.tool === "eraser");
     this.canvas.setActiveObject(img);
@@ -3724,6 +3728,19 @@ export class CanvasController {
     return ctx;
   }
 
+  /** Wipe the ENTIRE top overlay canvas (device pixels), independent of the
+   *  current retina transform. Used to keep custom transient overlays frame-clean
+   *  when Fabric itself won't clear contextTop for us — e.g. in crop mode, where
+   *  the target's controls are suppressed and no active object exists, so Fabric
+   *  skips renderTop() and each after:render would otherwise stack another crop
+   *  rectangle/handle set on top of the last (the zoom "ghosting" bug). */
+  private clearOverlayTop(ctx: CanvasRenderingContext2D): void {
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    ctx.restore();
+  }
+
   private toScreen(p: Pt): Pt {
     const vpt = this.canvas.viewportTransform;
     return { x: p.x * vpt[0] + vpt[4], y: p.y * vpt[3] + vpt[5] };
@@ -3785,7 +3802,10 @@ export class CanvasController {
 
     // Crop mode owns the overlay entirely — dim outside the window, draw a bright
     // crop rectangle + handles. Nothing else (guides/anchors) draws while cropping.
+    // Wipe the previous frame first so zoom/pan/resize/drag can never accumulate a
+    // forest of stale rectangles and handles — exactly ONE crop overlay per frame.
     if (this.cropState) {
+      this.clearOverlayTop(ctx);
       this.drawCropOverlay(ctx);
       return;
     }
