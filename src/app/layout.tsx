@@ -16,6 +16,18 @@ const geistMono = Geist_Mono({
 const SITE_DESCRIPTION =
   "A blank space for whatever's on your mind. An instant, local-first infinite canvas — no login, no clutter.";
 
+// One EXPLICIT social share image for every platform (X, LinkedIn, Slack,
+// iMessage, Facebook). We point og:image and twitter:image at a deterministic,
+// stable, un-hashed route (/social-card) instead of relying on Next's automatic
+// metadata-image discovery, which emits an opaque content-hashed URL that some
+// crawlers (notably X) render inconsistently. metadataBase makes these absolute.
+const SOCIAL_IMAGE = {
+  url: "/social-card",
+  width: 1200,
+  height: 630,
+  alt: "NoteDrift — Open. Think. Create.",
+};
+
 export const metadata: Metadata = {
   metadataBase: new URL(
     process.env.NEXT_PUBLIC_SITE_URL ?? "https://notedrift.com",
@@ -30,13 +42,13 @@ export const metadata: Metadata = {
     title: "NoteDrift — Open. Think. Create.",
     description: SITE_DESCRIPTION,
     url: "/",
+    images: [SOCIAL_IMAGE],
   },
   twitter: {
-    // Large-image card. The 1200x630 image comes from app/twitter-image.tsx
-    // (og:image / twitter:image are injected automatically by the file convention).
     card: "summary_large_image",
     title: "NoteDrift — Open. Think. Create.",
     description: SITE_DESCRIPTION,
+    images: [SOCIAL_IMAGE],
   },
 };
 

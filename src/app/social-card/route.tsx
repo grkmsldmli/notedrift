@@ -1,14 +1,19 @@
 import { ImageResponse } from "next/og";
 
-// NoteDrift social share card (Open Graph + Twitter). Generated with next/og at
-// build time (statically optimized), so link previews on X, Slack, iMessage,
-// LinkedIn, Facebook, etc. get a real 1200x630 branded card. Edit here — no binary
-// asset to regenerate. The default font is Geist (bundled by next/og), matching
-// the site. twitter-image.tsx re-exports this so both use one design.
+// NoteDrift social share card — a DETERMINISTIC, stable, un-hashed public route
+// (/social-card) that og:image and twitter:image point at explicitly (see
+// app/layout.tsx). Replaces reliance on Next's automatic metadata-image discovery,
+// whose content-hashed URL some crawlers (notably X) render inconsistently.
+//
+// GET /social-card -> 200, image/png, 1200x630, no auth, no redirect, publicly
+// crawlable, long-cacheable. Same branded design as before (unchanged). If a stale
+// preview ever needs busting, bump the URL to /social-card?v=2 in layout.tsx.
 
 export const alt = "NoteDrift — Open. Think. Create.";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
+// Prerender at build time so the endpoint is a static, cacheable asset.
+export const dynamic = "force-static";
 
 // Brand mark: the gradient rounded-square + wave "N" from components/editor/Logo.
 function Mark({ px }: { px: number }) {
@@ -32,7 +37,7 @@ function Mark({ px }: { px: number }) {
   );
 }
 
-export default function Image() {
+export function GET() {
   return new ImageResponse(
     (
       <div
@@ -98,6 +103,12 @@ export default function Image() {
         </div>
       </div>
     ),
-    { ...size },
+    {
+      ...size,
+      headers: {
+        // Stable, long-lived, publicly cacheable so crawlers reuse it.
+        "Cache-Control": "public, max-age=31536000, immutable",
+      },
+    },
   );
 }
