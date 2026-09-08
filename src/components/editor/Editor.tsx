@@ -62,7 +62,6 @@ import { Toolbar } from "./Toolbar";
 import { TopBar } from "./TopBar";
 import { ZoomControls } from "./ZoomControls";
 import { ToolOptionsBar, type ToolOptionsBarHandle } from "./ToolOptionsBar";
-import { TouchDebugPanel } from "./TouchDebugPanel";
 import { ObjectToolbar, type LayerOp } from "./ObjectToolbar";
 import { CropBar } from "./CropBar";
 import { NodeQuickAdd } from "./NodeQuickAdd";
@@ -153,12 +152,6 @@ export default function Editor() {
   // Collapse the expanded tool-settings panel the moment a real canvas
   // interaction begins (canvas-first). Driven from the paper pointer-down path.
   const toolOptionsRef = useRef<ToolOptionsBarHandle | null>(null);
-  // TEMP real-device diagnostics — mounted only with `?touchdebug=1`.
-  const [touchDebug] = useState(
-    () =>
-      typeof window !== "undefined" &&
-      /[?&]touchdebug=1\b/.test(window.location.search),
-  );
   // Identity gates startup: the FIRST page is resolved only once auth status is
   // "ready" (billing is NOT waited on). anonInitRef is a StrictMode belt for the
   // sessionStorage guard so a fresh anonymous session never creates two pages.
@@ -1181,7 +1174,6 @@ export default function Editor() {
       <CheckoutActivation />
       <AuthNotice />
       <QuickStart />
-      {touchDebug && <TouchDebugPanel controllerRef={controllerRef} />}
     </div>
   );
 }
