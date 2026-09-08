@@ -169,5 +169,125 @@ Everything web/bundle-related runs on any OS. These need macOS + Xcode:
 ## 12. Reused, not forked
 
 The canvas engine and editor are **imported** from `src/`. The mobile app adds only:
-a Vite entry, Next-import shims, and two native adapters. Any editor change on the
-web is automatically in the app on the next `mobile:build`.
+a Vite entry, Next-import shims, and native adapters. Any editor change on the web
+is automatically in the app on the next `mobile:build`.
+
+---
+
+# Phase 2 — StoreKit 2, unified entitlement, bearer auth, account deletion
+
+## 13. Apple IAP architecture
+
+The native app sells Pro through **Apple StoreKit 2** (never Stripe). Authority
+stays in the database:
+
+```
+StoreKit purchase → device JWS transaction → JS → POST /api/billing/apple/verify
+  (Bearer Supabase token) → @apple/app-store-server-library verifies signature,
+  bundleId, product, environment → appAccountToken == authenticated user →
+  apply_apple_subscription() (service role) → billing_apple_subscriptions →
+  is_pro() (Stripe OR Apple) → get_billing_status() → UI shows Pro
+```
+
+- **First-party StoreKit 2 plugin** (Swift): `ios/App/App/plugins/StoreKit/` with a
+  JS bridge at `mobile/src/native/storekit.ts` (`registerPlugin("NoteDriftStoreKit")`).
+  Methods: `getProducts`, `purchase(productId, appAccountToken)`,
+  `currentEntitlements`, `manageSubscriptions`. It returns Apple's **signed JWS**
+  representations — no receipt parsing in JS.
+- **appAccountToken = the signed-in Supabase user UUID.** The server verifies the
+  signed transaction and rejects it unless `appAccountToken == authenticated user.id`
+  (`src/lib/billing/apple/guards.ts`, enforced in the verify route). A user must be
+  signed in before purchasing.
+- **Server verification** uses Apple's official `@apple/app-store-server-library`
+  `SignedDataVerifier` (`src/lib/billing/apple/verify.ts`) — signature + cert chain +
+  bundleId (`com.notedrift.app`) + product allowlist (the two product ids) +
+  environment. Never home-grown JWS.
+
+## 14. Backend endpoints
+
+| Endpoint | Auth | Purpose |
+|---|---|---|
+| `POST /api/billing/apple/verify` | Bearer (native) / cookie | Reconcile a purchase/restore; grants Pro only after verification + appAccountToken match. |
+| `POST /api/apple/notifications` | Apple signature (no user auth) | App Store Server Notifications V2: renew/expire/refund/revoke → entitlement updates. Idempotent (notificationUUID), replay-safe (signedDate). |
+| `DELETE /api/account` | Bearer (native) / cookie | Full account deletion. |
+
+- **Bearer auth** (`src/lib/auth/requireUser.ts`, `requireAuthenticatedUser`): web
+  keeps cookie sessions; native sends `Authorization: Bearer <supabase access token>`.
+  The user is derived only from the verified session/token, never the request body.
+  Tokens are never logged.
+- **CORS** (`src/lib/http/cors.ts`) is added ONLY to these native endpoints, reflecting
+  a fixed allowlist of Capacitor local origins — never global/permissive.
+
+## 15. Database (migration `20260907120000_apple_iap_entitlements.sql`)
+
+- New server-owned tables `billing_apple_subscriptions` (keyed by
+  `original_transaction_id`) and `apple_notification_events` (idempotency). RLS on,
+  no client policies, service-role writes only — identical posture to the Stripe
+  tables (the Stripe tables are **not** overloaded).
+- `apply_apple_subscription(...)` RPC (service role): atomic upsert, notification
+  idempotency, `signed_date` stale-guard.
+- `is_pro(uuid)` now returns **active Stripe OR active Apple** (both mode-aware:
+  Apple `environment` maps to `expected_livemode()` — a live DB trusts only
+  Production rows, a test DB only Sandbox). Free cloud cap = 3 unchanged (it calls
+  `is_pro`).
+- `get_billing_status()` keeps the **exact same return columns** (backwards
+  compatible for web callers); an Apple Pro user reports `plan='pro'` with interval
+  and period end from the Apple row. Apple subscribers have no `billing_customers`
+  row, so `can_manage_billing` is false for them (managed in the App Store).
+
+## 16. Restore & manage
+
+- **Restore** (`restoreApplePro`): reads StoreKit `currentEntitlements`, sends each
+  verified transaction to `/api/billing/apple/verify`, refreshes status. UI reports
+  "Purchases restored" or "No active NoteDrift Pro subscription found."
+- **Manage** (native Apple subscriber): `AppStore.showManageSubscriptions` via the
+  plugin — never Stripe portal. Web Stripe subscribers keep the web portal.
+
+## 17. Existing web Pro on iOS
+
+A Stripe (web) Pro subscriber signs into iOS and gets full Pro automatically — the
+entitlement is read from the DB (`is_pro`/`get_billing_status`), no repurchase, no
+downgrade. Allowed for a multi-platform service now that the same Pro is also an IAP.
+
+## 18. Account deletion
+
+`DELETE /api/account`: authenticate → delete the user's `canvas-assets` storage
+objects (`<uid>/…`, the only non-cascading data) → `admin.auth.admin.deleteUser`,
+which cascade-removes every user table (cloud_*, billing_*, billing_apple_*,
+email_*). UI: **Account menu → Delete account**, requires typing `DELETE`. It
+truthfully states deletion does **not** cancel an active App Store / Stripe
+subscription (manage those separately).
+
+## 19. Session persistence (CONDITIONAL — device verify)
+
+Custom-scheme cookies are unreliable in WKWebView, so on native the Supabase
+session is backed by **localStorage** (persistent, synchronous) via a cookie seam
+(`src/lib/auth/nativeCookies.ts` + `mobile/src/native/authStorage.ts`). Web is
+unchanged (default `document.cookie`). **Must be device-verified**: sign in → kill
+app → cold relaunch → still signed in → token refresh works → sign out clears it.
+
+## 20. External links
+
+`next/link` internal routes on native open on `https://notedrift.com` via the
+Capacitor **Browser** plugin (`mobile/src/native/externalLink.ts`, real
+SFSafariViewController) with a `window.open` fallback. No external purchase links.
+
+## 21. Google / Sign in with Apple
+
+Unchanged from Phase 1: Google is hidden on native; **Email OTP only**. Because iOS
+exposes only first-party login, Sign in with Apple is **not required** this phase.
+If Google (or any third-party login) is ever enabled in the iOS app, an
+Apple-compliant equivalent (Sign in with Apple) must be added first — the
+`signInWithIdToken(provider:"apple")` path already exists to wire it.
+
+## 22. What still requires a Mac / device
+
+- Add `ios/App/App/plugins/StoreKit/*` to the Xcode target; set **iOS Deployment
+  Target 15.0**; add **In-App Purchase** capability (see the plugin README).
+- CocoaPods (`pod install`), `cap sync ios`, Xcode build/run, sandbox purchases.
+- `PrivacyInfo.xcprivacy` from the Xcode privacy report (truthful, no tracking).
+- App Store Connect: create the subscription group + products, App Store Server
+  Notifications URL, and the App Store Server API key.
+- Env for the backend: `APPLE_IAP_ROOT_CAS_BASE64`, `APPLE_IAP_APP_APPLE_ID`
+  (+ optional `APPLE_IAP_ONLINE_CHECKS`). Without them the verify/notifications
+  routes return "unconfigured" (the app still builds and runs).

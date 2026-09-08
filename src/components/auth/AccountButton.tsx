@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { CreditCard, Loader2, LogOut, Sparkles, UserRound } from "lucide-react";
+import { CreditCard, Loader2, LogOut, RotateCcw, Sparkles, Trash2, UserRound } from "lucide-react";
 import { PLAN_LABELS, PRICING } from "@/lib/plans";
 import { useAuth } from "./AuthProvider";
 import { SignInDialog } from "./SignInDialog";
 import { UpgradeDialog } from "../billing/UpgradeDialog";
+import { DeleteAccountDialog } from "./DeleteAccountDialog";
 import { openBillingPortal } from "@/lib/billing/client";
+import { manageAppleSubscriptions, restoreApplePro } from "@/lib/billing/apple/client";
 import { billingPlatform } from "@/lib/platform";
 
 /**
@@ -41,13 +43,17 @@ function captureUpgradeIntent(): boolean {
 }
 
 export function AccountButton() {
-  const { configured, status, user, plan, billing, billingActivation, signOut } = useAuth();
+  const { configured, status, user, plan, billing, billingActivation, signOut, refreshBilling } =
+    useAuth();
   const [dialog, setDialog] = useState(false);
   const [upgrade, setUpgrade] = useState(false);
   const [menu, setMenu] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [portalBusy, setPortalBusy] = useState(false);
+  const [restoreBusy, setRestoreBusy] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const native = billingPlatform() === "apple";
   const upgradeIntentHandled = useRef(false);
 
   // Open the upgrade sheet for a signed-in Free user arriving via ?upgrade=1.
@@ -134,6 +140,24 @@ export function AccountButton() {
     setNotice("Couldn't open the billing portal just now. Please try again in a moment.");
   }
 
+  async function restore() {
+    if (restoreBusy) return;
+    setRestoreBusy(true);
+    const res = await restoreApplePro();
+    setRestoreBusy(false);
+    setMenu(false);
+    if (res.ok) {
+      await refreshBilling();
+      setNotice("Purchases restored.");
+    } else {
+      setNotice(
+        res.reason === "no_subscription"
+          ? "No active NoteDrift Pro subscription found."
+          : "Couldn't restore purchases right now.",
+      );
+    }
+  }
+
   return (
     <div className="relative" ref={menuRef}>
       <button
@@ -209,12 +233,20 @@ export function AccountButton() {
                 {portalBusy ? "Opening…" : "Manage billing"}
               </button>
             ) : (
-              // Native iOS: subscriptions are not managed via Stripe here. Show a
-              // static Pro state instead of a billing-portal action.
-              <div className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-nd-muted">
+              // Native iOS Apple subscriber: manage/cancel via Apple's App Store
+              // sheet (StoreKit), never Stripe.
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setMenu(false);
+                  void manageAppleSubscriptions();
+                }}
+                className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-nd-text transition-colors hover:bg-white/5"
+              >
                 <CreditCard size={15} className="text-nd-muted" />
-                NoteDrift Pro active
-              </div>
+                Manage subscription
+              </button>
             )
           ) : activating ? (
             <div className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-nd-muted">
@@ -246,6 +278,19 @@ export function AccountButton() {
             </button>
           )}
 
+          {native && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={restore}
+              disabled={restoreBusy}
+              className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-nd-text transition-colors hover:bg-white/5 disabled:opacity-60"
+            >
+              <RotateCcw size={15} className="text-nd-muted" />
+              {restoreBusy ? "Restoring…" : "Restore Purchases"}
+            </button>
+          )}
+
           <button
             type="button"
             role="menuitem"
@@ -258,6 +303,21 @@ export function AccountButton() {
             <LogOut size={15} className="text-nd-muted" />
             Sign out
           </button>
+
+          <div className="my-1 h-px bg-nd-border" />
+
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setMenu(false);
+              setConfirmDelete(true);
+            }}
+            className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-red-300 transition-colors hover:bg-red-500/10"
+          >
+            <Trash2 size={15} className="text-red-300/80" />
+            Delete account
+          </button>
         </div>
       )}
 
@@ -269,6 +329,17 @@ export function AccountButton() {
 
       {upgrade && (
         <UpgradeDialog onClose={() => setUpgrade(false)} onNotice={(m) => setNotice(m)} />
+      )}
+
+      {confirmDelete && (
+        <DeleteAccountDialog
+          isPro={isPro}
+          onClose={() => setConfirmDelete(false)}
+          onDeleted={() => {
+            setConfirmDelete(false);
+            void signOut();
+          }}
+        />
       )}
     </div>
   );

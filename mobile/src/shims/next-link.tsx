@@ -3,6 +3,7 @@
 // bundle, so on native those open the production site in the system browser.
 import { forwardRef, type AnchorHTMLAttributes, type ReactNode } from "react";
 import { isNative, PRODUCTION_ORIGIN } from "@/lib/platform";
+import { openExternalUrl } from "../native/externalLink";
 
 type LinkProps = AnchorHTMLAttributes<HTMLAnchorElement> & {
   href: string;
@@ -26,7 +27,7 @@ const Link = forwardRef<HTMLAnchorElement, LinkProps>(function Link(
         href={url}
         onClick={(e) => {
           e.preventDefault();
-          window.open(url, "_blank");
+          void openExternalUrl(url);
         }}
         {...rest}
       >

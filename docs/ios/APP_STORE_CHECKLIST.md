@@ -3,21 +3,33 @@
 Do **not** submit for review until the blocking items below are done. This phase
 delivers the architecture and a buildable shell only.
 
+## App Store Connect — exact setup values
+
+- **Bundle ID:** `com.notedrift.app`
+- **Subscription group:** `NoteDrift Pro`
+- **Auto-renewable subscription products:**
+  - `com.notedrift.app.pro.monthly`
+  - `com.notedrift.app.pro.yearly`
+- **App Store Server Notifications V2 URL** (Production + Sandbox):
+  `https://notedrift.com/api/apple/notifications`
+- **App Store Server API key** (Keys → In-App Purchase): create a key; note the
+  Issuer ID, Key ID, and download the `.p8` (only needed if you later call Apple's
+  server API — signature verification itself needs only the root certs below).
+- **Backend env:** `APPLE_IAP_ROOT_CAS_BASE64` (comma-separated base64 DER of
+  Apple's PKI root certs), `APPLE_IAP_APP_APPLE_ID` (App Information → Apple ID),
+  optional `APPLE_IAP_ONLINE_CHECKS=false` to disable OCSP checks.
+
 ## Blocking before submission
 
 ### 1. In-app purchases — StoreKit (Guideline 3.1.1)
-- [ ] Implement Apple IAP (StoreKit 2) for NoteDrift Pro (monthly + yearly auto-
-      renewable subscriptions).
-- [ ] Replace the placeholder in `UpgradeDialog` (native branch) with a real
-      StoreKit purchase + restore flow, gated by `billingPlatform() === "apple"`.
-- [ ] After a successful Apple purchase, reconcile entitlement server-side so the
-      existing server-authoritative `get_billing_status()` reflects Pro (a new
-      `/api/billing/apple/verify`-style receipt endpoint that accepts an
-      `Authorization: Bearer <supabase access token>` — the native session is not a
-      notedrift.com cookie, so cookie-authed routes won't work; see §4).
-- [ ] Provide "Restore Purchases".
-- [ ] **No** external purchase links or "buy on the web" messaging in the app
-      (already: Stripe checkout/portal are unreachable on native).
+- [x] StoreKit 2 purchase/restore implemented (`AppleUpgradePanel`, the Swift
+      plugin, `/api/billing/apple/verify`). Server-authoritative Pro; no Stripe on
+      native; no external purchase CTA. **Requires on-device sandbox verification.**
+- [ ] Create the two products + subscription group in App Store Connect (above).
+- [ ] Add `ios/App/App/plugins/StoreKit/*` to the Xcode target, set iOS Deployment
+      Target 15.0, add the **In-App Purchase** capability (plugin README).
+- [ ] Set the backend env (above) so the verify/notifications routes are live.
+- [ ] Sandbox-test: purchase, restore, renew, refund/revoke → entitlement updates.
 
 ### 2. Account & auth (Guideline 4.8 / 5.1.1)
 - [ ] Google is hidden on native; **Email OTP** is the login. Verify it end-to-end.
@@ -29,26 +41,32 @@ delivers the architecture and a buildable shell only.
         existing `signInWithIdToken({ provider: "apple", token, nonce })` path in
         `src/lib/auth/client.ts` (the Google exchange already proves this works
         cross-origin). Configure Apple as a provider in Supabase Auth.
-- [ ] Offer **account deletion** from within the app if accounts are supported
-      (Guideline 5.1.1(v)) — link/flow to delete the NoteDrift account.
+- [x] **Account deletion** in-app (Guideline 5.1.1(v)) — Account menu → Delete
+      account (type-DELETE confirm) → `DELETE /api/account` removes storage objects
+      + cascades all user data + deletes the auth user. It truthfully states it does
+      NOT cancel an active App Store subscription. **Verify on device.**
 
 ### 3. Privacy
-- [ ] Add `ios/App/App/PrivacyInfo.xcprivacy` with required-reason API declarations:
-      - `NSPrivacyAccessedAPICategoryUserDefaults` → reason `CA92.1`
-      - `NSPrivacyAccessedAPICategoryFileTimestamp` → reason `C617.1` (Filesystem)
-      - `NSPrivacyTracking = false`; `NSPrivacyCollectedDataTypes` = none unless the
-        backend collects PII (declare email if used for accounts).
+- [ ] Add `ios/App/App/PrivacyInfo.xcprivacy` — do NOT copy guessed reason codes.
+      Generate the truthful set on a Mac: Xcode → Product → Archive →
+      **Generate Privacy Report**, and address any required-reason API build
+      warnings. Capacitor plugins ship their own manifests; the app manifest only
+      needs what the app binary itself uses. Set `NSPrivacyTracking = false` (no
+      tracking, no ad SDK on iOS). Declare in `NSPrivacyCollectedDataTypes` only
+      what the backend actually collects (email for accounts; user content /
+      canvases for Pro cloud) — mirror the App Store Connect App Privacy answers.
 - [ ] App Privacy questionnaire in App Store Connect: declare what Supabase stores
       (email for accounts, canvas data for Pro cloud). No tracking, no ads SDK on iOS.
 - [ ] `NSPhotoLibraryUsageDescription` present and truthful (image import) — done.
 - [ ] Confirm **no** camera/microphone/location/contacts usage strings (none added).
 
 ### 4. Backend for native
-- [ ] `/api/*` routes authenticate via a `notedrift.com` **cookie**; the native app's
-      session lives on the local origin. For any server route the app must call
-      (IAP receipt verify, email), add **bearer-token** auth (accept
-      `Authorization: Bearer <supabase access token>`), or keep those flows web-only.
-- [ ] Verify CORS on notedrift.com allows the native origin for any such route.
+- [x] Bearer-token auth (`requireAuthenticatedUser`) on the native routes
+      (`/api/billing/apple/verify`, `/api/account`); cookie auth still works on web.
+- [x] Narrow CORS on exactly those native endpoints (`src/lib/http/cors.ts`) — a
+      fixed Capacitor-origin allowlist, never global/permissive.
+- [ ] Deploy the migration `20260907120000_apple_iap_entitlements.sql` and set the
+      Apple env vars so the routes leave "unconfigured".
 
 ### 5. Content & metadata
 - [ ] App Store screenshots (iPhone 6.7"/6.5" + iPad 12.9"), description, keywords.
@@ -57,19 +75,22 @@ delivers the architecture and a buildable shell only.
 - [ ] Age rating questionnaire.
 - [ ] App icon: 1024×1024 generated from the NoteDrift brand (done, in Assets.xcassets).
 
-## Already satisfied by this phase
+## Already satisfied (code complete; needs Mac/device verification)
 - Local bundle, no remote `server.url`, no cleartext, no broad `allowNavigation`.
-- No AdSense on iOS (seam + shim); no third-party ad SDK.
-- No Stripe checkout/portal reachable from the iOS UI.
-- Existing Pro entitlement honored (server-authoritative, read-only on native).
+- No AdSense on iOS; no third-party ad SDK.
+- No Stripe checkout/portal reachable from the iOS UI; StoreKit 2 purchase/restore.
+- Unified entitlement: `is_pro()` = Stripe OR verified Apple (mode-aware).
+- Existing web Pro honored on iOS; no repurchase/downgrade.
+- Bearer auth + narrow CORS on native endpoints; account deletion in-app.
+- Native session persistence via localStorage seam (CONDITIONAL — device verify).
 - App boots offline to the editor; portrait+landscape; iPhone + iPad; safe areas.
 - Truthful, minimal permissions; export-compliance flag set.
 
-## Order of work for the next phase
-1. Bearer-token auth on the backend routes the app needs (§4).
-2. StoreKit IAP + server receipt reconciliation (§1).
-3. `PrivacyInfo.xcprivacy` + App Privacy answers (§3).
-4. (Recommended) Sign in with Apple via `signInWithIdToken` (§2).
-5. Account deletion flow (§2).
-6. Session persistence adapter (Capacitor Preferences) if device testing shows
-   cold-start sign-outs (IOS_ARCHITECTURE §7).
+## Remaining before submission
+1. Deploy migration + set Apple env; create products/group + notification URL (§1).
+2. Xcode: add the StoreKit plugin files to the target, iOS 15 target, IAP capability.
+3. On-device sandbox: purchase / restore / renew / refund / revoke; account deletion.
+4. `PrivacyInfo.xcprivacy` from the Xcode privacy report + App Privacy answers (§3).
+5. Confirm session persists across a cold app restart (IOS_ARCHITECTURE §19).
+6. Screenshots + metadata (§5).
+   (Sign in with Apple is NOT required while iOS exposes only Email OTP — §2.)

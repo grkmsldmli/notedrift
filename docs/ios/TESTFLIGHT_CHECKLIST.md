@@ -40,8 +40,24 @@ steps run on any OS.
 - [ ] A web-purchased Pro account shows Pro (ad-free, pro exports) after sign-in.
 - [ ] Export a PNG/PDF → the **native Share sheet** appears (Save to Files works).
 - [ ] Import an image via the toolbar → the photo picker appears.
-- [ ] No AdSense loads; the "Upgrade" sheet shows the IAP placeholder (no Stripe).
+- [ ] No AdSense loads; the "Upgrade" sheet shows StoreKit prices (no Stripe).
 - [ ] Safe areas, portrait+landscape, keyboard behavior look correct (device check).
+
+## 4a. StoreKit IAP (sandbox) — Mac + device
+- [ ] Add `ios/App/App/plugins/StoreKit/*` to the Xcode App target; set iOS
+      Deployment Target 15.0; add the **In-App Purchase** capability.
+- [ ] Create the products + `NoteDrift Pro` group in App Store Connect, or add a
+      local **StoreKit Configuration** file for simulator testing.
+- [ ] Set backend env (`APPLE_IAP_ROOT_CAS_BASE64`, `APPLE_IAP_APP_APPLE_ID`) and
+      deploy the migration so `/api/billing/apple/verify` isn't "unconfigured".
+- [ ] Sign in, buy Monthly and Yearly with a Sandbox Apple ID → Pro unlocks.
+- [ ] Restore Purchases on a fresh install → Pro returns.
+- [ ] Set the App Store Server Notifications V2 URL to
+      `https://notedrift.com/api/apple/notifications`; force renew/expire/refund and
+      confirm entitlement updates.
+- [ ] Manage subscription opens Apple's sheet (not Stripe).
+- [ ] Delete account (Account menu) removes data; confirm it does NOT cancel the
+      subscription (message shown).
 
 ## 5. Privacy manifest & export compliance (Mac)
 - [ ] Add `ios/App/App/PrivacyInfo.xcprivacy` declaring required-reason APIs used by
@@ -57,9 +73,9 @@ steps run on any OS.
 - [ ] Provide test notes; invite internal/external testers.
 
 ## 7. Known limitations to note for testers (this phase)
-- In-app purchase is not available yet (StoreKit is the next phase) — the Upgrade
-  screen is a placeholder. Existing web Pro is honored.
 - Google sign-in is intentionally hidden on iOS; use Email OTP.
-- Session persistence across cold starts may need the Preferences storage adapter
-  (see IOS_ARCHITECTURE §7 caveat) — verify on device and, if a signed-in session
-  is lost after a full app restart, implement that adapter before wider testing.
+- Session persistence uses a localStorage seam (IOS_ARCHITECTURE §19). If a
+  signed-in session is lost after a full app restart, that seam needs adjustment —
+  verify explicitly on device before wider testing (status: CONDITIONAL).
+- StoreKit purchases require the Xcode/App Store Connect setup in §4a; until the
+  backend Apple env is set, the verify route reports "unconfigured".

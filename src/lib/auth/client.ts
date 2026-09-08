@@ -10,14 +10,26 @@ import type { SupabaseClient, User } from "@supabase/supabase-js";
 import { isSupabaseConfigured, supabasePublishableKey, supabaseUrl } from "./config";
 import type { AuthResult, AuthUser } from "./types";
 import { verifyEmailOtpCore } from "./otp";
+import { isNative } from "../platform";
+import { getNativeAuthCookieStore } from "./nativeCookies";
 
 let cached: SupabaseClient | null = null;
 
-/** The browser Supabase client, or null when Supabase isn't configured. */
+/** The browser Supabase client, or null when Supabase isn't configured. On native
+ *  iOS, if the shell registered a persistent cookie store, use it so the session
+ *  survives app cold starts; web is unchanged (default document.cookie). */
 export function getBrowserSupabase(): SupabaseClient | null {
   if (!isSupabaseConfigured()) return null;
   if (!cached) {
-    cached = createBrowserClient(supabaseUrl()!, supabasePublishableKey()!);
+    const nativeStore = isNative() ? getNativeAuthCookieStore() : null;
+    cached = nativeStore
+      ? createBrowserClient(supabaseUrl()!, supabasePublishableKey()!, {
+          cookies: {
+            getAll: () => nativeStore.getAll(),
+            setAll: (list) => nativeStore.setAll(list),
+          },
+        })
+      : createBrowserClient(supabaseUrl()!, supabasePublishableKey()!);
   }
   return cached;
 }
@@ -127,6 +139,20 @@ export async function getCurrentUser(): Promise<AuthUser | null> {
   try {
     const { data } = await sb.auth.getUser();
     return toAuthUser(data.user);
+  } catch {
+    return null;
+  }
+}
+
+/** The current session's Supabase access token (JWT), or null. Used to
+ *  authenticate the native iOS app's calls to notedrift.com backend routes
+ *  (Authorization: Bearer …) since the local origin shares no cookies. */
+export async function getAccessToken(): Promise<string | null> {
+  const sb = getBrowserSupabase();
+  if (!sb) return null;
+  try {
+    const { data } = await sb.auth.getSession();
+    return data.session?.access_token ?? null;
   } catch {
     return null;
   }

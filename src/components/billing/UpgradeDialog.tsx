@@ -18,6 +18,8 @@ import { startCheckout } from "@/lib/billing/client";
 import type { BillingInterval } from "@/lib/billing/types";
 import type { UpgradeContext } from "@/lib/export/types";
 import { billingPlatform } from "@/lib/platform";
+import { stripeCheckoutAllowed } from "@/lib/billing/gate";
+import { AppleUpgradePanel } from "./AppleUpgradePanel";
 
 const money = (n: number) => `$${n.toFixed(2)}`;
 
@@ -66,7 +68,7 @@ export function UpgradeDialog({
 
   async function upgrade() {
     if (busy) return;
-    if (platform === "apple") return; // no Stripe checkout on native iOS
+    if (!stripeCheckoutAllowed(platform)) return; // never Stripe on native iOS
     setBusy(true);
     const res = await startCheckout(interval);
     if (res.ok) {
@@ -137,19 +139,9 @@ export function UpgradeDialog({
         </div>
 
         {platform === "apple" ? (
-          /* iOS billing adapter placeholder — no Stripe. In-app purchase via Apple
-             (StoreKit) ships in a later phase. A user who bought Pro on the web
-             keeps full entitlements here automatically (server-authoritative). */
-          <div className="mt-4 rounded-xl border border-nd-border bg-nd-surface-2 p-4">
-            <p className="text-sm font-medium text-nd-text">
-              In-app purchases are coming soon
-            </p>
-            <p className="mt-1 text-[13px] text-nd-muted">
-              Buying NoteDrift Pro inside the app isn&apos;t available yet in this
-              build. If you already have Pro, sign in and your Pro features —
-              unlimited cloud and pro exports — are active here automatically.
-            </p>
-          </div>
+          /* Native iOS: StoreKit 2 purchase/restore (no Stripe). A user who bought
+             Pro on the web keeps full entitlements here automatically. */
+          <AppleUpgradePanel onClose={onClose} onNotice={onNotice} />
         ) : (
           <>
             {/* Interval — annual recommended. */}
