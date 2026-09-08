@@ -1008,7 +1008,7 @@ export default function Editor() {
     pages.find((p) => p.id === currentId)?.title ?? "Untitled";
 
   return (
-    <div className="nd-safe flex h-dvh flex-col overflow-hidden bg-nd-bg text-nd-text">
+    <div className="nd-app-shell nd-safe flex flex-col overflow-hidden bg-nd-bg text-nd-text">
       <TopBar
         pages={pages}
         currentPageId={currentId}

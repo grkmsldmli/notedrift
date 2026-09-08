@@ -146,6 +146,23 @@ textarea {
   padding-right: env(safe-area-inset-right, 0px);
 }
 
+/* The editor shell fills the FULL visible viewport height. `dvh` (dynamic viewport
+   height) tracks the actually-visible area on mobile Safari and fills the native
+   Capacitor WebView, but it is unsupported on iOS 15.0–15.3 (our deployment
+   target) — there the declaration is dropped and the shell would collapse to
+   content height, letting the dark body background show through as a black gap
+   below the canvas. The 100vh line is the fallback for those engines; browsers
+   that understand dvh use the second declaration. Desktop is unchanged (100vh ==
+   100dvh with no dynamic browser chrome). */
+.nd-app-shell {
+  height: 100vh; /* fallback: iOS 15.0–15.3 and any engine without dvh */
+}
+@supports (height: 100dvh) {
+  .nd-app-shell {
+    height: 100dvh; /* modern: fill the visible viewport, no bottom gap */
+  }
+}
+
 /* Respect the OS "Reduce motion" preference: neutralize animation/transition
    durations app-wide (spinners settle instead of looping, hover-scale/transitions
    become instant). */

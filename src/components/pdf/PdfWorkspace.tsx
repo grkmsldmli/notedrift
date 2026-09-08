@@ -569,7 +569,7 @@ export function PdfWorkspace() {
   const showContextBar = phase === "ready" && (selection !== null || contextHasControls(contextControls));
 
   return (
-    <div className="flex h-dvh flex-col overflow-hidden bg-nd-bg text-nd-text">
+    <div className="nd-app-shell flex flex-col overflow-hidden bg-nd-bg text-nd-text">
       <Header
         session={session}
         edit={edit}
