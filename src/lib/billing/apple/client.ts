@@ -9,6 +9,7 @@ import { apiUrl } from "@/lib/platform";
 import { getAccessToken, getCurrentUser } from "@/lib/auth/client";
 import { getNativeBilling, type NativeProduct, type NativeTransaction } from "../native";
 import { APPLE_PRODUCT_ID_LIST } from "./products";
+import { isValidAppAccountToken } from "./binding";
 
 export type AppleActionResult =
   | { ok: true }
@@ -55,7 +56,8 @@ export async function purchaseApplePro(productId: string): Promise<AppleActionRe
   const nb = getNativeBilling();
   if (!nb) return { ok: false, reason: "unavailable" };
   const user = await getCurrentUser();
-  if (!user) return { ok: false, reason: "not_signed_in" };
+  // A purchase MUST be bound to a signed-in user with a valid UUID appAccountToken.
+  if (!user || !isValidAppAccountToken(user.id)) return { ok: false, reason: "not_signed_in" };
 
   let result;
   try {
@@ -85,6 +87,13 @@ export async function restoreApplePro(): Promise<AppleActionResult> {
   let txs: NativeTransaction[];
   try {
     txs = await nb.currentEntitlements();
+    // StoreKit currentEntitlements is the normal source. Only for an EXPLICIT
+    // Restore action, if it's empty, force a one-time AppStore.sync() (may prompt
+    // for Apple sign-in) and re-read. Never called automatically at launch.
+    if (txs.length === 0 && nb.sync) {
+      await nb.sync();
+      txs = await nb.currentEntitlements();
+    }
   } catch {
     return { ok: false, reason: "unavailable" };
   }

@@ -48,7 +48,18 @@ public class NoteDriftStoreKitPlugin: CAPPlugin {
             call.reject("productId is required")
             return
         }
-        let tokenString = call.getString("appAccountToken")
+        // A NoteDrift Pro purchase MUST be bound to the signed-in Supabase user.
+        // Reject BEFORE Product.purchase() if appAccountToken is missing or not a
+        // valid UUID — never start a purchase without it (defense in depth; the JS
+        // path already passes the signed-in user's UUID).
+        guard let tokenString = call.getString("appAccountToken"),
+              let accountToken = UUID(uuidString: tokenString) else {
+            call.resolve([
+                "outcome": "failed",
+                "message": "appAccountToken (a valid UUID) is required",
+            ])
+            return
+        }
 
         Task {
             do {
@@ -58,11 +69,8 @@ public class NoteDriftStoreKitPlugin: CAPPlugin {
                     return
                 }
 
-                var options: Set<Product.PurchaseOption> = []
-                if let tokenString = tokenString, let uuid = UUID(uuidString: tokenString) {
-                    // Binds the App Store transaction to the signed-in Supabase user.
-                    options.insert(.appAccountToken(uuid))
-                }
+                // Always bind the App Store transaction to the Supabase user.
+                let options: Set<Product.PurchaseOption> = [.appAccountToken(accountToken)]
 
                 let result = try await product.purchase(options: options)
                 switch result {
@@ -109,6 +117,22 @@ public class NoteDriftStoreKitPlugin: CAPPlugin {
                 transactions.append(entry)
             }
             call.resolve(["transactions": transactions])
+        }
+    }
+
+    // MARK: sync (explicit Restore only — NEVER at launch)
+
+    // Forces a StoreKit account sync. This can present a sign-in prompt, so it must
+    // only be invoked in direct response to the user tapping "Restore Purchases"
+    // (the JS restore flow calls this only when currentEntitlements is empty).
+    @objc func sync(_ call: CAPPluginCall) {
+        Task {
+            do {
+                try await AppStore.sync()
+                call.resolve()
+            } catch {
+                call.reject("sync failed: \(error.localizedDescription)")
+            }
         }
     }
 

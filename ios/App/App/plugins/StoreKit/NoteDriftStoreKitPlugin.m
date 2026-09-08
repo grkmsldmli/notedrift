@@ -9,5 +9,6 @@ CAP_PLUGIN(NoteDriftStoreKitPlugin, "NoteDriftStoreKit",
   CAP_PLUGIN_METHOD(getProducts, CAPPluginReturnPromise);
   CAP_PLUGIN_METHOD(purchase, CAPPluginReturnPromise);
   CAP_PLUGIN_METHOD(currentEntitlements, CAPPluginReturnPromise);
+  CAP_PLUGIN_METHOD(sync, CAPPluginReturnPromise);
   CAP_PLUGIN_METHOD(manageSubscriptions, CAPPluginReturnPromise);
 )

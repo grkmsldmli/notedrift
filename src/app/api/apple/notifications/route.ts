@@ -12,6 +12,7 @@ import {
   verifyNotificationTransaction,
 } from "@/lib/billing/apple/verify";
 import { applyAppleEntitlement } from "@/lib/billing/apple/reconcile";
+import { notificationHttpStatus } from "@/lib/billing/apple/binding";
 
 export async function POST(request: Request): Promise<Response> {
   if (!isAppleIapConfigured()) return Response.json({ ok: false }, { status: 503 });
@@ -65,7 +66,9 @@ export async function POST(request: Request): Promise<Response> {
     },
   });
 
-  if (applied === "error") return Response.json({ ok: false }, { status: 500 });
-  // applied | duplicate | stale | unmapped are all terminal — ack so Apple stops retrying.
-  return Response.json({ ok: true, applied });
+  // "unmapped" (no authenticated purchase has bound this subscription yet) returns
+  // a RETRYABLE 503 so Apple retries after /api/billing/apple/verify creates the
+  // mapping; "error" is 500; applied | duplicate | stale are terminal 200s.
+  const status = notificationHttpStatus(applied);
+  return Response.json({ ok: status < 400, applied }, { status });
 }

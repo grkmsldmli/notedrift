@@ -33,6 +33,10 @@ export interface NativeBilling {
   purchase(productId: string, appAccountToken: string): Promise<NativePurchaseResult>;
   /** Current verified StoreKit entitlements (for Restore). */
   currentEntitlements(): Promise<NativeTransaction[]>;
+  /** Force a StoreKit account sync. Presents a sign-in prompt, so it must be called
+   *  ONLY in direct response to an explicit "Restore Purchases" action — never at
+   *  launch. Optional (older shells may not implement it). */
+  sync?(): Promise<void>;
   /** Open Apple's native manage-subscriptions sheet. */
   manageSubscriptions(): Promise<void>;
 }

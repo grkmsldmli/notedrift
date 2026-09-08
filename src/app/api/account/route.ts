@@ -13,6 +13,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireAuthenticatedUser } from "@/lib/auth/requireUser";
 import { getAdminSupabase } from "@/lib/billing/admin";
 import { handleNativePreflight, nativeCorsHeaders } from "@/lib/http/cors";
+import { removeAllUnderPrefix, type StorageLike } from "@/lib/storage/purge";
 
 const METHODS = "DELETE, OPTIONS";
 const ASSET_BUCKET = "canvas-assets";
@@ -32,12 +33,14 @@ export async function DELETE(request: Request): Promise<Response> {
   const userId = ctx.user.id; // trusted identity — never from the body
   const admin = getAdminSupabase();
 
-  // (a) Delete storage objects under "<userId>/…" — they do NOT cascade on user
-  // deletion. Best-effort: a storage hiccup must not block account removal.
+  // (a) Delete storage objects under "<userId>/…" FIRST — they do NOT cascade on
+  // user deletion. If this fails, surface it (retryable) rather than deleting the
+  // account and leaving orphaned assets — we never claim a full deletion we didn't
+  // do. The purge is bounded, so a bad backend can't block deletion forever.
   try {
     await deleteUserStorageObjects(admin, userId);
   } catch {
-    /* continue — the account (and its DB rows) are still deleted below */
+    return reply(500, { status: "storage_error" });
   }
 
   // (b) Delete the auth user LAST. FK on delete cascade removes every user-scoped
@@ -50,12 +53,15 @@ export async function DELETE(request: Request): Promise<Response> {
 
 async function deleteUserStorageObjects(admin: SupabaseClient, userId: string): Promise<void> {
   const bucket = admin.storage.from(ASSET_BUCKET);
-  const PAGE = 100;
-  for (let offset = 0; ; offset += PAGE) {
-    const { data, error } = await bucket.list(userId, { limit: PAGE, offset });
-    if (error || !data || data.length === 0) break;
-    const paths = data.filter((o) => o.name).map((o) => `${userId}/${o.name}`);
-    if (paths.length > 0) await bucket.remove(paths);
-    if (data.length < PAGE) break;
-  }
+  // Adapt the Supabase bucket to the purge helper's minimal, safe interface.
+  const store: StorageLike = {
+    list: (prefix, opts) => bucket.list(prefix, { limit: opts.limit, offset: opts.offset }),
+    remove: async (paths) => {
+      const { error } = await bucket.remove(paths);
+      return { error: error ? { message: error.message } : null };
+    },
+  };
+  // Removes ALL objects under "<userId>/…" (recursively), re-listing at offset 0 so
+  // deletions can't skip entries. Throws on a real storage error (surfaced below).
+  await removeAllUnderPrefix(store, userId);
 }

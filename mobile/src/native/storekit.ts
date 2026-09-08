@@ -28,6 +28,7 @@ interface StoreKitPlugin {
     appAccountToken: string;
   }): Promise<{ outcome: string; jwsTransaction?: string; jwsRenewalInfo?: string; message?: string }>;
   currentEntitlements(): Promise<{ transactions: StoreKitTransaction[] }>;
+  sync(): Promise<void>;
   manageSubscriptions(): Promise<void>;
 }
 
@@ -75,6 +76,9 @@ export function registerStoreKitBilling(): void {
           signedRenewalInfo: t.jwsRenewalInfo,
         }),
       );
+    },
+    async sync() {
+      await StoreKit.sync();
     },
     async manageSubscriptions() {
       await StoreKit.manageSubscriptions();
