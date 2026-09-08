@@ -15,6 +15,11 @@ const eslintConfig = defineConfig([
     // Static assets served verbatim — never lint them (e.g. the self-hosted,
     // minified pdf.js runtime copied into public/pdfjs/).
     "public/**",
+    // The Capacitor mobile client is a separate Vite app with its own toolchain
+    // (Vite/Capacitor types, Next-shim aliases); it is not part of the Next lint.
+    "mobile/**",
+    // Generated native platform project.
+    "ios/**",
   ]),
 ]);
 

@@ -7,6 +7,7 @@ import { useAuth } from "./AuthProvider";
 import { SignInDialog } from "./SignInDialog";
 import { UpgradeDialog } from "../billing/UpgradeDialog";
 import { openBillingPortal } from "@/lib/billing/client";
+import { billingPlatform } from "@/lib/platform";
 
 /**
  * The single, restrained account entry point (top-right). Renders NOTHING when
@@ -196,16 +197,25 @@ export function AccountButton() {
           <div className="my-1 h-px bg-nd-border" />
 
           {isPro ? (
-            <button
-              type="button"
-              role="menuitem"
-              onClick={manageBilling}
-              disabled={portalBusy}
-              className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-nd-text transition-colors hover:bg-white/5 disabled:opacity-60"
-            >
-              <CreditCard size={15} className="text-nd-muted" />
-              {portalBusy ? "Opening…" : "Manage billing"}
-            </button>
+            billingPlatform() === "stripe" ? (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={manageBilling}
+                disabled={portalBusy}
+                className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-nd-text transition-colors hover:bg-white/5 disabled:opacity-60"
+              >
+                <CreditCard size={15} className="text-nd-muted" />
+                {portalBusy ? "Opening…" : "Manage billing"}
+              </button>
+            ) : (
+              // Native iOS: subscriptions are not managed via Stripe here. Show a
+              // static Pro state instead of a billing-portal action.
+              <div className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-nd-muted">
+                <CreditCard size={15} className="text-nd-muted" />
+                NoteDrift Pro active
+              </div>
+            )
           ) : activating ? (
             <div className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-nd-muted">
               <Loader2 size={15} className="animate-spin text-nd-accent" />

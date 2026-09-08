@@ -17,6 +17,7 @@ import {
 import { startCheckout } from "@/lib/billing/client";
 import type { BillingInterval } from "@/lib/billing/types";
 import type { UpgradeContext } from "@/lib/export/types";
+import { billingPlatform } from "@/lib/platform";
 
 const money = (n: number) => `$${n.toFixed(2)}`;
 
@@ -58,8 +59,14 @@ export function UpgradeDialog({
   const yearlyPerMonth = annualMonthlyEquivalent();
   const price = interval === "monthly" ? `${money(PRICING.monthly)}/month` : `${money(PRICING.annual)}/year`;
 
+  // Apple compliance: the native iOS app must NEVER open Stripe Checkout. Pro is
+  // sold via Apple IAP in a later (StoreKit) phase; until then native shows a
+  // placeholder and this guard makes a Stripe call impossible even if reached.
+  const platform = billingPlatform();
+
   async function upgrade() {
     if (busy) return;
+    if (platform === "apple") return; // no Stripe checkout on native iOS
     setBusy(true);
     const res = await startCheckout(interval);
     if (res.ok) {
@@ -129,39 +136,57 @@ export function UpgradeDialog({
           </div>
         </div>
 
-        {/* Interval — annual recommended. */}
-        <div className="mt-4 grid grid-cols-2 gap-2">
-          <IntervalOption selected={interval === "monthly"} onSelect={() => setInterval("monthly")} label="Monthly" price={`${money(PRICING.monthly)}/mo`} />
-          <IntervalOption
-            selected={interval === "yearly"}
-            onSelect={() => setInterval("yearly")}
-            label="Yearly"
-            price={`${money(PRICING.annual)}/yr`}
-            note={`${money(yearlyPerMonth)}/mo`}
-            badge={`Best value · Save ${savePct}%`}
-          />
-        </div>
+        {platform === "apple" ? (
+          /* iOS billing adapter placeholder — no Stripe. In-app purchase via Apple
+             (StoreKit) ships in a later phase. A user who bought Pro on the web
+             keeps full entitlements here automatically (server-authoritative). */
+          <div className="mt-4 rounded-xl border border-nd-border bg-nd-surface-2 p-4">
+            <p className="text-sm font-medium text-nd-text">
+              In-app purchases are coming soon
+            </p>
+            <p className="mt-1 text-[13px] text-nd-muted">
+              Buying NoteDrift Pro inside the app isn&apos;t available yet in this
+              build. If you already have Pro, sign in and your Pro features —
+              unlimited cloud and pro exports — are active here automatically.
+            </p>
+          </div>
+        ) : (
+          <>
+            {/* Interval — annual recommended. */}
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <IntervalOption selected={interval === "monthly"} onSelect={() => setInterval("monthly")} label="Monthly" price={`${money(PRICING.monthly)}/mo`} />
+              <IntervalOption
+                selected={interval === "yearly"}
+                onSelect={() => setInterval("yearly")}
+                label="Yearly"
+                price={`${money(PRICING.annual)}/yr`}
+                note={`${money(yearlyPerMonth)}/mo`}
+                badge={`Best value · Save ${savePct}%`}
+              />
+            </div>
 
-        <button
-          type="button"
-          onClick={upgrade}
-          disabled={busy}
-          className="nd-gradient mt-4 flex w-full items-center justify-center gap-2 rounded-lg py-2.5 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-60"
-        >
-          {busy ? (
-            <>
-              <Loader2 size={16} className="animate-spin" /> Opening checkout…
-            </>
-          ) : (
-            <>Get Pro — {price}</>
-          )}
-        </button>
-        <p className="mt-2 text-center text-[11px] text-nd-muted">
-          Secure checkout · Cancel anytime ·{" "}
-          <a href="/terms" target="_blank" rel="noopener noreferrer" className="hover:text-nd-text hover:underline">Terms</a>{" "}
-          ·{" "}
-          <a href="/privacy" target="_blank" rel="noopener noreferrer" className="hover:text-nd-text hover:underline">Privacy</a>
-        </p>
+            <button
+              type="button"
+              onClick={upgrade}
+              disabled={busy}
+              className="nd-gradient mt-4 flex w-full items-center justify-center gap-2 rounded-lg py-2.5 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-60"
+            >
+              {busy ? (
+                <>
+                  <Loader2 size={16} className="animate-spin" /> Opening checkout…
+                </>
+              ) : (
+                <>Get Pro — {price}</>
+              )}
+            </button>
+            <p className="mt-2 text-center text-[11px] text-nd-muted">
+              Secure checkout · Cancel anytime ·{" "}
+              <a href="/terms" target="_blank" rel="noopener noreferrer" className="hover:text-nd-text hover:underline">Terms</a>{" "}
+              ·{" "}
+              <a href="/privacy" target="_blank" rel="noopener noreferrer" className="hover:text-nd-text hover:underline">Privacy</a>
+            </p>
+          </>
+        )}
       </div>
     </div>
   );

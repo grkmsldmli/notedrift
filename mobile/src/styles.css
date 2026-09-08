@@ -1,0 +1,34 @@
+/* Reuse the web app's complete stylesheet — Tailwind v4 + the NoteDrift theme
+   tokens + the self-hosted canvas font. Nothing is forked. */
+@import "../../src/app/globals.css";
+
+/* Tailwind v4 auto-scans the Vite root (mobile/); the reused editor components
+   live in ../../src, so tell Tailwind to scan them for class names too. */
+@source "../../src";
+
+:root {
+  /* The web sets these via next/font on <html>; the native shell has no Next
+     runtime, so define them as system stacks (Geist falls back gracefully). */
+  --font-geist-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-geist-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--nd-bg);
+  color: var(--nd-text);
+  font-family: var(--font-geist-sans);
+  /* No page rubber-band; the canvas manages its own panning. */
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+  /* Disable the iOS long-press link/callout preview over the canvas. */
+  -webkit-touch-callout: none;
+}

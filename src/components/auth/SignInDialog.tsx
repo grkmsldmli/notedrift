@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Mail, X } from "lucide-react";
 import { useAuth } from "./AuthProvider";
 import { isGoogleAuthConfigured } from "@/lib/auth/config";
+import { isNativeIos } from "@/lib/platform";
 import { GoogleSignInButton } from "./GoogleSignInButton";
 import { OtpInput } from "./OtpInput";
 import { OTP_LENGTH } from "@/lib/auth/otp";
@@ -32,7 +33,10 @@ export function SignInDialog({ onClose }: { onClose: () => void }) {
   // Bumped on each failed verify so the OtpInput remounts, clears, and refocuses.
   const [attempt, setAttempt] = useState(0);
   const emailRef = useRef<HTMLInputElement>(null);
-  const showGoogle = isGoogleAuthConfigured();
+  // Google Identity Services is blocked inside WKWebView and a local Capacitor
+  // origin can't be a registered Google JS origin, so hide it on native iOS.
+  // Email OTP (below) is the reliable native path. See docs/ios/IOS_ARCHITECTURE.md.
+  const showGoogle = isGoogleAuthConfigured() && !isNativeIos();
   const titleId = "nd-signin-title";
   const errId = "nd-signin-error";
   const cleanEmail = email.trim().toLowerCase();

@@ -75,7 +75,7 @@ import {
 } from "./connectors";
 import { clampDimension, fitPixelBudget, outputPixels, resolveScale } from "./export/scale";
 import type { RasterRequest, RasterResult } from "./export/types";
-import { dataUrlToBlob } from "./export/download";
+import { dataUrlToBlob, downloadBlob } from "./export/download";
 import type {
   Anchor,
   ArrowHead,
@@ -3465,12 +3465,10 @@ export class CanvasController {
       return;
     }
 
-    const a = document.createElement("a");
-    a.href = dataUrl;
-    a.download = `${fileName}.png`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+    // Route through the shared download helper so the native iOS shell can save/
+    // share it (WKWebView ignores `<a download>`); on web this is the same anchor
+    // click as before.
+    downloadBlob(dataUrlToBlob(dataUrl), `${fileName}.png`);
   }
 
   /** The content (or selection) size in logical px at 1× — used to seed the

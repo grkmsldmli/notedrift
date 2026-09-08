@@ -6,6 +6,8 @@
 // Kill switch: NEXT_PUBLIC_ADSENSE_ENABLED must be exactly "true" to enable ads.
 // Anything else (false / unset) disables all advertising.
 
+import { isNative } from "../platform.ts";
+
 /** Format of the AdSense client id, e.g. "ca-pub-1234567890123456". */
 const CLIENT_RE = /^ca-pub-\d{10,}$/;
 /** Numeric AdSense slot id, e.g. "1234567890". */
@@ -38,8 +40,12 @@ export function adsenseSlotToolPage(): string | undefined {
 }
 
 /** Ads are configured when the kill switch is on AND a valid client id exists.
- *  Eligibility additionally requires a production host (see isProductionAdHost). */
+ *  Eligibility additionally requires a production host (see isProductionAdHost).
+ *  The native iOS app NEVER shows AdSense (App Store policy + no third-party ad
+ *  SDK this phase): a hard native short-circuit here disables the loader script
+ *  and every ad surface at once, regardless of host or env. */
 export function adsConfigured(): boolean {
+  if (isNative()) return false;
   return adsenseEnabled() && adsenseClientId() !== undefined;
 }
 

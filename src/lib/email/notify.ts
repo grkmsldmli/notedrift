@@ -4,11 +4,13 @@
 // simply gets a 401 that we ignore. `keepalive` lets the request finish even if
 // the page navigates away immediately after (e.g. the sign-in dialog closing).
 
+import { apiUrl } from "@/lib/platform";
+
 type LifecycleEvent = "welcome" | "pro-welcome" | "export-intent" | "cloud-limit";
 
 export function notifyLifecycle(event: LifecycleEvent): void {
   try {
-    void fetch("/api/email/lifecycle", {
+    void fetch(apiUrl("/api/email/lifecycle"), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ event }),
@@ -21,7 +23,7 @@ export function notifyLifecycle(event: LifecycleEvent): void {
 
 export function setMarketingPreference(optIn: boolean): void {
   try {
-    void fetch("/api/email/preferences", {
+    void fetch(apiUrl("/api/email/preferences"), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ marketingOptIn: optIn }),
