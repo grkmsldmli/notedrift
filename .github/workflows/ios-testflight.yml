@@ -1,0 +1,180 @@
+name: iOS TestFlight
+
+# Manual-only. Builds the Capacitor iOS app on macOS, archives with automatic
+# signing (App Store Connect API key), exports an App Store IPA, and uploads it to
+# App Store Connect / TestFlight — all via Apple's own xcodebuild tooling.
+#
+# Required repository secrets (App Store Connect API key of the TEAM key kind):
+#   APP_STORE_CONNECT_KEY_ID
+#   APP_STORE_CONNECT_ISSUER_ID
+#   APP_STORE_CONNECT_PRIVATE_KEY   (the full contents of the AuthKey_XXXX.p8)
+# Optional (baked into the local web bundle if provided; the app still builds without them):
+#   NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY,
+#   NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY, NEXT_PUBLIC_SITE_URL
+#
+# The private key is never printed. No certificates, keys, profiles, or IPAs are
+# committed — everything transient lives under RUNNER_TEMP.
+
+on:
+  workflow_dispatch:
+
+env:
+  TEAM_ID: "V34JTJ9S75"
+  APPLE_ID: "6809678426"
+  BUNDLE_ID: "com.notedrift.app"
+
+jobs:
+  build-and-upload:
+    runs-on: macos-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Verify required secrets are present
+        env:
+          KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+        run: |
+          missing=0
+          [ -n "$KEY_ID" ]     || { echo "::error::Missing secret APP_STORE_CONNECT_KEY_ID"; missing=1; }
+          [ -n "$ISSUER_ID" ]  || { echo "::error::Missing secret APP_STORE_CONNECT_ISSUER_ID"; missing=1; }
+          [ -n "$PRIVATE_KEY" ]|| { echo "::error::Missing secret APP_STORE_CONNECT_PRIVATE_KEY"; missing=1; }
+          if [ "$missing" != "0" ]; then
+            echo "::error::One or more required App Store Connect secrets are missing. Add them in Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      - name: Build local web bundle and sync iOS
+        env:
+          # Optional public config baked into the bundle; empty is fine (offline app).
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
+          NEXT_PUBLIC_SITE_URL: ${{ secrets.NEXT_PUBLIC_SITE_URL }}
+        run: npm run ios:sync
+
+      - name: Enforce iOS 15 deployment target in Podfile
+        working-directory: ios/App
+        run: |
+          # cap sync should not touch the platform line, but enforce it defensively
+          # so a regeneration can never drop the target below StoreKit 2's minimum.
+          sed -i '' "s/platform :ios, '.*'/platform :ios, '15.0'/" Podfile
+          grep "platform :ios" Podfile
+
+      - name: CocoaPods install
+        working-directory: ios/App
+        run: pod install --repo-update
+
+      - name: Write App Store Connect API key (never printed)
+        env:
+          KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+        run: |
+          KEY_PATH="$RUNNER_TEMP/AuthKey_${KEY_ID}.p8"
+          # printf keeps the key off argv; GitHub also masks secret values in logs.
+          printf '%s' "$PRIVATE_KEY" > "$KEY_PATH"
+          chmod 600 "$KEY_PATH"
+          echo "AUTH_KEY_PATH=$KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Archive (Release, automatic signing)
+        working-directory: ios/App
+        env:
+          KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -workspace App.xcworkspace \
+            -scheme App \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/App.xcarchive" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$AUTH_KEY_PATH" \
+            -authenticationKeyID "$KEY_ID" \
+            -authenticationKeyIssuerID "$ISSUER_ID" \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            CODE_SIGN_STYLE=Automatic \
+            CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
+            clean archive
+
+      - name: Write export options
+        run: |
+          cat > "$RUNNER_TEMP/ExportOptions-export.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>export</string>
+            <key>teamID</key><string>${TEAM_ID}</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>uploadSymbols</key><true/>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+          </dict>
+          </plist>
+          PLIST
+          cat > "$RUNNER_TEMP/ExportOptions-upload.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>teamID</key><string>${TEAM_ID}</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>uploadSymbols</key><true/>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+          </dict>
+          </plist>
+          PLIST
+
+      - name: Export App Store IPA
+        working-directory: ios/App
+        env:
+          KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/App.xcarchive" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions-export.plist" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$AUTH_KEY_PATH" \
+            -authenticationKeyID "$KEY_ID" \
+            -authenticationKeyIssuerID "$ISSUER_ID"
+          echo "Exported:"; ls -la "$RUNNER_TEMP/export"
+
+      - name: Upload to App Store Connect / TestFlight
+        working-directory: ios/App
+        env:
+          KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          # Uploads the archive via xcodebuild (current Apple tooling, no altool).
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/App.xcarchive" \
+            -exportPath "$RUNNER_TEMP/upload" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions-upload.plist" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$AUTH_KEY_PATH" \
+            -authenticationKeyID "$KEY_ID" \
+            -authenticationKeyIssuerID "$ISSUER_ID"
+
+      - name: Clean up API key
+        if: always()
+        run: rm -f "$AUTH_KEY_PATH" || true

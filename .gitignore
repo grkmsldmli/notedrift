@@ -59,3 +59,14 @@ next-env.d.ts
 /ios/App/App/public/
 /ios/DerivedData/
 .capacitor/
+
+# iOS signing material + build artifacts — NEVER commit (CI keeps these in RUNNER_TEMP)
+*.ipa
+*.p8
+*.p12
+*.mobileprovision
+*.provisionprofile
+*.certSigningRequest
+*.cer
+*.xcarchive
+ExportOptions*.plist

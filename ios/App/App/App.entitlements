@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  In-App Purchase requires NO entitlement key (the capability is declared via the
+	  target's SystemCapabilities in project.pbxproj and enabled on the App ID). This
+	  file exists so CODE_SIGN_ENTITLEMENTS is wired and gives a home for any future
+	  entitlement. Do not add unrelated capabilities.
+	-->
+</dict>
+</plist>
