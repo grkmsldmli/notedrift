@@ -59,7 +59,8 @@ delivers the architecture and a buildable shell only.
       (email for accounts, canvas data for Pro cloud). No tracking, no ads SDK on iOS.
 - [ ] `NSPhotoLibraryUsageDescription` present and truthful (image import) — done.
 - [ ] Confirm usage strings: `NSPhotoLibraryUsageDescription` + `NSCameraUsageDescription`
-      (image import + Take Photo). **No** microphone/location/contacts strings.
+      + `NSPhotoLibraryAddUsageDescription` (image import + Take Photo, all required by
+      @capacitor/camera 7). **No** microphone/location/contacts strings.
 
 ### 4. Backend for native
 - [x] Bearer-token auth (`requireAuthenticatedUser`) on the native routes

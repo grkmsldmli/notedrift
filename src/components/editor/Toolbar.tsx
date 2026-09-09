@@ -123,6 +123,11 @@ export const Toolbar = memo(function Toolbar({
   // the full pinned set directly reachable — only phones fall back to the compact
   // primary set.
   const orient: Orient = isTouch ? "h" : "v";
+  // The dock is horizontal on ANY touch device (phone + iPad); vertical only on a
+  // fine-pointer desktop. EVERY layout branch below (wrapper, pill, dividers,
+  // popovers) keys off this — never off isMobile — so a wide iPad can't get a
+  // vertical rail whose popovers think they belong to a horizontal dock.
+  const horizontal = orient === "h";
   const slots = isMobile ? MOBILE_SLOTS : pinnedSlots;
 
   const [openSlot, setOpenSlot] = useState<RailSlot | "library" | null>(null);
@@ -378,16 +383,16 @@ export const Toolbar = memo(function Toolbar({
   };
 
   // Outer wrapper is pointer-events-none so the transparent area around the pill
-  // (full width at the bottom on mobile) never blocks the canvas; the pill itself
-  // re-enables pointer events.
-  const outer = isMobile
+  // (full width at the bottom on the touch dock) never blocks the canvas; the pill
+  // itself re-enables pointer events. The bottom dock uses the safe-area inset so it
+  // clears the home indicator on iPhone AND iPad.
+  const outer = horizontal
     ? "pointer-events-none absolute inset-x-0 bottom-0 z-20 flex justify-center px-2 pb-[max(0.4rem,env(safe-area-inset-bottom))]"
     : "pointer-events-none absolute left-4 top-1/2 z-20 flex max-h-[calc(100%-1.25rem)] -translate-y-1/2 flex-col";
   // No overflow/scroll on the pill itself: its flyout popovers open OUTSIDE it
-  // (left-full on desktop, bottom-full on mobile), and an overflow container would
-  // clip them. Item counts are bounded (fixed 6 on mobile; the rail only shows on
-  // tall screens), so the pill always fits without scrolling.
-  const pill = isMobile
+  // (left-full on the desktop rail, bottom-full on the touch dock), and an overflow
+  // container would clip them. Item counts are bounded, so the pill always fits.
+  const pill = horizontal
     ? "nd-rail pointer-events-auto flex max-w-full items-center gap-0.5 rounded-2xl border border-nd-border bg-nd-surface/95 p-1 shadow-xl backdrop-blur"
     : "nd-rail pointer-events-auto flex min-h-0 flex-col items-center gap-0.5 rounded-2xl border border-nd-border bg-nd-surface/95 p-1 shadow-xl backdrop-blur";
 
@@ -400,9 +405,9 @@ export const Toolbar = memo(function Toolbar({
           active={tool === "select"}
           onClick={() => onSelectTool("select")}
         />
-        <Divider h={isMobile} />
+        <Divider h={horizontal} />
         {slots.map(renderSlot)}
-        <Divider h={isMobile} />
+        <Divider h={horizontal} />
         {/* Tool Library — the unified discovery + pinning path (All Tools). */}
         <div className="relative">
           <IconButton

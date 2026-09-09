@@ -26,6 +26,8 @@ import { DashPicker, Stepper } from "../ui/ShapeControls";
 import { FontPicker } from "../ui/TextControls";
 import { FONT_STACKS, fontKeyOf } from "@/lib/fonts";
 import { NOTE_COLORS } from "@/lib/constants";
+import { useIsTouch } from "@/lib/hooks/useIsMobile";
+import { DrawTouchPanel } from "./DrawTouchPanel";
 
 interface ToolOptionsBarProps {
   tool: Tool;
@@ -95,6 +97,7 @@ export const ToolOptionsBar = memo(
   // usable immediately without a big card covering the canvas. The parent keys
   // this component by tool, so switching tools resets it to collapsed.
   const [expanded, setExpanded] = useState(false);
+  const isTouch = useIsTouch();
   // Collapse on a real paper/canvas pointer-down (driven by the Editor). Calling
   // setExpanded(false) when already collapsed is a no-op React bails out of, so
   // this stays flicker-free stroke after stroke.
@@ -328,6 +331,22 @@ export const ToolOptionsBar = memo(
           <ChevronDown size={14} className="text-nd-muted" />
         </button>
       </div>
+    );
+  }
+
+  // Touch (phone/tablet) + a drawing instrument: use the finger-first quick panel
+  // (swatches + width/opacity presets, precise controls under Advanced) instead of
+  // the desktop slider bar, so it stays tappable and doesn't cover the canvas.
+  if (isTouch && DRAW_SET.has(tool)) {
+    const dtool = tool as DrawTool;
+    return (
+      <DrawTouchPanel
+        draw={dtool}
+        mat={materialFor(dtool)}
+        prefs={defaults.draw[dtool]}
+        onSetDrawPref={onSetDrawPref}
+        onCollapse={() => setExpanded(false)}
+      />
     );
   }
 

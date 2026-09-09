@@ -51,6 +51,8 @@
 	<string>NoteDrift lets you add images from your photo library to your canvas.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>NoteDrift uses the camera so you can take a photo and add it to your canvas.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>NoteDrift needs photo library access to work with images you add to your canvas.</string>
 	<!-- NoteDrift uses only standard HTTPS (exempt encryption); declaring this
 	     skips the export-compliance prompt on every TestFlight upload. -->
 	<key>ITSAppUsesNonExemptEncryption</key>
