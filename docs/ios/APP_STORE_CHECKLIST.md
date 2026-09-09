@@ -58,7 +58,8 @@ delivers the architecture and a buildable shell only.
 - [ ] App Privacy questionnaire in App Store Connect: declare what Supabase stores
       (email for accounts, canvas data for Pro cloud). No tracking, no ads SDK on iOS.
 - [ ] `NSPhotoLibraryUsageDescription` present and truthful (image import) — done.
-- [ ] Confirm **no** camera/microphone/location/contacts usage strings (none added).
+- [ ] Confirm usage strings: `NSPhotoLibraryUsageDescription` + `NSCameraUsageDescription`
+      (image import + Take Photo). **No** microphone/location/contacts strings.
 
 ### 4. Backend for native
 - [x] Bearer-token auth (`requireAuthenticatedUser`) on the native routes

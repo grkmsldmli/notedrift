@@ -82,6 +82,8 @@ function summaryFor(
  *  canvas interaction begins (canvas-first). */
 export interface ToolOptionsBarHandle {
   collapse: () => void;
+  /** Open the full settings panel (used by "tap the active tool again"). */
+  expand: () => void;
 }
 
 export const ToolOptionsBar = memo(
@@ -96,7 +98,11 @@ export const ToolOptionsBar = memo(
   // Collapse on a real paper/canvas pointer-down (driven by the Editor). Calling
   // setExpanded(false) when already collapsed is a no-op React bails out of, so
   // this stays flicker-free stroke after stroke.
-  useImperativeHandle(ref, () => ({ collapse: () => setExpanded(false) }), []);
+  useImperativeHandle(
+    ref,
+    () => ({ collapse: () => setExpanded(false), expand: () => setExpanded(true) }),
+    [],
+  );
   useEffect(() => {
     if (!expanded) return;
     const onKey = (e: KeyboardEvent) => {

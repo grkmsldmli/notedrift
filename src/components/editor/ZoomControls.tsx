@@ -15,7 +15,7 @@ import {
   Square,
 } from "lucide-react";
 import type { CanvasStyle } from "@/lib/types";
-import { useIsMobile } from "@/lib/hooks/useIsMobile";
+import { useIsTouch } from "@/lib/hooks/useIsMobile";
 
 interface ZoomControlsProps {
   zoom: number;
@@ -53,7 +53,9 @@ export const ZoomControls = memo(function ZoomControls({
   onSetStyle,
 }: ZoomControlsProps) {
   const [open, setOpen] = useState(false);
-  const isMobile = useIsMobile();
+  // Lift above the bottom tool dock on any touch device (phone OR tablet), which
+  // now both use the horizontal dock.
+  const isTouch = useIsTouch();
   const pct = Math.round(zoom * 100);
 
   // Escape closes the popover (outside-click handled by the transient overlay).
@@ -69,8 +71,8 @@ export const ZoomControls = memo(function ZoomControls({
   return (
     <div
       className="absolute left-4 z-20 transition-[bottom]"
-      // Lift above the mobile bottom tool dock so they never overlap.
-      style={{ bottom: (isMobile ? 84 : 20) + keyboardInset }}
+      // Lift above the bottom tool dock so they never overlap.
+      style={{ bottom: (isTouch ? 84 : 20) + keyboardInset }}
     >
       <div className="relative">
         {/* The ONLY persistent control: a compact percentage button. */}

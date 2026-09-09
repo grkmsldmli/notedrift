@@ -93,6 +93,19 @@ export class FreehandBrush extends fabric.BaseBrush {
   private drawing = false;
   private strokeSawPen = false;
 
+  // Per-stroke cached transform so sceneFromEvent avoids a forced-layout
+  // getBoundingClientRect() + matrix inversion on EVERY coalesced sample. These are
+  // constant during a stroke (a drawing stroke never pans/zooms); null between
+  // strokes, in which case sceneFromEvent falls back to computing them.
+  private strokeRect: { left: number; top: number; width: number; height: number } | null = null;
+  private strokeCanvasW = 0;
+  private strokeCanvasH = 0;
+  private strokeInv: ReturnType<typeof fabric.util.invertTransform> | null = null;
+  // The live-preview recompute (O(n) getStroke over all samples) is coalesced to
+  // one per animation frame — the display's own cadence — so 120 Hz coalesced input
+  // can't trigger more outline recomputes than there are frames to show them.
+  private previewRaf = 0;
+
   /** Diagnostics for the performance report (raw vs kept sample counts). */
   lastRawCount = 0;
   lastKeptCount = 0;
@@ -113,6 +126,9 @@ export class FreehandBrush extends fabric.BaseBrush {
   /** Abandon an in-progress stroke (e.g. a gesture took over). */
   cancel(): void {
     this.drawing = false;
+    this.cancelPreview();
+    this.strokeRect = null;
+    this.strokeInv = null;
     this.samples = [];
     this.lastClient = null;
     const ctx = this.canvas.contextTop;
@@ -127,7 +143,11 @@ export class FreehandBrush extends fabric.BaseBrush {
     this.strokeSawPen = false;
     const e = ev.e as PointerEvent;
     if (e.pointerType === "pen") this.strokeSawPen = true;
+    // Snapshot the (stroke-constant) canvas rect + inverse viewport transform once,
+    // so per-sample projection is pure arithmetic with no forced layout.
+    this.captureStrokeTransform();
     this.addSample(pointer.x, pointer.y, e.clientX, e.clientY, this.pressureOf(e));
+    // Draw the first dot immediately for the lowest possible touch-to-ink latency.
     this.renderPreview();
   }
 
@@ -148,7 +168,9 @@ export class FreehandBrush extends fabric.BaseBrush {
     } else {
       this.addSample(pointer.x, pointer.y, e.clientX, e.clientY, this.pressureOf(e));
     }
-    this.renderPreview();
+    // Coalesce the outline recompute to one per frame (samples still append every
+    // event) — no visible lag (a frame is the display cadence), far less CPU.
+    this.schedulePreview();
   }
 
   onMouseUp(): boolean {
@@ -171,20 +193,53 @@ export class FreehandBrush extends fabric.BaseBrush {
       : 0.5;
   }
 
+  /** Cache the stroke-constant canvas rect + inverse viewport transform for the
+   *  duration of one stroke. */
+  private captureStrokeTransform(): void {
+    const r = this.canvas.upperCanvasEl.getBoundingClientRect();
+    this.strokeRect = { left: r.left, top: r.top, width: r.width, height: r.height };
+    this.strokeCanvasW = this.canvas.getWidth();
+    this.strokeCanvasH = this.canvas.getHeight();
+    this.strokeInv = fabric.util.invertTransform(this.canvas.viewportTransform);
+  }
+
   /** Scene coordinate of a raw pointer event, computed independently of Fabric's
-   *  per-frame pointer cache (so coalesced samples keep their own positions). */
+   *  per-frame pointer cache (so coalesced samples keep their own positions). Uses
+   *  the per-stroke cached rect/inverse (set in onMouseDown) to avoid a forced
+   *  layout on every sample; falls back to a live read if the cache is absent. */
   private sceneFromEvent(e: PointerEvent): { x: number; y: number } {
-    const el = this.canvas.upperCanvasEl;
-    const rect = el.getBoundingClientRect();
-    const lx = rect.width
-      ? ((e.clientX - rect.left) / rect.width) * this.canvas.getWidth()
-      : 0;
-    const ly = rect.height
-      ? ((e.clientY - rect.top) / rect.height) * this.canvas.getHeight()
-      : 0;
-    const inv = fabric.util.invertTransform(this.canvas.viewportTransform);
+    let rect = this.strokeRect;
+    let inv = this.strokeInv;
+    let cw = this.strokeCanvasW;
+    let ch = this.strokeCanvasH;
+    if (!rect || !inv) {
+      const r = this.canvas.upperCanvasEl.getBoundingClientRect();
+      rect = { left: r.left, top: r.top, width: r.width, height: r.height };
+      cw = this.canvas.getWidth();
+      ch = this.canvas.getHeight();
+      inv = fabric.util.invertTransform(this.canvas.viewportTransform);
+    }
+    const lx = rect.width ? ((e.clientX - rect.left) / rect.width) * cw : 0;
+    const ly = rect.height ? ((e.clientY - rect.top) / rect.height) * ch : 0;
     const p = fabric.util.transformPoint(new fabric.Point(lx, ly), inv);
     return { x: p.x, y: p.y };
+  }
+
+  /** Schedule ONE preview recompute on the next animation frame (idempotent within
+   *  a frame). Guarded by `drawing` so a late frame after pen-lift is a no-op. */
+  private schedulePreview(): void {
+    if (this.previewRaf) return;
+    this.previewRaf = requestAnimationFrame(() => {
+      this.previewRaf = 0;
+      if (this.drawing) this.renderPreview();
+    });
+  }
+
+  private cancelPreview(): void {
+    if (this.previewRaf) {
+      cancelAnimationFrame(this.previewRaf);
+      this.previewRaf = 0;
+    }
   }
 
   private addSample(
@@ -250,6 +305,9 @@ export class FreehandBrush extends fabric.BaseBrush {
   }
 
   private finalize(): void {
+    this.cancelPreview();
+    this.strokeRect = null;
+    this.strokeInv = null;
     const ctx = this.canvas.contextTop;
     if (ctx) this.canvas.clearContext(ctx);
 

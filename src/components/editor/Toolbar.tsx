@@ -36,7 +36,7 @@ import {
 } from "lucide-react";
 import type { EraserMode, RailSlot, Tool } from "@/lib/types";
 import { getToolDef } from "@/lib/tools/registry";
-import { useIsMobile } from "@/lib/hooks/useIsMobile";
+import { useIsMobile, useIsTouch } from "@/lib/hooks/useIsMobile";
 import { IconButton } from "../ui/IconButton";
 import { ToolLibrary } from "./ToolLibrary";
 
@@ -117,7 +117,12 @@ export const Toolbar = memo(function Toolbar({
   onTogglePin,
 }: ToolbarProps) {
   const isMobile = useIsMobile();
-  const orient: Orient = isMobile ? "h" : "v";
+  const isTouch = useIsTouch();
+  // Touch-first devices (phone AND tablet/iPad) get the horizontal bottom dock;
+  // desktop (fine pointer) keeps the vertical left rail. Tablets, having room, get
+  // the full pinned set directly reachable — only phones fall back to the compact
+  // primary set.
+  const orient: Orient = isTouch ? "h" : "v";
   const slots = isMobile ? MOBILE_SLOTS : pinnedSlots;
 
   const [openSlot, setOpenSlot] = useState<RailSlot | "library" | null>(null);

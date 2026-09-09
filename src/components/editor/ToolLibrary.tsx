@@ -122,7 +122,9 @@ export const ToolLibrary = memo(function ToolLibrary({
                           "nd-hit flex h-6 w-6 items-center justify-center rounded-md transition-colors",
                           pinned
                             ? "text-nd-accent hover:bg-white/5"
-                            : "text-nd-faint opacity-0 hover:bg-white/5 hover:text-nd-text group-hover:opacity-100",
+                            : // Hover-reveal on desktop, but ALWAYS visible on touch
+                              // (no hover) so tablets can pin/unpin tools.
+                              "text-nd-faint opacity-0 hover:bg-white/5 hover:text-nd-text group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100",
                         ].join(" ")}
                       >
                         {pinned ? <Pin size={13} /> : <PinOff size={13} />}

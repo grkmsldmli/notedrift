@@ -61,12 +61,16 @@ import { AuthNotice } from "../auth/AuthNotice";
 import { Toolbar } from "./Toolbar";
 import { TopBar } from "./TopBar";
 import { ZoomControls } from "./ZoomControls";
+import { PaperControl } from "./PaperControl";
 import { ToolOptionsBar, type ToolOptionsBarHandle } from "./ToolOptionsBar";
 import { ObjectToolbar, type LayerOp } from "./ObjectToolbar";
 import { CropBar } from "./CropBar";
 import { NodeQuickAdd } from "./NodeQuickAdd";
 import { EmptyCanvasHint, QuickStart } from "./FirstRun";
 import { CustomSizeDialog } from "./CustomSizeDialog";
+import { ImageSourceSheet } from "./ImageSourceSheet";
+import { getNativeImagePicker, type NativeImageSource } from "@/lib/image/native";
+import { useIsTouch } from "@/lib/hooks/useIsMobile";
 import { BottomAdBand } from "../ads/BottomAdBand";
 import { notifyLifecycle } from "@/lib/email/notify";
 
@@ -172,7 +176,10 @@ export default function Editor() {
   const [paperOffset, setPaperOffset] = useState({ left: 0, top: 0 });
   const [paperSize, setPaperSize] = useState({ width: 0, height: 0 });
   const [keyboardInset, setKeyboardInset] = useState(0);
+  const isTouch = useIsTouch();
   const [notice, setNotice] = useState<string | null>(null);
+  // Native "Add Image" source chooser (Photo Library / Take Photo / Files).
+  const [imageChooser, setImageChooser] = useState(false);
   const [pinnedSlots, setPinnedSlots] = useState<RailSlot[]>(DEFAULT_RAIL_SLOTS);
   const [ready, setReady] = useState(false);
   const prefsRef = useRef<Prefs>({
@@ -674,10 +681,20 @@ export default function Editor() {
 
   /* ------------------------------- tool / view ------------------------------- */
 
-  const onSelectTool = useCallback(
-    (tool: Tool) => controllerRef.current?.setTool(tool),
-    [],
-  );
+  const onSelectTool = useCallback((tool: Tool) => {
+    const c = controllerRef.current;
+    if (!c) return;
+    // Re-tapping a LEAF tool (Text / Sticky note — tools with settings but no
+    // instrument flyout) reveals its settings panel. Family tools (draw/shapes/
+    // line/eraser) already reveal their instrument flyout on re-tap in the Toolbar,
+    // so we must NOT also expand here or the two would fight. Switching tools is
+    // always instant and never force-opens settings.
+    if (c.getTool() === tool && (tool === "text" || tool === "note")) {
+      toolOptionsRef.current?.expand();
+      return;
+    }
+    c.setTool(tool);
+  }, []);
   const onSetEraserMode = useCallback(
     (mode: EraserMode) => {
       controllerRef.current?.setEraserMode(mode);
@@ -701,7 +718,32 @@ export default function Editor() {
   );
   const onFitContent = useCallback(() => controllerRef.current?.fitContent(), []);
   const onFitSelection = useCallback(() => controllerRef.current?.fitSelection(), []);
-  const onPickImage = useCallback(() => fileInputRef.current?.click(), []);
+  // Add Image. On native iOS we present a touch chooser (Photo Library / Take
+  // Photo / Files) so the camera opens through the reliable Capacitor path; on web
+  // we open the file picker directly, exactly as before.
+  const onPickImage = useCallback(() => {
+    if (getNativeImagePicker()) setImageChooser(true);
+    else fileInputRef.current?.click();
+  }, []);
+  const pickImageFrom = useCallback(
+    async (source: NativeImageSource) => {
+      setImageChooser(false);
+      const picker = getNativeImagePicker();
+      // "Files" (and the web fallback) use the native file input, which in WKWebView
+      // opens the Files browser; camera/library go through the Capacitor picker.
+      if (source === "files" || !picker) {
+        fileInputRef.current?.click();
+        return;
+      }
+      try {
+        const files = await picker(source);
+        if (files.length > 0) await controllerRef.current?.addImageFiles(files);
+      } catch {
+        showNotice("Couldn't add the image. Please try again.");
+      }
+    },
+    [showNotice],
+  );
   const onFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files ? Array.from(e.target.files) : [];
     if (files.length > 0) void controllerRef.current?.addImageFiles(files);
@@ -1126,6 +1168,16 @@ export default function Editor() {
           onSetStyle={onSetPageStyle}
         />
 
+        {/* Touch-first dedicated Paper control (phone/tablet). Desktop uses the
+            zoom menu's Canvas section above. */}
+        {isTouch && (
+          <PaperControl
+            canvasStyle={state.canvasStyle}
+            onSetStyle={onSetPageStyle}
+            keyboardInset={keyboardInset}
+          />
+        )}
+
         <EmptyCanvasHint isEmpty={state.isEmpty} ready={ready} />
       </div>
 
@@ -1169,6 +1221,10 @@ export default function Editor() {
           onExport={(w, h, transparent) => void runCustomExport(w, h, transparent)}
           onClose={() => setCustomSize(null)}
         />
+      )}
+
+      {imageChooser && (
+        <ImageSourceSheet onPick={pickImageFrom} onClose={() => setImageChooser(false)} />
       )}
 
       <CheckoutActivation />

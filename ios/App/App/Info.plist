@@ -45,10 +45,12 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
-	<!-- Truthful: users can import images from their photo library onto the
-	     canvas. No camera, microphone, location, contacts, or tracking are used. -->
+	<!-- Truthful: users can add images to the canvas from their photo library or
+	     by taking a photo. No microphone, location, contacts, or tracking are used. -->
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>NoteDrift lets you add images from your photo library to your canvas.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>NoteDrift uses the camera so you can take a photo and add it to your canvas.</string>
 	<!-- NoteDrift uses only standard HTTPS (exempt encryption); declaring this
 	     skips the export-compliance prompt on every TestFlight upload. -->
 	<key>ITSAppUsesNonExemptEncryption</key>

@@ -138,8 +138,9 @@ calls `setNativeSaveHandler(...)` at boot.
 
 ## 9. Privacy / permissions
 
-- Declared: **`NSPhotoLibraryUsageDescription`** only (truthful — image import).
-- **Not** requested: camera, microphone, location, contacts, tracking.
+- Declared: **`NSPhotoLibraryUsageDescription`** (image import) and
+  **`NSCameraUsageDescription`** (Take Photo → add to canvas, via `@capacitor/camera`).
+- **Not** requested: microphone, location, contacts, tracking.
 - Sound Meter (microphone) is a `/tools` web page and is **not** in the app bundle,
   so no microphone permission is added.
 - `ITSAppUsesNonExemptEncryption = false` (standard HTTPS only).

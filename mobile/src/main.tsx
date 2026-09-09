@@ -14,11 +14,13 @@ import { registerNativeSave } from "./native/save";
 import { initNativeShell } from "./native/shell";
 import { registerNativeAuthStorage } from "./native/authStorage";
 import { registerStoreKitBilling } from "./native/storekit";
+import { registerNativeImagePicker } from "./native/imagePicker";
 
 // Wire native-only adapters. All no-op on any non-native runtime. Auth storage is
 // registered FIRST, before any Supabase client is created, so the session persists.
 registerNativeAuthStorage();
 registerNativeSave();
+registerNativeImagePicker();
 registerStoreKitBilling();
 void initNativeShell();
 
